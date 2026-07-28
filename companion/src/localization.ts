@@ -10,11 +10,19 @@ export const MAX_LOCALIZED_NAMES = 4_096;
  * protocol key; the resolved name is only ever used for player-facing text and
  * model context.
  */
+export interface LocalizedNameEntry {
+  kind: LocalizedNameKind;
+  id: string;
+  name: string;
+}
+
 export interface LocalizedNameLookup {
   readonly locale: string | undefined;
   lookup(kind: LocalizedNameKind, id: string): string | undefined;
   display(kind: LocalizedNameKind, id: string, fallback?: string): string;
   describe(kind: LocalizedNameKind, id: string): string;
+  /** Every synchronized name, for reverse lookups such as chat target resolution. */
+  entries(): readonly LocalizedNameEntry[];
 }
 
 export function localizedNameKey(
@@ -43,6 +51,10 @@ class IdentifierNameLookup implements LocalizedNameLookup {
 
   public describe(_kind: LocalizedNameKind, id: string): string {
     return id;
+  }
+
+  public entries(): readonly LocalizedNameEntry[] {
+    return [];
   }
 }
 
@@ -107,6 +119,19 @@ export class LocalizedNameStore implements LocalizedNameLookup {
   public describe(kind: LocalizedNameKind, id: string): string {
     const name = this.lookup(kind, id);
     return name === undefined || name === id ? id : `${name} (${id})`;
+  }
+
+  public entries(): readonly LocalizedNameEntry[] {
+    const result: LocalizedNameEntry[] = [];
+    for (const [key, name] of this.#names) {
+      const separator = key.indexOf(":");
+      result.push({
+        kind: key.slice(0, separator) as LocalizedNameKind,
+        id: key.slice(separator + 1),
+        name,
+      });
+    }
+    return result;
   }
 }
 

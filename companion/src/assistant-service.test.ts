@@ -31,7 +31,7 @@ void test("starts in explicit local mode without a key", async () => {
     mode: "local",
     provider: "local",
     model: null,
-    reason: "deterministic rules and calculator only",
+    reason: "deterministic rules and deterministic calculations only",
   });
   const answer = await service.answer({ question: "现在有什么问题？" });
   assert.equal(answer.mode, "local");

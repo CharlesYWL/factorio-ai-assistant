@@ -1,7 +1,7 @@
 # Companion 配置、安全与故障排查
 
-Companion 默认不连接模型，以 `local` 模式启动：精确计算器、状态同步和本地规则顾问
-全部可用。配置 OpenClaw / OpenAI-compatible 或 Ollama 后，后续对话 UI 可通过同一
+Companion 默认不连接模型，以 `local` 模式启动：聊天触发的精确生产计算、状态同步和
+本地规则顾问全部可用。配置 OpenClaw / OpenAI-compatible 或 Ollama 后，后续对话 UI 可通过同一
 `AssistantService` 调用模型；模型失败时仍返回本地计算或规则答案。
 
 ## 启动与配置优先级
@@ -22,7 +22,7 @@ npm start
 启动日志是单行 JSON。无模型时会明确记录：
 
 ```json
-{"level":"info","event":"assistant_mode","mode":"local","provider":"local","model":null,"reason":"deterministic rules and calculator only"}
+{"level":"info","event":"assistant_mode","mode":"local","provider":"local","model":null,"reason":"deterministic rules and deterministic calculations only"}
 ```
 
 | JSON 字段 | 环境变量 | 默认值 / 约束 |

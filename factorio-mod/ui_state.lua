@@ -3,7 +3,6 @@ local ui_state = {}
 local MAX_CHAT_HISTORY = 30
 local VALID_TABS = {
   chat = true,
-  calculator = true,
   alerts = true,
   status = true,
 }
@@ -25,12 +24,10 @@ function ui_state.ensure_player(state, player_index)
       chat_sequence = 0,
       chat_revision = 0,
       dismissed_alerts = {},
+      -- Protocol-compatibility holder only: the calculator form was removed and
+      -- chat drives calculations, but a legacy in-flight request must still be
+      -- able to resolve without crashing a mixed Mod/Companion install.
       calculator = {
-        target_kind = "item",
-        target_id = "",
-        rate_per_minute = "60",
-        machine_id = "",
-        module_ids = "",
         pending = nil,
         result = nil,
         error_code = nil,
@@ -54,13 +51,6 @@ function ui_state.ensure_player(state, player_index)
     end
   end
   player_state.calculator = player_state.calculator or {}
-  local calculator = player_state.calculator
-  calculator.target_kind =
-    calculator.target_kind == "fluid" and "fluid" or "item"
-  calculator.target_id = calculator.target_id or ""
-  calculator.rate_per_minute = calculator.rate_per_minute or "60"
-  calculator.machine_id = calculator.machine_id or ""
-  calculator.module_ids = calculator.module_ids or ""
 
   return player_state
 end
@@ -173,22 +163,8 @@ function ui_state.complete_chat(state, reply_to, payload, tick)
   return nil
 end
 
-function ui_state.update_calculator_input(player_state, field, value)
-  local calculator = player_state.calculator
-  if field == "target_kind" then
-    calculator.target_kind = value == "fluid" and "fluid" or "item"
-  elseif field == "target_id"
-    or field == "rate_per_minute"
-    or field == "machine_id"
-    or field == "module_ids"
-  then
-    calculator[field] = value
-  else
-    return false
-  end
-  return true
-end
-
+--- Retained with complete_calculation for protocol compatibility only: chat now
+--- drives every calculation, but a legacy in-flight request must still resolve.
 function ui_state.queue_calculation(player_state, message_id, tick)
   local calculator = player_state.calculator
   if calculator.pending ~= nil then
@@ -322,14 +298,6 @@ function ui_state.append_system(player_state, locale, tick, error_code)
     error_code = error_code,
     tick = tick,
   })
-end
-
-function ui_state.set_calculation_error(player_state, error_code, error_message)
-  local calculator = player_state.calculator
-  calculator.pending = nil
-  calculator.result = nil
-  calculator.error_code = error_code
-  calculator.error_message = error_message
 end
 
 append_chat = function(player_state, entry)

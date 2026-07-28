@@ -23,10 +23,4 @@ data:extend({
     key_sequence = "CONTROL + SHIFT + 3",
     consuming = "game-only",
   },
-  {
-    type = "custom-input",
-    name = "factorio-ai-assistant-tab-4",
-    key_sequence = "CONTROL + SHIFT + 4",
-    consuming = "game-only",
-  },
 })

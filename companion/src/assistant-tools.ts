@@ -20,10 +20,18 @@ import {
   type LocalizedNameLookup,
 } from "./localization.js";
 import {
+  isProductionRatioQuestion,
+  parseTargetRate,
+} from "./production-question.js";
+import {
   MAX_PROGRESSION_STEPS,
   ProgressionService,
   type ProgressionResult,
 } from "./progression-service.js";
+import {
+  clarifyResourceMatch,
+  resolveResourceMention,
+} from "./resource-resolver.js";
 import type { CompanionStateStore } from "./state-store.js";
 
 export type AssistantIntent =
@@ -143,50 +151,6 @@ interface ParsedCalculation {
   targetId: string;
   ratePerMinute: number;
 }
-
-interface ResourceAlias {
-  aliases: readonly string[];
-  kind: ResourceKind;
-  id: string;
-}
-
-const RESOURCE_ALIASES: readonly ResourceAlias[] = [
-  {
-    aliases: ["automation science", "red science", "红瓶"],
-    kind: "item",
-    id: "automation-science-pack",
-  },
-  {
-    aliases: ["logistic science", "green science", "绿瓶"],
-    kind: "item",
-    id: "logistic-science-pack",
-  },
-  {
-    aliases: ["military science", "black science", "黑瓶"],
-    kind: "item",
-    id: "military-science-pack",
-  },
-  {
-    aliases: ["chemical science", "blue science", "蓝瓶"],
-    kind: "item",
-    id: "chemical-science-pack",
-  },
-  {
-    aliases: ["production science", "purple science", "紫瓶"],
-    kind: "item",
-    id: "production-science-pack",
-  },
-  {
-    aliases: ["utility science", "yellow science", "黄瓶"],
-    kind: "item",
-    id: "utility-science-pack",
-  },
-  {
-    aliases: ["space science", "white science", "白瓶"],
-    kind: "item",
-    id: "space-science-pack",
-  },
-];
 
 const OIL_RULES = new Set([
   "lubricant-zero",
@@ -386,9 +350,7 @@ export class AssistantToolbox {
         actions: [],
         assumptions: [],
         missingData: [
-          this.#language === "zh-CN"
-            ? `确定性计算不可用（${error.code}）：${error.message}`
-            : `Deterministic calculation is unavailable (${error.code}): ${error.message}`,
+          calculationClarification(this.#language, error.code, error.message),
         ],
         localInference:
           this.#language === "zh-CN"
@@ -413,55 +375,44 @@ export class AssistantToolbox {
         : "No force information has been synchronized.";
     }
 
-    const target = this.#findTarget(question);
-    if (target === undefined) {
-      return this.#language === "zh-CN"
-        ? "请提供可识别的物品或流体名称，例如 chemical-science-pack。"
-        : "Provide a recognizable item or fluid, such as chemical-science-pack.";
+    const match = resolveResourceMention(question, {
+      products: this.#catalogProducts(),
+      names: this.#names,
+    });
+    if (match.status !== "resolved") {
+      return clarifyResourceMatch(this.#language, match, this.#names);
     }
 
-    const ratePerMinute = parseRatePerMinute(question);
-    if (ratePerMinute === undefined) {
+    const rate = parseTargetRate(question);
+    if (rate === undefined) {
       return this.#language === "zh-CN"
-        ? "请提供大于 0 的每分钟目标产量。"
-        : "Provide a per-minute target rate greater than zero.";
+        ? "还差一个目标速率。告诉我每分钟要多少就行，例如「每分钟 45 个」。"
+        : 'I still need a target rate. Tell me the output per minute, for example "45 per minute".';
     }
 
     return {
       forceId,
-      targetKind: target.targetKind,
-      targetId: target.targetId,
-      ratePerMinute,
+      targetKind: match.target.kind,
+      targetId: match.target.id,
+      ratePerMinute: rate.perMinute,
     };
   }
 
-  #findTarget(
-    question: string,
-  ): Pick<ParsedCalculation, "targetKind" | "targetId"> | undefined {
-    const normalized = question.toLowerCase();
-    for (const resource of RESOURCE_ALIASES) {
-      if (resource.aliases.some((alias) => normalized.includes(alias))) {
-        return { targetKind: resource.kind, targetId: resource.id };
-      }
-    }
-
-    const products = new Map<string, ResourceKind>();
+  /** Everything the synchronized catalog can actually produce. */
+  #catalogProducts(): [ResourceKind, string][] {
+    const products: [ResourceKind, string][] = [];
+    const seen = new Set<string>();
     for (const recipe of this.#stateStore.staticState?.recipes ?? []) {
       for (const product of recipe.products) {
-        products.set(product.id.toLowerCase(), product.kind);
+        const key = `${product.kind}:${product.id}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        products.push([product.kind, product.id]);
       }
     }
-    const matchedId = [...products.keys()]
-      .sort((left, right) => right.length - left.length)
-      .find((id) => normalized.includes(id));
-    if (matchedId === undefined) {
-      return undefined;
-    }
-    const kind = products.get(matchedId);
-    if (kind === undefined) {
-      return undefined;
-    }
-    return { targetKind: kind, targetId: matchedId };
+    return products;
   }
 
   #missingCalculation(
@@ -925,14 +876,7 @@ export function formatGroundedAnswer(
 
 function classifyAssistantIntent(question: string): AssistantIntent {
   const normalized = question.toLowerCase();
-  const asksForMachines =
-    /(?:多少|几).{0,12}(?:机器|机台)|(?:机器|机台).{0,12}(?:多少|几)|how many machines|machines? (?:do|would|are) .*need|production ratio|生产比例/u.test(
-      normalized,
-    );
-  const perMinute = /每\s*分钟|\/\s*min(?:ute)?|per\s+minute/u.test(
-    normalized,
-  );
-  if (asksForMachines && perMinute) {
+  if (isProductionRatioQuestion(question)) {
     return "calculation";
   }
   if (/(?:依据|证据|数据来源|based on what|what data|evidence)/u.test(normalized)) {
@@ -961,22 +905,6 @@ function classifyAssistantIntent(question: string): AssistantIntent {
   return "general";
 }
 
-function parseRatePerMinute(question: string): number | undefined {
-  const normalized = question.toLowerCase();
-  const marker = /每\s*分钟|\/\s*min(?:ute)?|per\s+minute/u.exec(normalized);
-  if (marker === null) {
-    return undefined;
-  }
-  const beforeMarker = normalized.slice(0, marker.index);
-  const beforeValues = [...beforeMarker.matchAll(/\d+(?:\.\d+)?/g)];
-  const before = beforeValues.at(-1)?.[0];
-  const after = normalized
-    .slice(marker.index + marker[0].length)
-    .match(/\d+(?:\.\d+)?/)?.[0];
-  const value = Number(before ?? after);
-  return Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
 function calculationArguments(
   parsed: ParsedCalculation,
 ): Record<string, string | number> {
@@ -986,6 +914,60 @@ function calculationArguments(
     target_id: parsed.targetId,
     rate_per_minute: parsed.ratePerMinute,
   };
+}
+
+/**
+ * Turns a deterministic calculator failure into a short clarification the player
+ * can act on, instead of a raw engine error code.
+ */
+function calculationClarification(
+  language: AssistantLanguage,
+  code: string,
+  message: string,
+): string {
+  const chinese: Record<string, string> = {
+    STATE_UNAVAILABLE: "静态配方数据还在同步，等几秒再问一次就能算。",
+    STATE_TRUNCATED: "静态配方数据被裁剪过，现在算不出可信结果。",
+    FORCE_NOT_FOUND: "还没同步到你所在的 force，暂时算不了。",
+    TARGET_UNREACHABLE:
+      "当前科技还没解锁能产出这个目标的配方。换一个已解锁的产物，或先把对应科技研究掉。",
+    AMBIGUOUS_RECIPE:
+      "有多条配方都能产出需要的中间产物（例如炼油或固体燃料路线）。告诉我走哪条路线，我再算一次。",
+    UNAVAILABLE_RECIPE: "路径上有配方还没解锁，先研究它我才能给出机器数。",
+    NO_COMPATIBLE_MACHINE: "没有能跑这条配方的机器，确认一下已解锁的生产设备。",
+    CYCLIC_RECIPE_GRAPH: "这条配方链里有循环，需要你指定其中一步的来源。",
+    UNSATISFIABLE_FLOW: "多产物流量在当前假设下配不平，换个目标或速率再试。",
+    UNHANDLED_BYPRODUCT: "会产生没人消耗的副产物，先说明副产物怎么处理。",
+  };
+  const english: Record<string, string> = {
+    STATE_UNAVAILABLE:
+      "Static recipe data is still synchronizing; ask again in a few seconds.",
+    STATE_TRUNCATED:
+      "Static recipe data was truncated, so no trustworthy result is possible right now.",
+    FORCE_NOT_FOUND: "Your force has not synchronized yet.",
+    TARGET_UNREACHABLE:
+      "No unlocked recipe can produce that target yet. Pick an unlocked product or research the technology first.",
+    AMBIGUOUS_RECIPE:
+      "Several recipes can produce a required intermediate (for example an oil or solid-fuel route). Tell me which route to assume and I will run it again.",
+    UNAVAILABLE_RECIPE:
+      "A recipe on the path is still locked; research it and I can give machine counts.",
+    NO_COMPATIBLE_MACHINE:
+      "No machine can run that recipe; check which production buildings are unlocked.",
+    CYCLIC_RECIPE_GRAPH:
+      "The recipe chain contains a cycle, so one step needs an explicit source.",
+    UNSATISFIABLE_FLOW:
+      "The multi-product flow cannot balance under these assumptions; try another target or rate.",
+    UNHANDLED_BYPRODUCT:
+      "The plan leaves an unconsumed byproduct; tell me how it should be handled.",
+  };
+
+  const hint = language === "zh-CN" ? chinese[code] : english[code];
+  if (hint !== undefined) {
+    return hint;
+  }
+  return language === "zh-CN"
+    ? `确定性计算不可用（${code}）：${message}`
+    : `Deterministic calculation is unavailable (${code}): ${message}`;
 }
 
 function selectAlerts(

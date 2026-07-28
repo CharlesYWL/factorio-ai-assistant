@@ -83,7 +83,7 @@ void test(
       assert.deepEqual(acknowledgement.payload.assistant_status, {
         mode: "local",
         provider: "local",
-        reason: "deterministic rules and calculator only",
+        reason: "deterministic rules and deterministic calculations only",
         privacy: "local-only",
       });
     }

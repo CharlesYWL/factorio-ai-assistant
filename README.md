@@ -1,8 +1,8 @@
 # Factorio AI Assistant
 
 Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.1 把聊天、确定性生产比例、实时提醒和连接
-状态整合进可移动的游戏内面板，并让状态问答只通过受限的只读计算器 / 顾问工具取得
-数字与证据；Companion 支持 OpenClaw / OpenAI-compatible 与 Ollama，无 Key、模型
+状态整合进可移动的游戏内面板：玩家只用自然语言提问，数字与证据全部由受限的只读
+计算 / 顾问工具产生；Companion 支持 OpenClaw / OpenAI-compatible 与 Ollama，无 Key、模型
 离线、限流、超时或与工具冲突时自动保留本地计算与规则答案。系统不发送地图，也不会
 修改工厂。
 
@@ -45,7 +45,7 @@ flowchart LR
 
 | 路径 | 作用 |
 | --- | --- |
-| `factorio-mod/` | Factorio 2.0 Mod、事件缓存、状态采样、四页顾问 UI 与 mock harness |
+| `factorio-mod/` | Factorio 2.0 Mod、事件缓存、状态采样、三页顾问 UI 与 mock harness |
 | `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion、状态缓存、本地规则顾问、上下文压缩和 provider 层 |
 | `packages/protocol/` | 严格的版本化消息编解码与校验 |
 | `packages/calculator/` | 精确有理数生产流求解器、Factorio 2.0 fixture 与 JSON CLI |
@@ -54,19 +54,22 @@ flowchart LR
 
 ## 游戏内面板
 
-![游戏内 Chat、Calculator、Status 面板与左上角常驻提醒卡片预览](docs/ui-preview.svg)
+![游戏内 Chat、Alerts、Status 面板与左上角常驻提醒卡片预览](docs/ui-preview.svg)
 
 预览使用内置 mock harness 的确定性数据绘制，对应实机布局和文案；自动化环境没有
 Factorio 图形客户端，Windows 实机截图仍列在验证清单中。
 
-- **Chat**：消息历史、快捷问题、Enter 发送、取消请求、一键清空；回答区分事实、确定性
+- **Chat**：消息历史、快捷问题（含“产线配比”示例）、Enter 发送、取消请求、一键清空；回答区分事实、确定性
   计算、流程指南、推断、缺失数据与假设，行动项最多 3 个并引用规则 / 计算 / 指南证据。
   新消息、发送、完成和超时后自动贴回底部；向上翻看历史时，其它刷新（例如新告警到达）
   不会把视图抢回底部。问“下一步做什么 / 该扩建什么 / 该研究什么”时会调用内置的
   Factorio 2.0 原版流程指南，按当前已研究科技判定阶段并给出有顺序的步骤；有活动告警时
   先修当前瓶颈。
-- **Calculator**：目标物品或流体、每分钟产量及目标配方的机器 / 插件假设；返回配方、
-  精确台数、向上取整台数、外部输入和副产物。
+- **聊天内确定性计算**：不再有需要手填 prototype ID 的计算器页。直接问“每分钟 45 个
+  蓝瓶需要多少台机器”“一分钟 120 绿板怎么配”，Companion 会用同步到的 catalog、游戏
+  语言名称和常见中文别名解析出稳定 ID 与速率，再调用确定性求解器返回配方、精确台数
+  与向上取整台数。目标、速率或替代配方不明确时，回答是一句简短澄清（例如“「电路」
+  可能指绿电路 / 红电路 / 蓝电路”），而不是要求玩家输入内部 ID。
 - **Alerts**：按严重度显示证据和建议，可静音 / 恢复规则，也可逐条忽略 / 恢复；主动
   提醒使用 8 秒第三方 toast，不写入聊天区连续刷屏。
 - **常驻提醒卡片**：左上角待办式列表，只在有活动告警时出现，显示严重度、规则标题和
@@ -79,9 +82,9 @@ Factorio 图形客户端，Windows 实机截图仍列在验证清单中。
 `iron-plate`）。名称来自 Factorio 官方翻译机制，prototype ID 仍是协议主键，保留在
 tooltip 与结构化输出中；尚未翻译或未知的 ID 安全回退为 ID 本身。
 
-`Ctrl+Shift+A` 打开面板，`Ctrl+Shift+1..4` 切页，输入框按 Enter 提交，Esc 关闭。
-窗口有三档尺寸，位置和尺寸按玩家写入存档。Companion 离线时所有页面仍可进入，
-Calculator 保留输入，Alerts 显示带“可能过期”提示的缓存内容。
+`Ctrl+Shift+A` 打开面板，`Ctrl+Shift+1..3` 依次切到 Chat / Alerts / Status，输入框按
+Enter 提交，Esc 关闭。窗口有三档尺寸，位置和尺寸按玩家写入存档。Companion 离线时
+所有页面仍可进入，Alerts 显示带“可能过期”提示的缓存内容。
 
 可在游戏控制台复现全部关键状态（建议停止 Companion，避免心跳覆盖 mock）：
 
@@ -134,7 +137,7 @@ npm start
 OpenClaw/OpenAI-compatible、Ollama、上下文边界、脱敏日志和模型故障排查见
 [`docs/companion.md`](docs/companion.md)。
 
-独立运行比例计算器（不需要游戏或 AI Key）：
+独立运行比例计算器 CLI（不需要游戏或 AI Key；游戏内已由聊天自动调用同一个引擎）：
 
 ```bash
 npm run calculate -- \
@@ -169,8 +172,8 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 
 ### 当前限制
 
-- 简化计算器自动选择上游配方，只允许对目标配方指定机器 / 插件；遇到同一资源的多配方
-  歧义会明确报错，复杂配方选择仍使用 JSON CLI。
+- 聊天计算自动选择上游配方与机器；遇到同一资源的多配方歧义会给出澄清而不是猜测，
+  显式指定机器 / 插件 / 替代配方仍使用仓库内的 JSON CLI。
 - 模型调用只能取消仍在进行的请求；已经完成并进入 UDP 的响应可能先于取消到达。
 - 自动化测试覆盖协议、Companion、计算服务、Lua 语法、UI 状态契约和中英文 key
   对齐；像素布局、键盘焦点和不同 DPI 仍需 Windows Factorio 实机确认。
@@ -184,7 +187,7 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 - Factorio UDP 必须通过显式启动参数开启。
 - 状态只含游戏 / Mod / force / prototype ID 和聚合数值；无坐标、地图、聊天或存档。
 - 动态采样每 5 秒读取游戏统计和事件维护的 pole 缓存；没有 `on_tick` 全实体遍历。
-- 实时规则顾问和计算器不调用模型；AI provider 只接收按问题压缩且有 byte budget 的
+- 实时规则顾问和确定性计算不调用模型；AI provider 只接收按问题压缩且有 byte budget 的
   聚合上下文，无 RCON、远程遥测或自动操作。
 - 内置流程指南是仓库内的静态数据，运行时不联网、不抓攻略，也不会把网页内容交给模型。
 - API Key 只从 Companion 进程环境或显式本机配置读取，不进入 Mod、存档、UDP 或日志。
