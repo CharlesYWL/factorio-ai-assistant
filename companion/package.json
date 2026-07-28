@@ -1,0 +1,14 @@
+{
+  "name": "@factorio-ai-assistant/companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@factorio-ai-assistant/protocol": "*"
+  }
+}
