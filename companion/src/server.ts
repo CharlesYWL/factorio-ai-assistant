@@ -44,7 +44,7 @@ import { CompanionStateStore, StateSyncError } from "./state-store.js";
 export { DEFAULT_COMPANION_PORT, LOOPBACK_HOST, parseCompanionPort };
 export type { CompanionLogger } from "./logger.js";
 export const COMPANION_VERSION = "0.1.0";
-const COMPANION_BUILD = "grounded-numbers-hotfix-6";
+const COMPANION_BUILD = "production-advice-hotfix-7";
 
 const RECENT_REQUEST_TTL_MS = 60_000;
 const MAX_RECENT_REQUESTS = 1_024;

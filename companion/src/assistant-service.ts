@@ -309,7 +309,7 @@ type ReconciledModelInference =
   | { kind: "ok"; text: string }
   | {
       kind: "conflict";
-      type: "unsafe_command" | "actions" | "citation" | "numeric" | "format";
+      type: "unsafe_command" | "citation" | "numeric" | "format";
     };
 
 function reconcileModelInference(
@@ -319,11 +319,7 @@ function reconcileModelInference(
   if (containsExecutableInstruction(value)) {
     return { kind: "conflict", type: "unsafe_command" };
   }
-  if (containsOrderedActions(value)) {
-    return { kind: "conflict", type: "actions" };
-  }
-
-  const text = value.replace(/\s+/g, " ").trim();
+  const text = normalizeModelInference(value);
   if (text.length === 0 || text.length > MAX_MODEL_INFERENCE_CHARACTERS) {
     return { kind: "conflict", type: "format" };
   }
@@ -352,8 +348,27 @@ function containsExecutableInstruction(value: string): boolean {
   );
 }
 
-function containsOrderedActions(value: string): boolean {
-  return /(?:^|\n)\s*(?:\d{1,2}[.)、]|[-*])\s+/u.test(value);
+function normalizeModelInference(value: string): string {
+  return value
+    .split(/\r?\n/u)
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^#{1,6}\s*/u, "")
+        .replace(/^(?:\d{1,2}[.)、]|[-*•])\s*/u, "")
+        .trim(),
+    )
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !/^(?:建议|结论|分析|recommendations?|conclusion)\s*[:：]?$/iu.test(
+          line,
+        ),
+    )
+    .slice(0, 3)
+    .join("；")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function containsUnsupportedNumber(

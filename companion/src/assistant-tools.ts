@@ -500,7 +500,14 @@ export class AssistantToolbox {
     }
 
     if (alerts.length === 0) {
-      missingData.push(missingAdvisorEvidence(this.#language, intent, question));
+      missingData.push(
+        missingAdvisorEvidence(
+          this.#language,
+          intent,
+          question,
+          dynamicForce !== undefined,
+        ),
+      );
     } else if (intent === "diagnosis") {
       missingData.push(diagnosisLimitation(this.#language, question));
     }
@@ -531,7 +538,7 @@ export class AssistantToolbox {
                     recommendation: alert.recommendation,
                   })),
                   synchronized_snapshot: {
-                    evidence_ids: ["S1", "S2"],
+                    evidence_ids: ["S1", "S2", "S3"],
                     truncated:
                       this.#stateStore.dynamicState?.payload.truncated === true,
                   },
@@ -724,13 +731,88 @@ function synchronizedStateEvidence(
   return [
     { id: "S1", category: "fact", text: powerText },
     { id: "S2", category: "fact", text: researchText },
+    productionFlowEvidence(language, force),
   ];
+}
+
+function productionFlowEvidence(
+  language: AssistantLanguage,
+  force: DynamicForceSummary,
+): GroundingEvidence {
+  const flows = [
+    ...force.items.map((metric) => ({ kind: "item" as const, ...metric })),
+    ...force.fluids.map((metric) => ({ kind: "fluid" as const, ...metric })),
+  ]
+    .map((flow) => ({
+      ...flow,
+      deficit: flow.consumed_per_minute_1m - flow.produced_per_minute_1m,
+      throughput:
+        flow.consumed_per_minute_1m + flow.produced_per_minute_1m,
+    }))
+    .filter(({ throughput }) => throughput > 0);
+  const deficits = flows
+    .filter(({ deficit }) => deficit > 0)
+    .sort(
+      (left, right) =>
+        right.deficit - left.deficit ||
+        right.throughput - left.throughput ||
+        left.id.localeCompare(right.id),
+    );
+  const candidates = (deficits.length > 0
+    ? deficits
+    : flows.sort(
+        (left, right) =>
+          right.throughput - left.throughput ||
+          left.id.localeCompare(right.id),
+      )
+  ).slice(0, 3);
+
+  if (candidates.length === 0) {
+    return {
+      id: "S3",
+      category: "fact",
+      text:
+        language === "zh-CN"
+          ? "当前动态快照没有非零生产或消耗流量。"
+          : "The current dynamic snapshot contains no nonzero production or consumption flow.",
+    };
+  }
+
+  const entries = candidates.map((candidate) => {
+    const kind =
+      language === "zh-CN"
+        ? candidate.kind === "item"
+          ? "物品"
+          : "流体"
+        : candidate.kind;
+    const base =
+      language === "zh-CN"
+        ? `${kind} ${candidate.id}（产出 ${formatNumber(candidate.produced_per_minute_1m)}/min，消耗 ${formatNumber(candidate.consumed_per_minute_1m)}/min`
+        : `${kind} ${candidate.id} (produced ${formatNumber(candidate.produced_per_minute_1m)}/min, consumed ${formatNumber(candidate.consumed_per_minute_1m)}/min`;
+    if (deficits.length === 0) {
+      return `${base}${language === "zh-CN" ? "）" : ")"}`;
+    }
+    return language === "zh-CN"
+      ? `${base}，净缺口 ${formatNumber(candidate.deficit)}/min）`
+      : `${base}, net deficit ${formatNumber(candidate.deficit)}/min)`;
+  });
+  const text =
+    language === "zh-CN"
+      ? deficits.length > 0
+        ? `1 分钟净缺口候选：${entries.join("；")}。`
+        : `1 分钟样本未发现正净缺口；高吞吐项：${entries.join("；")}。`
+      : deficits.length > 0
+        ? `One-minute net-deficit candidates: ${entries.join("; ")}.`
+        : `The one-minute sample has no positive net deficit; high-throughput flows: ${entries.join("; ")}.`;
+
+  return { id: "S3", category: "fact", text };
 }
 
 function missingAdvisorEvidence(
   language: AssistantLanguage,
   intent: Exclude<AssistantIntent, "calculation">,
   question: string,
+  hasDynamicState: boolean,
 ): string {
   const oilQuestion =
     intent === "diagnosis" &&
@@ -744,6 +826,9 @@ function missingAdvisorEvidence(
     if (intent === "research") {
       return "当前没有触发科研建议规则；需要更多科研包供需或目标信息后才能排序科技。";
     }
+    if (hasDynamicState) {
+      return "当前没有持续性规则告警；[S3] 只按 force 级 1 分钟聚合净流量排序，不含库存、皮带和单机停机原因。";
+    }
     return "当前本地规则没有活动告警，不能据此虚构瓶颈。";
   }
   if (oilQuestion) {
@@ -751,6 +836,9 @@ function missingAdvisorEvidence(
   }
   if (intent === "research") {
     return "No research recommendation rule is active; more science supply or goal information is needed to rank technologies.";
+  }
+  if (hasDynamicState) {
+    return "No persistent advisor rule is active; [S3] ranks only force-level one-minute aggregate net flow and does not include inventory, belts, or per-machine stop causes.";
   }
   return "No local rule is active, so a bottleneck cannot be invented from this data.";
 }
@@ -782,7 +870,7 @@ function localAdvisorInference(
   if (language === "zh-CN") {
     if (alertCount === 0) {
       return hasDynamicState
-        ? "电力与科研事实来自最新同步快照；未触发告警只表示当前未达到确定性规则阈值。"
+        ? "电力、科研和生产净流量来自最新同步快照；[S3] 给出扩建候选，但不能单独证明具体机器根因。"
         : "当前为本地模式（确定性规则）；没有足够证据形成状态结论。";
     }
     if (intent === "diagnosis") {
@@ -795,7 +883,7 @@ function localAdvisorInference(
   }
   if (alertCount === 0) {
     return hasDynamicState
-      ? "Power and research facts come from the latest synchronized snapshot; no alert only means that deterministic rule thresholds are not currently met."
+      ? "Power, research, and production net flow come from the latest synchronized snapshot; [S3] supplies expansion candidates but does not prove a specific machine-level root cause."
       : "Local rule mode has insufficient evidence for a state conclusion.";
   }
   if (intent === "diagnosis") {
