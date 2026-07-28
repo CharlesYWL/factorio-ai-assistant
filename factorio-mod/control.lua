@@ -8,7 +8,6 @@ local MAX_PACKET_BYTES = 16 * 1024
 local POLL_INTERVAL_TICKS = 15
 local UI_REFRESH_INTERVAL_TICKS = 60
 local HELLO_INTERVAL_TICKS = 300
-local SAMPLE_CHECK_INTERVAL_TICKS = 60
 local DEFAULT_SAMPLE_INTERVAL_TICKS = 300
 local MIN_SAMPLE_INTERVAL_TICKS = 60
 local MAX_SAMPLE_INTERVAL_TICKS = 3600
@@ -1649,11 +1648,15 @@ local function run_periodic_network_tasks()
   retry_static_packets()
 end
 
+local function run_every_second_tasks()
+  maybe_send_dynamic_snapshot()
+  update_connection_status()
+end
+
 if UDP_AVAILABLE then
   script.on_event(UDP_EVENT, handle_udp_packet)
   script.on_nth_tick(POLL_INTERVAL_TICKS, poll_udp)
   script.on_nth_tick(HELLO_INTERVAL_TICKS, run_periodic_network_tasks)
-  script.on_nth_tick(SAMPLE_CHECK_INTERVAL_TICKS, maybe_send_dynamic_snapshot)
 end
 
-script.on_nth_tick(UI_REFRESH_INTERVAL_TICKS, update_connection_status)
+script.on_nth_tick(UI_REFRESH_INTERVAL_TICKS, run_every_second_tasks)

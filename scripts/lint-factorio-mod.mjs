@@ -87,6 +87,14 @@ assert.ok(
   controlSource.includes("game.create_profiler()"),
   "Dynamic sampling must record collection duration",
 );
+assert.ok(
+  controlSource.includes("local function run_every_second_tasks()")
+    && controlSource.includes("maybe_send_dynamic_snapshot()\n  update_connection_status()")
+    && controlSource.includes(
+      "script.on_nth_tick(UI_REFRESH_INTERVAL_TICKS, run_every_second_tasks)",
+    ),
+  "Dynamic sampling and UI refresh must share the single 60-tick handler",
+);
 for (const packetType of [
   "assistant_request",
   "assistant_cancel",
