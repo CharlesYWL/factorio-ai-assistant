@@ -3,9 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  DEFAULT_ADVISOR_CONFIG,
   MAX_PACKET_BYTES,
   PROTOCOL_VERSION,
   ProtocolError,
+  createAdvisorUpdatePacket,
   createHelloAckPacket,
   createHelloPacket,
   createResyncRequestPacket,
@@ -25,6 +27,66 @@ void test("encodes and decodes hello packets", () => {
   });
 
   assert.deepEqual(decodePacket(encodePacket(packet)), packet);
+});
+
+void test("encodes advisor configuration and lifecycle updates", () => {
+  const hello = createHelloPacket({
+    messageId: "factorio-advisor-config",
+    tick: 120,
+    modVersion: "0.1.0",
+    advisorConfig: DEFAULT_ADVISOR_CONFIG,
+  });
+  const update = createAdvisorUpdatePacket({
+    messageId: "companion-advisor-1",
+    timestamp: 1_753_680_000_000,
+    event: "opened",
+    proactive: true,
+    alert: {
+      id: "power-low:player",
+      rule_id: "power-low",
+      force_id: "player",
+      severity: "critical",
+      evidence: "Power satisfaction is 40%.",
+      recommendation: "Add generation.",
+      first_seen: 600,
+      last_seen: 1_200,
+    },
+  });
+
+  assert.deepEqual(decodePacket(encodePacket(hello)), hello);
+  assert.deepEqual(decodePacket(encodePacket(update)), update);
+});
+
+void test("rejects inconsistent advisor configuration and alert lifetimes", () => {
+  const hello = createHelloPacket({
+    messageId: "factorio-advisor-invalid",
+    tick: 120,
+    modVersion: "0.1.0",
+    advisorConfig: {
+      ...DEFAULT_ADVISOR_CONFIG,
+      critical_power_threshold: 0.95,
+      power_satisfaction_threshold: 0.9,
+    },
+  });
+  expectProtocolError(() => decodePacket(JSON.stringify(hello)), "INVALID_PACKET");
+
+  const update = createAdvisorUpdatePacket({
+    messageId: "companion-advisor-invalid",
+    timestamp: 1_753_680_000_000,
+    event: "closed",
+    proactive: false,
+    alert: {
+      id: "research-idle:player",
+      rule_id: "research-idle",
+      force_id: "player",
+      severity: "info",
+      evidence: "No research.",
+      recommendation: "Queue research.",
+      first_seen: 1_200,
+      last_seen: 600,
+    },
+  });
+  expectProtocolError(() => decodePacket(JSON.stringify(update)), "INVALID_PACKET");
 });
 
 void test("encodes state-aware hello acknowledgements", () => {

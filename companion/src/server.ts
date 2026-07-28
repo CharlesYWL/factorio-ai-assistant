@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 
 import {
   ProtocolError,
+  createAdvisorUpdatePacket,
   createHelloAckPacket,
   createResyncRequestPacket,
   createStateAckPacket,
@@ -12,6 +13,7 @@ import {
   type ProtocolPacket,
 } from "@factorio-ai-assistant/protocol";
 
+import { AdvisorEngine } from "./advisor.js";
 import { CompanionStateStore, StateSyncError } from "./state-store.js";
 
 export const LOOPBACK_HOST = "127.0.0.1";
@@ -28,11 +30,13 @@ export interface CompanionServerOptions {
   port?: number;
   logger?: CompanionLogger;
   stateStore?: CompanionStateStore;
+  advisor?: AdvisorEngine;
 }
 
 export interface CompanionServer {
   readonly address: AddressInfo;
   readonly state: CompanionStateStore;
+  readonly advisor: AdvisorEngine;
   close(): Promise<void>;
 }
 
@@ -44,10 +48,11 @@ export async function startCompanionServer(
 
   const logger = options.logger ?? console;
   const stateStore = options.stateStore ?? new CompanionStateStore();
+  const advisor = options.advisor ?? new AdvisorEngine();
   const socket = createSocket("udp4");
 
   socket.on("message", (datagram, remote) => {
-    handleDatagram(socket, datagram, remote, logger, stateStore);
+    handleDatagram(socket, datagram, remote, logger, stateStore, advisor);
   });
 
   await bindSocket(socket, port);
@@ -64,6 +69,7 @@ export async function startCompanionServer(
   return {
     address,
     state: stateStore,
+    advisor,
     async close(): Promise<void> {
       if (closed) {
         return;
@@ -101,6 +107,7 @@ function handleDatagram(
   remote: RemoteInfo,
   logger: CompanionLogger,
   stateStore: CompanionStateStore,
+  advisor: AdvisorEngine,
 ): void {
   if (remote.address !== LOOPBACK_HOST) {
     logger.warn(`Ignored packet from non-loopback address ${remote.address}`);
@@ -122,6 +129,9 @@ function handleDatagram(
 
   switch (packet.type) {
     case "hello":
+      if (packet.payload.advisor_config !== undefined) {
+        advisor.configure(packet.payload.advisor_config);
+      }
       sendPacket(
         socket,
         createHelloAckPacket({
@@ -185,6 +195,22 @@ function handleDatagram(
       return;
     case "dynamic_snapshot":
       stateStore.acceptDynamicSnapshot(packet);
+      for (const event of advisor.evaluate(packet, stateStore.staticState)) {
+        sendPacket(
+          socket,
+          createAdvisorUpdatePacket({
+            messageId: `companion-${randomUUID()}`,
+            timestamp: Date.now(),
+            event: event.type,
+            proactive: event.proactive,
+            alert: event.alert,
+          }),
+          remote,
+          logger,
+          `${event.type === "closed" ? "Closed" : "Emitted"} advisor alert ` +
+            `${event.alert.id}${event.proactive ? " proactively" : ""}`,
+        );
+      }
       if (packet.payload.truncated) {
         logger.warn(
           `Accepted truncated dynamic snapshot ${packet.message_id}: ` +
@@ -196,6 +222,7 @@ function handleDatagram(
     case "hello_ack":
     case "state_ack":
     case "resync_request":
+    case "advisor_update":
       logger.warn(`Ignored unexpected ${packet.type} packet ${packet.message_id}`);
   }
 }

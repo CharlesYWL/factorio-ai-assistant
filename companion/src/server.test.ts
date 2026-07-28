@@ -5,9 +5,14 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import {
+  ADVISOR_RULE_IDS,
+  DEFAULT_ADVISOR_CONFIG,
+  PROTOCOL_VERSION,
+  STATE_SCHEMA_VERSION,
   createHelloPacket,
   decodePacket,
   encodePacket,
+  type DynamicSnapshotPacket,
 } from "@factorio-ai-assistant/protocol";
 
 import {
@@ -127,12 +132,106 @@ void test(
   },
 );
 
+void test(
+  "evaluates configured rules and returns advisor updates to Factorio",
+  { timeout: 3_000 },
+  async (context) => {
+    const companion = await startCompanionServer({
+      port: 0,
+      logger: silentLogger,
+    });
+    const factorio = createSocket("udp4");
+
+    context.after(async () => {
+      await closeSocket(factorio);
+      await companion.close();
+    });
+
+    await bindSocket(factorio);
+    const hello = createHelloPacket({
+      messageId: "factorio-advisor-hello",
+      tick: 100,
+      modVersion: "0.1.0",
+      advisorConfig: {
+        ...DEFAULT_ADVISOR_CONFIG,
+        muted_rules: ADVISOR_RULE_IDS.filter((id) => id !== "research-idle"),
+        research_idle_ticks: 1,
+        recovery_ticks: 1,
+      },
+    });
+    const helloAckPromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(hello),
+      companion.address.port,
+      companion.address.address,
+    );
+    await helloAckPromise;
+
+    await send(
+      factorio,
+      encodePacket(dynamicSnapshot(100, 1)),
+      companion.address.port,
+      companion.address.address,
+    );
+    const advisorUpdatePromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(dynamicSnapshot(101, 2)),
+      companion.address.port,
+      companion.address.address,
+    );
+
+    const update = decodePacket((await advisorUpdatePromise).datagram);
+    assert.equal(update.type, "advisor_update");
+    if (update.type === "advisor_update") {
+      assert.equal(update.payload.event, "opened");
+      assert.equal(update.payload.proactive, true);
+      assert.equal(update.payload.alert.rule_id, "research-idle");
+      assert.equal(update.payload.alert.first_seen, 100);
+      assert.equal(update.payload.alert.last_seen, 101);
+    }
+    assert.equal(companion.advisor.activeAlerts.length, 1);
+  },
+);
+
 void test("parses a configured port without allowing an external bind address", () => {
   assert.equal(parseCompanionPort(undefined), 34_197);
   assert.equal(parseCompanionPort(" 40000 "), 40_000);
   assert.throws(() => parseCompanionPort("0"), /between 1 and 65535/);
   assert.throws(() => parseCompanionPort("127.0.0.1:34197"), /must be an integer/);
 });
+
+function dynamicSnapshot(tick: number, sequence: number): DynamicSnapshotPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: `factorio-dynamic-${sequence}`,
+    type: "dynamic_snapshot",
+    tick,
+    payload: {
+      sample_interval_ticks: 1,
+      sample_sequence: sequence,
+      truncated: false,
+      omitted_forces: 0,
+      omitted_series: 0,
+      forces: [
+        {
+          id: "player",
+          research: null,
+          items: [],
+          fluids: [],
+          power: {
+            network_count: 1,
+            generated_watts: 100,
+            consumed_watts: 100,
+            satisfaction_ratio: 1,
+          },
+        },
+      ],
+    },
+  };
+}
 
 function bindSocket(socket: Socket): Promise<AddressInfo> {
   return new Promise<AddressInfo>((resolve, reject) => {

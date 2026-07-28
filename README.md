@@ -1,19 +1,20 @@
 # Factorio AI Assistant
 
-Factorio 2.0 原版的只读游戏内顾问。当前 M2 在 localhost UDP 桥接之上提供版本化
-状态摘要和确定性生产比例引擎：配方、机器、插件、force 科技加成、滚动产销、当前
-研究和电力聚合。比例计算不接入模型，不发送地图或聊天，也不会修改工厂。
+Factorio 2.0 原版的只读游戏内顾问。当前 M3 在 localhost UDP 桥接和确定性生产比例
+引擎之上提供无需模型的实时规则顾问：持续检测研究、电力、炼油、科技推进、关键材料
+缺口和产线衰减，并用证据、建议、去重、恢复与冷却控制安静提醒。系统不发送地图或
+聊天，也不会修改工厂。
 
 ## 架构
 
 ```mermaid
 flowchart LR
     M["Factorio 2.0<br/>Lua Mod + sidebar UI"]
-    C["Node.js Companion<br/>127.0.0.1:34197"]
+    C["Node.js Companion<br/>rules + state + calculator<br/>127.0.0.1:34197"]
     P["Versioned JSON protocol<br/>packages/protocol"]
 
     M -- "hello + static/delta/dynamic<br/>UDP localhost" --> C
-    C -- "hello_ack + state_ack/resync<br/>UDP localhost" --> M
+    C -- "ack/resync + advisor_update<br/>UDP localhost" --> M
     M -. "Lua schema mirror" .-> P
     C --> P
 ```
@@ -25,10 +26,10 @@ flowchart LR
 | 路径 | 作用 |
 | --- | --- |
 | `factorio-mod/` | Factorio 2.0 Mod、事件缓存、状态采样和连接面板 |
-| `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion 与 revision 状态缓存 |
+| `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion、revision 状态缓存与本地规则顾问 |
 | `packages/protocol/` | 严格的版本化消息编解码与校验 |
 | `packages/calculator/` | 精确有理数生产流求解器、Factorio 2.0 fixture 与 JSON CLI |
-| `docs/` | Windows 安装、协议、排错和实机验证清单 |
+| `docs/` | Windows 安装、协议、规则阈值、排错和实机验证清单 |
 
 ## 本地验证
 
@@ -76,7 +77,8 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 
 完整的 Mod 安装、Steam 启动参数和 UI 预期见
 [`docs/setup-windows.md`](docs/setup-windows.md)。线协议见
-[`docs/protocol.md`](docs/protocol.md)。
+[`docs/protocol.md`](docs/protocol.md)。规则证据、默认阈值、静音和全部玩家可配置项见
+[`docs/advisor.md`](docs/advisor.md)。
 
 ## 安全边界
 
@@ -84,5 +86,5 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 - Factorio UDP 必须通过显式启动参数开启。
 - 状态只含游戏 / Mod / force / prototype ID 和聚合数值；无坐标、地图、聊天或存档。
 - 动态采样每 5 秒读取游戏统计和事件维护的 pole 缓存；没有 `on_tick` 全实体遍历。
-- 无 RCON、远程遥测、AI 或自动操作。
+- 实时规则顾问不调用模型；无 RCON、远程遥测或自动操作。
 - 仓库不读取或存储 API key、令牌等密钥。

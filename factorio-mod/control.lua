@@ -16,7 +16,53 @@ local BUTTON_NAME = "factorio-ai-assistant-toggle"
 local PANEL_NAME = "factorio-ai-assistant-panel"
 local STATUS_LABEL_NAME = "factorio-ai-assistant-status"
 local LAST_RESPONSE_LABEL_NAME = "factorio-ai-assistant-last-response"
+local ALERTS_LABEL_NAME = "factorio-ai-assistant-alerts"
 local PING_BUTTON_NAME = "factorio-ai-assistant-ping"
+
+local ADVISOR_RULE_IDS = {
+  ["research-idle"] = true,
+  ["power-low"] = true,
+  ["lubricant-zero"] = true,
+  ["oil-imbalance"] = true,
+  ["robotics-stalled"] = true,
+  ["material-deficit"] = true,
+  ["production-decline"] = true,
+}
+local ADVISOR_SETTING_NAMES = {
+  ["factorio-ai-assistant-advisor-quiet-mode"] = true,
+  ["factorio-ai-assistant-advisor-muted-rules"] = true,
+  ["factorio-ai-assistant-advisor-notification-cooldown-seconds"] = true,
+  ["factorio-ai-assistant-advisor-critical-power-bypass"] = true,
+  ["factorio-ai-assistant-advisor-recovery-seconds"] = true,
+  ["factorio-ai-assistant-advisor-research-idle-minutes"] = true,
+  ["factorio-ai-assistant-advisor-power-satisfaction-threshold"] = true,
+  ["factorio-ai-assistant-advisor-critical-power-threshold"] = true,
+  ["factorio-ai-assistant-advisor-power-low-seconds"] = true,
+  ["factorio-ai-assistant-advisor-lubricant-zero-minutes"] = true,
+  ["factorio-ai-assistant-advisor-oil-imbalance-minutes"] = true,
+  ["factorio-ai-assistant-advisor-oil-surplus-min-per-minute"] = true,
+  ["factorio-ai-assistant-advisor-petroleum-deficit-min-per-minute"] = true,
+  ["factorio-ai-assistant-advisor-science-stable-minutes"] = true,
+  ["factorio-ai-assistant-advisor-blue-science-min-per-minute"] = true,
+  ["factorio-ai-assistant-advisor-material-deficit-ratio"] = true,
+  ["factorio-ai-assistant-advisor-material-deficit-min-per-minute"] = true,
+  ["factorio-ai-assistant-advisor-material-deficit-minutes"] = true,
+  ["factorio-ai-assistant-advisor-crude-decline-ratio"] = true,
+  ["factorio-ai-assistant-advisor-crude-baseline-min-per-minute"] = true,
+  ["factorio-ai-assistant-advisor-crude-decline-minutes"] = true,
+  ["factorio-ai-assistant-advisor-key-material-baseline-min-per-minute"] = true,
+  ["factorio-ai-assistant-advisor-production-stop-minutes"] = true,
+}
+local ADVISOR_SEVERITIES = {
+  info = true,
+  warning = true,
+  critical = true,
+}
+local ADVISOR_EVENTS = {
+  opened = true,
+  reminder = true,
+  closed = true,
+}
 
 local UDP_EVENT = defines.events.on_udp_packet_received
 local UDP_AVAILABLE = UDP_EVENT ~= nil
@@ -31,6 +77,7 @@ local function get_state()
     sequence = 0,
     pending = {},
     static_pending = {},
+    advisor_alerts = {},
     receive_error_logged = false,
     unsupported_version_logged = false,
   }
@@ -39,6 +86,7 @@ local function get_state()
   state.sequence = state.sequence or 0
   state.pending = state.pending or {}
   state.static_pending = state.static_pending or {}
+  state.advisor_alerts = state.advisor_alerts or {}
   state.receive_error_logged = state.receive_error_logged or false
   state.unsupported_version_logged = state.unsupported_version_logged or false
 
@@ -47,6 +95,116 @@ end
 
 local function get_companion_port()
   return settings.startup["factorio-ai-assistant-companion-port"].value
+end
+
+local function get_advisor_config()
+  local muted_rules = {}
+  local seen_muted_rules = {}
+  local muted_value =
+    settings.global["factorio-ai-assistant-advisor-muted-rules"].value
+
+  for rule_id in string.gmatch(muted_value, "[^,%s]+") do
+    if ADVISOR_RULE_IDS[rule_id] and not seen_muted_rules[rule_id] then
+      table.insert(muted_rules, rule_id)
+      seen_muted_rules[rule_id] = true
+    end
+  end
+  table.sort(muted_rules)
+
+  local power_threshold =
+    settings.global[
+      "factorio-ai-assistant-advisor-power-satisfaction-threshold"
+    ].value
+  local critical_power_threshold = math.min(
+    power_threshold,
+    settings.global[
+      "factorio-ai-assistant-advisor-critical-power-threshold"
+    ].value
+  )
+
+  return {
+    quiet_mode =
+      settings.global["factorio-ai-assistant-advisor-quiet-mode"].value,
+    muted_rules = muted_rules,
+    notification_cooldown_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-notification-cooldown-seconds"
+      ].value * 60,
+    critical_power_bypass =
+      settings.global[
+        "factorio-ai-assistant-advisor-critical-power-bypass"
+      ].value,
+    recovery_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-recovery-seconds"
+      ].value * 60,
+    research_idle_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-research-idle-minutes"
+      ].value * 3600,
+    power_satisfaction_threshold = power_threshold,
+    critical_power_threshold = critical_power_threshold,
+    power_low_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-power-low-seconds"
+      ].value * 60,
+    lubricant_zero_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-lubricant-zero-minutes"
+      ].value * 3600,
+    oil_imbalance_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-oil-imbalance-minutes"
+      ].value * 3600,
+    oil_surplus_min_per_minute =
+      settings.global[
+        "factorio-ai-assistant-advisor-oil-surplus-min-per-minute"
+      ].value,
+    petroleum_deficit_min_per_minute =
+      settings.global[
+        "factorio-ai-assistant-advisor-petroleum-deficit-min-per-minute"
+      ].value,
+    science_stable_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-science-stable-minutes"
+      ].value * 3600,
+    blue_science_min_per_minute =
+      settings.global[
+        "factorio-ai-assistant-advisor-blue-science-min-per-minute"
+      ].value,
+    material_deficit_ratio =
+      settings.global[
+        "factorio-ai-assistant-advisor-material-deficit-ratio"
+      ].value,
+    material_deficit_min_per_minute =
+      settings.global[
+        "factorio-ai-assistant-advisor-material-deficit-min-per-minute"
+      ].value,
+    material_deficit_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-material-deficit-minutes"
+      ].value * 3600,
+    crude_decline_ratio =
+      settings.global[
+        "factorio-ai-assistant-advisor-crude-decline-ratio"
+      ].value,
+    crude_baseline_min_per_minute =
+      settings.global[
+        "factorio-ai-assistant-advisor-crude-baseline-min-per-minute"
+      ].value,
+    crude_decline_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-crude-decline-minutes"
+      ].value * 3600,
+    key_material_baseline_min_per_minute =
+      settings.global[
+        "factorio-ai-assistant-advisor-key-material-baseline-min-per-minute"
+      ].value,
+    production_stop_ticks =
+      settings.global[
+        "factorio-ai-assistant-advisor-production-stop-minutes"
+      ].value * 3600,
+  }
 end
 
 local function ensure_button(player)
@@ -73,6 +231,46 @@ local function format_last_response(state)
   }
 end
 
+local function localized_rule(rule_id)
+  return { "factorio-ai-assistant.rule-" .. rule_id }
+end
+
+local function localized_severity(severity)
+  return { "factorio-ai-assistant.severity-" .. severity }
+end
+
+local function format_active_alerts(state, force_id)
+  local alerts = {}
+  for _, alert in pairs(state.advisor_alerts) do
+    if alert.force_id == force_id then
+      table.insert(alerts, alert)
+    end
+  end
+  table.sort(alerts, function(left, right)
+    return left.id < right.id
+  end)
+
+  if #alerts == 0 then
+    return { "factorio-ai-assistant.no-active-alerts" }
+  end
+
+  local caption = {
+    "",
+    { "factorio-ai-assistant.active-alert-count", #alerts },
+  }
+  for _, alert in ipairs(alerts) do
+    table.insert(caption, "\n")
+    table.insert(caption, {
+      "factorio-ai-assistant.alert-line",
+      localized_severity(alert.severity),
+      localized_rule(alert.rule_id),
+      alert.evidence,
+      alert.recommendation,
+    })
+  end
+  return caption
+end
+
 local function refresh_player_ui(player)
   if not player.valid then
     return
@@ -88,6 +286,7 @@ local function refresh_player_ui(player)
   local state = get_state()
   local status_label = frame[STATUS_LABEL_NAME]
   local last_response_label = frame[LAST_RESPONSE_LABEL_NAME]
+  local alerts_label = frame[ALERTS_LABEL_NAME]
 
   if status_label then
     if state.connected then
@@ -110,6 +309,10 @@ local function refresh_player_ui(player)
       "factorio-ai-assistant.last-response",
       format_last_response(state),
     }
+  end
+
+  if alerts_label then
+    alerts_label.caption = format_active_alerts(state, player.force.name)
   end
 end
 
@@ -140,6 +343,12 @@ local function open_panel(player)
     type = "label",
     name = LAST_RESPONSE_LABEL_NAME,
   })
+  local alerts_label = frame.add({
+    type = "label",
+    name = ALERTS_LABEL_NAME,
+  })
+  alerts_label.style.single_line = false
+  alerts_label.style.maximal_width = 520
   frame.add({
     type = "button",
     name = PING_BUTTON_NAME,
@@ -204,6 +413,7 @@ local function send_hello()
     tick = game.tick,
     payload = {
       mod_version = script.active_mods["factorio-ai-assistant"] or "unknown",
+      advisor_config = get_advisor_config(),
     },
   }
 
@@ -345,8 +555,10 @@ local function poll_udp()
   end
 end
 
-local function is_non_empty_string(value)
-  return type(value) == "string" and value ~= "" and #value <= 128
+local function is_non_empty_string(value, maximum_length)
+  return type(value) == "string"
+    and value ~= ""
+    and #value <= (maximum_length or 128)
 end
 
 local function is_non_negative_integer(value)
@@ -445,6 +657,64 @@ local function handle_resync_request(packet, event)
   refresh_all_ui()
 end
 
+local function notify_proactive_alert(alert)
+  if settings.global["factorio-ai-assistant-advisor-quiet-mode"].value then
+    return
+  end
+
+  for _, player in pairs(game.connected_players) do
+    if player.force.name == alert.force_id then
+      player.print({
+        "factorio-ai-assistant.proactive-alert",
+        localized_severity(alert.severity),
+        localized_rule(alert.rule_id),
+        alert.evidence,
+        alert.recommendation,
+      })
+    end
+  end
+end
+
+local function handle_advisor_update(packet, event)
+  local payload = packet.payload
+  local alert = payload.alert
+
+  if packet.schema_version ~= STATE_SCHEMA_VERSION
+    or not is_non_negative_integer(packet.timestamp)
+    or not ADVISOR_EVENTS[payload.event]
+    or type(payload.proactive) ~= "boolean"
+    or type(alert) ~= "table"
+    or not is_non_empty_string(alert.id, 512)
+    or not ADVISOR_RULE_IDS[alert.rule_id]
+    or not is_non_empty_string(alert.force_id, 256)
+    or not ADVISOR_SEVERITIES[alert.severity]
+    or not is_non_empty_string(alert.evidence, 1024)
+    or not is_non_empty_string(alert.recommendation, 1024)
+    or not is_non_negative_integer(alert.first_seen)
+    or not is_non_negative_integer(alert.last_seen)
+    or alert.last_seen < alert.first_seen
+    or alert.id ~= alert.rule_id .. ":" .. alert.force_id
+    or (payload.event == "closed" and payload.proactive)
+  then
+    return
+  end
+
+  local state = get_state()
+  if payload.event == "closed" then
+    state.advisor_alerts[alert.id] = nil
+  else
+    state.advisor_alerts[alert.id] = alert
+  end
+  state.connected = true
+  state.last_response_tick = event.tick
+
+  if payload.proactive and payload.event ~= "closed" then
+    notify_proactive_alert(alert)
+  end
+
+  refresh_all_ui()
+end
+
 local function handle_udp_packet(event)
   if event.source_port ~= get_companion_port() then
     return
@@ -473,6 +743,8 @@ local function handle_udp_packet(event)
     handle_state_ack(packet, event)
   elseif packet.type == "resync_request" then
     handle_resync_request(packet, event)
+  elseif packet.type == "advisor_update" then
+    handle_advisor_update(packet, event)
   end
 end
 
@@ -533,6 +805,13 @@ script.on_event(defines.events.on_player_joined_game, function(event)
   if player then
     initialize_player(player)
     send_hello()
+  end
+end)
+
+script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
+  if ADVISOR_SETTING_NAMES[event.setting] then
+    send_hello()
+    refresh_all_ui()
   end
 end)
 

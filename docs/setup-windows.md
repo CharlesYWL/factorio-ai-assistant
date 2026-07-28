@@ -83,6 +83,9 @@ npm start
 6. 首次连接后，Companion 日志会出现 `Accepted static snapshot ...`；Factorio 的
    `factorio-current.log` 会记录首个动态样本的 interval、耗时、byte 数和裁剪计数，
    之后约每分钟记录一次。
+7. 面板底部显示当前 force 的活动告警。可在 **Settings → Mod settings → Map** 临时
+   调低某条规则的持续门槛验证打开 / 恢复；测试后恢复默认值。全局安静、规则静音和
+   全部默认阈值见 [`advisor.md`](advisor.md)。
 
 ## 排错
 
@@ -104,7 +107,11 @@ npm start
 - [x] 协议正常包、损坏包和未知版本单元测试。
 - [x] Vanilla 2.0 静态 / 动态 fixture、未知字段兼容和错误字段拒绝测试。
 - [x] 静态 chunk 组装、delta revision、确认和重同步单元测试。
+- [x] 七条顾问规则的正例、反例、抖动、恢复、复发、静音和冷却单元测试。
+- [x] Node mock UDP 集成测试：`hello` 同步配置，动态样本触发
+  `advisor_update`。
 - [ ] Windows Steam Factorio 2.0 实机：按钮和面板正确渲染。
+- [ ] Windows Steam Factorio 2.0 实机：活动告警、主动聊天提醒、安静模式和恢复关闭。
 - [ ] Windows Steam Factorio 2.0 实机：`Disconnected → Connected`、超时断开及
   Companion 重启恢复。
 - [ ] Windows 防火墙默认配置下的 loopback 行为。
