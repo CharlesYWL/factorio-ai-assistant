@@ -47,7 +47,7 @@ const silentLogger: CompanionLogger = {
 };
 
 void test(
-  "grounds all five state-aware dialog fixtures in deterministic tools",
+  "grounds all state-aware dialog fixtures in deterministic tools",
   async () => {
     const fixture = await readDialogFixture();
     const catalog = await readCatalog();

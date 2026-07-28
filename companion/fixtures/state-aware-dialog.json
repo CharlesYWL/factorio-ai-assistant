@@ -32,6 +32,18 @@
       "question": "这个建议依据什么数据？",
       "expected_tool": "read_advisor_alerts",
       "expected_text": "[事实]"
+    },
+    {
+      "id": "next-step-plan",
+      "question": "接下来该做什么？",
+      "expected_tool": "read_progression_guide",
+      "expected_text": "[流程指南]"
+    },
+    {
+      "id": "expand-next",
+      "question": "下一步该扩建哪条产线？",
+      "expected_tool": "read_progression_guide",
+      "expected_text": "内置流程指南"
     }
   ],
   "dynamic_snapshot": {

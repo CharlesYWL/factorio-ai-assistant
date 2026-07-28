@@ -49,7 +49,8 @@ flowchart LR
 | `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion、状态缓存、本地规则顾问、上下文压缩和 provider 层 |
 | `packages/protocol/` | 严格的版本化消息编解码与校验 |
 | `packages/calculator/` | 精确有理数生产流求解器、Factorio 2.0 fixture 与 JSON CLI |
-| `docs/` | Windows 安装、协议、规则阈值、排错和实机验证清单 |
+| `packages/guide/` | 版本化的 Factorio 2.0 原版流程指南数据与确定性阶段判定引擎 |
+| `docs/` | Windows 安装、协议、规则阈值、流程指南、排错和实机验证清单 |
 
 ## 游戏内面板
 
@@ -59,7 +60,9 @@ flowchart LR
 Factorio 图形客户端，Windows 实机截图仍列在验证清单中。
 
 - **Chat**：消息历史、快捷问题、Enter 发送、取消请求；回答区分事实、确定性计算、
-  推断、缺失数据与假设，行动项最多 3 个并引用规则 / 计算证据。
+  流程指南、推断、缺失数据与假设，行动项最多 3 个并引用规则 / 计算 / 指南证据。
+  问“下一步做什么 / 该扩建什么 / 该研究什么”时会调用内置的 Factorio 2.0 原版流程指南，
+  按当前已研究科技判定阶段并给出有顺序的步骤；有活动告警时先修当前瓶颈。
 - **Calculator**：目标物品或流体、每分钟产量及目标配方的机器 / 插件假设；返回配方、
   精确台数、向上取整台数、外部输入和副产物。
 - **Alerts**：按严重度显示证据和建议，可静音 / 恢复规则；主动提醒使用 8 秒第三方
@@ -137,7 +140,8 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 完整的 Mod 安装、升级/降级、卸载、Steam 启动参数和 UI 预期见
 [`docs/setup-windows.md`](docs/setup-windows.md)。线协议见
 [`docs/protocol.md`](docs/protocol.md)。规则证据、默认阈值、静音和全部玩家可配置项见
-[`docs/advisor.md`](docs/advisor.md)。
+[`docs/advisor.md`](docs/advisor.md)。内置原版流程指南的资料来源、阶段划分、规则结构和
+更新流程见 [`docs/guide.md`](docs/guide.md)。
 
 ### 当前限制
 
@@ -158,6 +162,7 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 - 动态采样每 5 秒读取游戏统计和事件维护的 pole 缓存；没有 `on_tick` 全实体遍历。
 - 实时规则顾问和计算器不调用模型；AI provider 只接收按问题压缩且有 byte budget 的
   聚合上下文，无 RCON、远程遥测或自动操作。
+- 内置流程指南是仓库内的静态数据，运行时不联网、不抓攻略，也不会把网页内容交给模型。
 - API Key 只从 Companion 进程环境或显式本机配置读取，不进入 Mod、存档、UDP 或日志。
 - 模型调用有取消、每次超时和最多一次有限重试；失败后返回本地结果。
 - 模型只能解释已经执行的只读工具结果；数字冲突、无证据引用、额外行动列表或可执行

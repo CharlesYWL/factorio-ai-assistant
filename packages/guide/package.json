@@ -1,16 +1,20 @@
 {
-  "name": "@factorio-ai-assistant/companion",
+  "name": "@factorio-ai-assistant/guide",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "scripts": {
-    "start": "node dist/index.js"
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist"
+  ],
   "dependencies": {
-    "@factorio-ai-assistant/calculator": "*",
-    "@factorio-ai-assistant/guide": "*",
     "@factorio-ai-assistant/protocol": "*"
   }
 }
