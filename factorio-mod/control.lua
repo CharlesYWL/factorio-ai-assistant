@@ -249,8 +249,10 @@ local function refresh_player_ui(player)
   end
 
   local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
   ui.ensure_button(player)
-  ui.render(player, state, ui_state.ensure_player(state, player.index))
+  ui.refresh_alerts_hud(player, state, player_state)
+  ui.render(player, state, player_state)
 end
 
 local function refresh_all_ui()
@@ -385,6 +387,25 @@ local function cancel_chat_request(player)
   local state = get_state()
   local player_state = ui_state.ensure_player(state, player.index)
   local request_id = ui_state.cancel_chat(player_state, game.tick)
+  if request_id ~= nil and state.connected then
+    send_ui_packet({
+      protocol_version = PROTOCOL_VERSION,
+      schema_version = STATE_SCHEMA_VERSION,
+      message_id = next_message_id(state, "cancel"),
+      type = "assistant_cancel",
+      tick = game.tick,
+      payload = {
+        request_id = request_id,
+      },
+    }, "assistant cancellation")
+  end
+  ui.render(player, state, player_state)
+end
+
+local function clear_chat_history(player)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  local request_id = ui_state.clear_chat(player_state)
   if request_id ~= nil and state.connected then
     send_ui_packet({
       protocol_version = PROTOCOL_VERSION,
@@ -823,9 +844,13 @@ local function notify_proactive_alert(alert)
     return
   end
 
+  local state = get_state()
   for _, player in pairs(game.connected_players) do
     if player.force.name == alert.force_id then
-      ui.show_toast(player, get_state(), alert)
+      local player_state = ui_state.ensure_player(state, player.index)
+      if not ui_state.is_alert_dismissed(player_state, alert) then
+        ui.show_toast(player, state, alert)
+      end
     end
   end
 end
@@ -857,6 +882,7 @@ local function handle_advisor_update(packet, event)
   local state = get_state()
   if payload.event == "closed" then
     state.advisor_alerts[alert.id] = nil
+    ui_state.forget_alert(state, alert.id)
   else
     state.advisor_alerts[alert.id] = alert
   end
@@ -1305,6 +1331,25 @@ local function set_rule_muted(player, rule_id, muted)
   refresh_all_ui()
 end
 
+local function set_alert_dismissed(player, alert_id, dismissed)
+  if type(alert_id) ~= "string" then
+    return
+  end
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  if dismissed then
+    local alert = state.advisor_alerts[alert_id]
+    if alert == nil or alert.force_id ~= player.force.name then
+      return
+    end
+    ui_state.dismiss_alert(player_state, alert)
+  elseif not ui_state.restore_alert(player_state, alert_id) then
+    return
+  end
+  ui.refresh_alerts_hud(player, state, player_state)
+  ui.render(player, state, player_state)
+end
+
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not element.valid then
@@ -1354,8 +1399,14 @@ script.on_event(defines.events.on_gui_click, function(event)
     send_chat_request(player, ui.read_chat_input(player))
   elseif action == "cancel-chat" then
     cancel_chat_request(player)
+  elseif action == "clear-chat" then
+    clear_chat_history(player)
   elseif action == "calculate" then
     send_calculation_request(player)
+  elseif action == "dismiss-alert" then
+    set_alert_dismissed(player, tags.alert_id, true)
+  elseif action == "restore-alert" then
+    set_alert_dismissed(player, tags.alert_id, false)
   elseif action == "mute-rule" then
     set_rule_muted(player, tags.rule_id, true)
   elseif action == "unmute-rule" then
@@ -1492,6 +1543,89 @@ local function copy_table(value)
   return result
 end
 
+local function mock_alert(player, rule_id, severity, evidence, recommendation, age)
+  return {
+    id = rule_id .. ":" .. player.force.name,
+    rule_id = rule_id,
+    force_id = player.force.name,
+    severity = severity,
+    evidence = evidence,
+    recommendation = recommendation,
+    first_seen = math.max(0, game.tick - age),
+    last_seen = game.tick,
+  }
+end
+
+local function mock_alert_set(player, mode)
+  local alerts = {}
+  if mode == "none" then
+    return alerts
+  end
+  local power = mock_alert(
+    player,
+    "power-low",
+    "warning",
+    "电力满足率为 78%（发电 62 MW，用电 80 MW）。",
+    "增加发电或燃料，并检查过载电网。",
+    3600
+  )
+  alerts[power.id] = power
+  if mode == "one" then
+    return alerts
+  end
+  local material = mock_alert(
+    player,
+    "material-deficit",
+    "critical",
+    "铁板 10 分钟消费 2400/min，生产 900/min。",
+    "扩建铁矿冶炼或减少下游消耗。",
+    7200
+  )
+  alerts[material.id] = material
+  local research = mock_alert(
+    player,
+    "research-idle",
+    "info",
+    "当前没有进行中的研究，已空闲 12 分钟。",
+    "在科技树中选择下一个研究目标。",
+    1800
+  )
+  alerts[research.id] = research
+  return alerts
+end
+
+local function reopen_mock_alerts(player, state)
+  local reopened = {}
+  for alert_id, alert in pairs(state.advisor_alerts) do
+    if alert.force_id == player.force.name then
+      state.advisor_alerts[alert_id] = nil
+      ui_state.forget_alert(state, alert_id)
+      local copy = copy_table(alert)
+      copy.first_seen = game.tick
+      copy.last_seen = game.tick
+      reopened[alert_id] = copy
+    end
+  end
+  if next(reopened) == nil then
+    reopened = mock_alert_set(player, "one")
+    for alert_id in pairs(reopened) do
+      ui_state.forget_alert(state, alert_id)
+    end
+  end
+  for alert_id, alert in pairs(reopened) do
+    state.advisor_alerts[alert_id] = alert
+  end
+end
+
+local function close_mock_alerts(player, state)
+  for alert_id, alert in pairs(state.advisor_alerts) do
+    if alert.force_id == player.force.name then
+      state.advisor_alerts[alert_id] = nil
+      ui_state.forget_alert(state, alert_id)
+    end
+  end
+end
+
 local function apply_ui_mock(player, mode)
   local state = get_state()
   if mode == "clear" then
@@ -1510,8 +1644,36 @@ local function apply_ui_mock(player, mode)
       state.ui_mock_backup = nil
     end
     local player_state = ui_state.reset_player(state, player.index)
+    ui.refresh_alerts_hud(player, state, player_state)
     ui.open(player, state, player_state)
     send_hello()
+    return
+  end
+
+  if mode == "chat-append"
+    or mode == "chat-cleared"
+    or mode == "alert-close"
+    or mode == "alert-reopen"
+  then
+    local player_state = ui_state.ensure_player(state, player.index)
+    if mode == "chat-append" then
+      ui_state.append_mock_message(
+        player_state,
+        "assistant",
+        "新增回答 #"
+          .. tostring(#player_state.chat_history + 1)
+          .. "：电力满足率回升到 96%，可以继续扩建。",
+        game.tick
+      )
+    elseif mode == "chat-cleared" then
+      ui_state.clear_chat(player_state)
+    elseif mode == "alert-close" then
+      close_mock_alerts(player, state)
+    else
+      reopen_mock_alerts(player, state)
+    end
+    ui.refresh_alerts_hud(player, state, player_state)
+    ui.open(player, state, player_state)
     return
   end
 
@@ -1568,6 +1730,36 @@ local function apply_ui_mock(player, mode)
     state.connected = true
     ui_state.append_system(player_state, "chat-timeout", game.tick)
     ui_state.set_calculation_error(player_state, "TIMEOUT", nil)
+  elseif mode == "chat-long" then
+    state.connected = true
+    for index = 1, 8 do
+      ui_state.append_mock_message(
+        player_state,
+        "user",
+        "第 " .. index .. " 个问题：这条产线的瓶颈在哪里？",
+        game.tick - (9 - index) * 120
+      )
+      ui_state.append_mock_message(
+        player_state,
+        "assistant",
+        "第 "
+          .. index
+          .. " 条回答：瓶颈在铜板供应，当前 "
+          .. (index * 30)
+          .. "/min，需要 "
+          .. (index * 45)
+          .. "/min。假设：无插件。",
+        game.tick - (9 - index) * 120 + 60
+      )
+    end
+  elseif mode == "alerts-none"
+    or mode == "alerts-one"
+    or mode == "alerts-many"
+  then
+    state.connected = true
+    state.advisor_alerts =
+      mock_alert_set(player, string.sub(mode, 8))
+    ui_state.set_tab(player_state, "alerts")
   elseif mode == "ready" then
     state.connected = true
     ui_state.append_mock_message(
@@ -1608,21 +1800,13 @@ local function apply_ui_mock(player, mode)
       rounding = "精确数量与向上取整后的建造数量同时显示。",
       truncated = false,
     }
-    state.advisor_alerts["power-low:" .. player.force.name] = {
-      id = "power-low:" .. player.force.name,
-      rule_id = "power-low",
-      force_id = player.force.name,
-      severity = "warning",
-      evidence = "电力满足率为 78%（发电 62 MW，用电 80 MW）。",
-      recommendation = "增加发电或燃料，并检查过载电网。",
-      first_seen = game.tick - 3600,
-      last_seen = game.tick,
-    }
+    state.advisor_alerts = mock_alert_set(player, "one")
   else
     player.print({ "factorio-ai-assistant.mock-invalid-mode" })
     return
   end
 
+  ui.refresh_alerts_hud(player, state, player_state)
   ui.open(player, state, player_state)
 end
 

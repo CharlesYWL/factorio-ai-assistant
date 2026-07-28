@@ -10,6 +10,7 @@ local VALID_TABS = {
 local SIZES = { "compact", "normal", "large" }
 local valid_size
 local append_chat
+local touch_chat
 
 function ui_state.ensure_player(state, player_index)
   state.ui_players = state.ui_players or {}
@@ -21,6 +22,9 @@ function ui_state.ensure_player(state, player_index)
       location = nil,
       chat_history = {},
       chat_pending = nil,
+      chat_sequence = 0,
+      chat_revision = 0,
+      dismissed_alerts = {},
       calculator = {
         target_kind = "item",
         target_id = "",
@@ -40,6 +44,15 @@ function ui_state.ensure_player(state, player_index)
     VALID_TABS[player_state.active_tab] and player_state.active_tab or "chat"
   player_state.size = valid_size(player_state.size)
   player_state.chat_history = player_state.chat_history or {}
+  player_state.chat_sequence = player_state.chat_sequence or 0
+  player_state.chat_revision = player_state.chat_revision or 0
+  player_state.dismissed_alerts = player_state.dismissed_alerts or {}
+  for _, entry in ipairs(player_state.chat_history) do
+    if entry.seq == nil then
+      player_state.chat_sequence = player_state.chat_sequence + 1
+      entry.seq = player_state.chat_sequence
+    end
+  end
   player_state.calculator = player_state.calculator or {}
   local calculator = player_state.calculator
   calculator.target_kind =
@@ -99,7 +112,16 @@ function ui_state.queue_chat(player_state, message_id, question, tick)
     message_id = message_id,
     sent_tick = tick,
   }
+  touch_chat(player_state)
   return true
+end
+
+function ui_state.clear_chat(player_state)
+  local pending = player_state.chat_pending
+  player_state.chat_pending = nil
+  player_state.chat_history = {}
+  touch_chat(player_state)
+  return pending ~= nil and pending.message_id or nil
 end
 
 function ui_state.cancel_chat(player_state, tick)
@@ -246,6 +268,45 @@ function ui_state.reset_player(state, player_index)
   return ui_state.ensure_player(state, player_index)
 end
 
+function ui_state.dismiss_alert(player_state, alert)
+  if type(alert) ~= "table" or type(alert.id) ~= "string" then
+    return false
+  end
+  player_state.dismissed_alerts = player_state.dismissed_alerts or {}
+  player_state.dismissed_alerts[alert.id] = alert.first_seen or 0
+  return true
+end
+
+function ui_state.restore_alert(player_state, alert_id)
+  if type(alert_id) ~= "string" or player_state.dismissed_alerts == nil then
+    return false
+  end
+  if player_state.dismissed_alerts[alert_id] == nil then
+    return false
+  end
+  player_state.dismissed_alerts[alert_id] = nil
+  return true
+end
+
+function ui_state.is_alert_dismissed(player_state, alert)
+  if type(alert) ~= "table" or player_state.dismissed_alerts == nil then
+    return false
+  end
+  local dismissed_at = player_state.dismissed_alerts[alert.id]
+  return dismissed_at ~= nil and dismissed_at == (alert.first_seen or 0)
+end
+
+function ui_state.forget_alert(state, alert_id)
+  if type(alert_id) ~= "string" then
+    return
+  end
+  for _, player_state in pairs(state.ui_players or {}) do
+    if player_state.dismissed_alerts ~= nil then
+      player_state.dismissed_alerts[alert_id] = nil
+    end
+  end
+end
+
 function ui_state.append_mock_message(player_state, role, text, tick)
   append_chat(player_state, {
     role = role,
@@ -272,10 +333,17 @@ function ui_state.set_calculation_error(player_state, error_code, error_message)
 end
 
 append_chat = function(player_state, entry)
+  player_state.chat_sequence = (player_state.chat_sequence or 0) + 1
+  entry.seq = player_state.chat_sequence
   table.insert(player_state.chat_history, entry)
   while #player_state.chat_history > MAX_CHAT_HISTORY do
     table.remove(player_state.chat_history, 1)
   end
+  touch_chat(player_state)
+end
+
+touch_chat = function(player_state)
+  player_state.chat_revision = (player_state.chat_revision or 0) + 1
 end
 
 valid_size = function(size)
