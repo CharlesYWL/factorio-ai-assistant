@@ -1,6 +1,7 @@
 import type {
   DynamicSnapshotPacket,
   MachineDescriptor,
+  ModuleDescriptor,
   RecipeDescriptor,
   StaticDeltaPacket,
   StaticForceDescriptor,
@@ -38,6 +39,13 @@ export interface StaticState {
   forces: StaticForceDescriptor[];
   recipes: RecipeDescriptor[];
   machines: MachineDescriptor[];
+  modules: ModuleDescriptor[];
+}
+
+interface ForceState {
+  researchedTechnologies: Set<string>;
+  availableRecipes: Set<string>;
+  productivityBonuses: Map<string, number>;
 }
 
 interface PendingSnapshot {
@@ -163,18 +171,31 @@ export class CompanionStateStore {
         {
           researchedTechnologies: new Set(force.researched_technologies),
           availableRecipes: new Set(force.available_recipes),
+          productivityBonuses: new Map(
+            force.recipe_productivity_bonuses.map(({ recipe_id, bonus }) => [
+              recipe_id,
+              bonus,
+            ]),
+          ),
         },
       ]),
     );
     const forceState = forceMap.get(payload.force.id) ?? {
       researchedTechnologies: new Set<string>(),
       availableRecipes: new Set<string>(),
+      productivityBonuses: new Map<string, number>(),
     };
 
     applySetDelta(
       forceState.researchedTechnologies,
       payload.force.researched_technologies_added,
       payload.force.researched_technologies_removed,
+    );
+    forceState.productivityBonuses = new Map(
+      payload.force.recipe_productivity_bonuses.map(({ recipe_id, bonus }) => [
+        recipe_id,
+        bonus,
+      ]),
     );
     applySetDelta(
       forceState.availableRecipes,
@@ -191,6 +212,9 @@ export class CompanionStateStore {
           id,
           researched_technologies: [...state.researchedTechnologies].sort(),
           available_recipes: [...state.availableRecipes].sort(),
+          recipe_productivity_bonuses: [...state.productivityBonuses.entries()]
+            .map(([recipe_id, bonus]) => ({ recipe_id, bonus }))
+            .sort((left, right) => left.recipe_id.localeCompare(right.recipe_id)),
         }))
         .sort(compareById),
     };
@@ -238,12 +262,10 @@ function assembleSnapshot(
   pending: PendingSnapshot,
   expectedRevision: number,
 ): StaticState {
-  const forceMap = new Map<
-    string,
-    { researchedTechnologies: Set<string>; availableRecipes: Set<string> }
-  >();
+  const forceMap = new Map<string, ForceState>();
   const recipeMap = new Map<string, RecipeDescriptor>();
   const machineMap = new Map<string, MachineDescriptor>();
+  const moduleMap = new Map<string, ModuleDescriptor>();
   let game: StaticGameDescriptor | undefined;
 
   for (let index = 0; index < pending.chunkCount; index += 1) {
@@ -271,10 +293,22 @@ function assembleSnapshot(
       const current = forceMap.get(force.id) ?? {
         researchedTechnologies: new Set<string>(),
         availableRecipes: new Set<string>(),
+        productivityBonuses: new Map<string, number>(),
       };
 
       addAll(current.researchedTechnologies, force.researched_technologies);
       addAll(current.availableRecipes, force.available_recipes);
+      for (const { recipe_id, bonus } of force.recipe_productivity_bonuses) {
+        const existing = current.productivityBonuses.get(recipe_id);
+        if (existing !== undefined && existing !== bonus) {
+          throw new StateSyncError(
+            "SNAPSHOT_CONFLICT",
+            `Static snapshot ${snapshotId} contains conflicting productivity bonus for ${recipe_id}`,
+            expectedRevision,
+          );
+        }
+        current.productivityBonuses.set(recipe_id, bonus);
+      }
       forceMap.set(force.id, current);
     }
 
@@ -293,6 +327,16 @@ function assembleSnapshot(
         machineMap,
         machine,
         "machine",
+        snapshotId,
+        expectedRevision,
+      );
+    }
+
+    for (const module of chunk.modules) {
+      addConsistentDescriptor(
+        moduleMap,
+        module,
+        "module",
         snapshotId,
         expectedRevision,
       );
@@ -318,10 +362,14 @@ function assembleSnapshot(
         id,
         researched_technologies: [...force.researchedTechnologies].sort(),
         available_recipes: [...force.availableRecipes].sort(),
+        recipe_productivity_bonuses: [...force.productivityBonuses.entries()]
+          .map(([recipe_id, bonus]) => ({ recipe_id, bonus }))
+          .sort((left, right) => left.recipe_id.localeCompare(right.recipe_id)),
       }))
       .sort(compareById),
     recipes: [...recipeMap.values()].sort(compareById),
     machines: [...machineMap.values()].sort(compareById),
+    modules: [...moduleMap.values()].sort(compareById),
   };
 }
 

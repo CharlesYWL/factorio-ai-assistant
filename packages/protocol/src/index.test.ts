@@ -58,8 +58,8 @@ void test("encodes state acknowledgements and resync requests", () => {
 
 void test("validates representative Factorio 2.0 static and dynamic fixtures", async () => {
   for (const fileName of [
-    "vanilla-2.0-static-v1.json",
-    "vanilla-2.0-dynamic-v1.json",
+    "vanilla-2.0-static-v2.json",
+    "vanilla-2.0-dynamic-v2.json",
   ]) {
     const encoded = await readFile(new URL(fileName, fixtureDirectory), "utf8");
     const fixture = JSON.parse(encoded) as unknown;
@@ -72,7 +72,7 @@ void test("validates representative Factorio 2.0 static and dynamic fixtures", a
 
 void test("ignores unknown fields while retaining strict known-field validation", async () => {
   const encoded = await readFile(
-    new URL("vanilla-2.0-dynamic-v1.json", fixtureDirectory),
+    new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),
     "utf8",
   );
   const fixture = JSON.parse(encoded) as Record<string, unknown>;
@@ -97,7 +97,7 @@ void test("ignores unknown fields while retaining strict known-field validation"
 
 void test("accepts Factorio prototype identifiers up to its documented limit", async () => {
   const encoded = await readFile(
-    new URL("vanilla-2.0-dynamic-v1.json", fixtureDirectory),
+    new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),
     "utf8",
   );
   const fixture = JSON.parse(encoded) as Record<string, unknown>;
@@ -118,7 +118,7 @@ void test("accepts Factorio prototype identifiers up to its documented limit", a
 
 void test("rejects malformed known state fields safely", async () => {
   const encoded = await readFile(
-    new URL("vanilla-2.0-dynamic-v1.json", fixtureDirectory),
+    new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),
     "utf8",
   );
   const fixture = JSON.parse(encoded) as Record<string, unknown>;
@@ -130,6 +130,35 @@ void test("rejects malformed known state fields safely", async () => {
   const power = firstForce.power as Record<string, unknown>;
   power.satisfaction_ratio = "full";
 
+  expectProtocolError(() => decodePacket(JSON.stringify(fixture)), "INVALID_PACKET");
+});
+
+void test("validates production timing while preserving signed force bonuses", async () => {
+  const encoded = await readFile(
+    new URL("vanilla-2.0-static-v2.json", fixtureDirectory),
+    "utf8",
+  );
+  const fixture = JSON.parse(encoded) as Record<string, unknown>;
+  const payload = fixture.payload as Record<string, unknown>;
+  const forces = payload.forces as Array<Record<string, unknown>>;
+  const bonuses = forces[0]?.recipe_productivity_bonuses as Array<
+    Record<string, unknown>
+  >;
+  const recipes = payload.recipes as Array<Record<string, unknown>>;
+  const firstBonus = bonuses[0];
+  const firstRecipe = recipes[0];
+  assert.ok(firstBonus !== undefined);
+  assert.ok(firstRecipe !== undefined);
+
+  firstBonus.bonus = -0.1;
+  const decoded = decodePacket(JSON.stringify(fixture));
+  assert.equal(decoded.type, "static_snapshot");
+  assert.equal(
+    decoded.payload.forces[0]?.recipe_productivity_bonuses[0]?.bonus,
+    -0.1,
+  );
+
+  firstRecipe.energy_seconds = 0;
   expectProtocolError(() => decodePacket(JSON.stringify(fixture)), "INVALID_PACKET");
 });
 
@@ -176,7 +205,7 @@ void test("rejects unknown protocol and state schema versions", async () => {
   );
 
   const encoded = await readFile(
-    new URL("vanilla-2.0-dynamic-v1.json", fixtureDirectory),
+    new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),
     "utf8",
   );
   const fixture = JSON.parse(encoded) as Record<string, unknown>;
@@ -190,7 +219,7 @@ void test("rejects unknown protocol and state schema versions", async () => {
 
 void test("rejects invalid static chunk and delta ordering", async () => {
   const encoded = await readFile(
-    new URL("vanilla-2.0-static-v1.json", fixtureDirectory),
+    new URL("vanilla-2.0-static-v2.json", fixtureDirectory),
     "utf8",
   );
   const fixture = JSON.parse(encoded) as Record<string, unknown>;
@@ -210,6 +239,7 @@ void test("rejects invalid static chunk and delta ordering", async () => {
       researched_technologies_removed: [],
       available_recipes_added: [],
       available_recipes_removed: [],
+      recipe_productivity_bonuses: [],
     },
   };
 

@@ -1,21 +1,22 @@
-# UDP 状态协议 v1
+# UDP 状态协议 v2
 
 协议使用 UTF-8 JSON，每个 localhost UDP datagram 恰好包含一个消息。传输协议版本
-`protocol_version` 和状态 schema 版本 `schema_version` 独立演进；当前都为 `1`。
+`protocol_version` 和状态 schema 版本 `schema_version` 独立演进；当前分别为 `1`
+和 `2`。
 任意消息的硬上限为 16 KiB（16,384 bytes）。
 
 TypeScript 权威编解码器位于 `packages/protocol/`，Factorio Mod 在
 `factorio-mod/state_collector.lua` 中镜像同一 schema。代表性的 vanilla 2.0 fixture：
 
-- `packages/protocol/fixtures/vanilla-2.0-static-v1.json`
-- `packages/protocol/fixtures/vanilla-2.0-dynamic-v1.json`
+- `packages/protocol/fixtures/vanilla-2.0-static-v2.json`
+- `packages/protocol/fixtures/vanilla-2.0-dynamic-v2.json`
 
 ## 公共信封
 
 | 字段 | 类型 | 来源 / 单位 | 刷新条件 | 隐私分类 |
 | --- | --- | --- | --- | --- |
 | `protocol_version` | integer | 固定 `1` | 每条消息 | 协议元数据 |
-| `schema_version` | integer | 状态消息固定 `1`；`hello*` 不使用 | 每条状态消息 | 协议元数据 |
+| `schema_version` | integer | 状态消息固定 `2`；`hello*` 不使用 | 每条状态消息 | 协议元数据 |
 | `message_id` | string | 发送方生成，最多 128 字符 | 每条消息唯一 | 协议元数据 |
 | `type` | string | 消息类型 | 每条消息 | 协议元数据 |
 | `tick` | non-negative integer | `game.tick`，tick | Mod 发出的消息 | 聚合时序 |
@@ -84,7 +85,7 @@ chunk 到齐后才原子替换当前状态。空闲期间没有 dirty revision �
 ```json
 {
   "protocol_version": 1,
-  "schema_version": 1,
+  "schema_version": 2,
   "message_id": "factorio-static-3600-4",
   "type": "static_snapshot",
   "tick": 3600,
@@ -101,7 +102,8 @@ chunk 到齐后才原子替换当前状态。空闲期间没有 dirty revision �
     },
     "forces": [],
     "recipes": [],
-    "machines": []
+    "machines": [],
+    "modules": []
   }
 }
 ```
@@ -115,7 +117,7 @@ chunk 到齐后才原子替换当前状态。空闲期间没有 dirty revision �
 | `payload.chunk_index` | 从 `0` 开始 | 每个 chunk | 协议元数据 |
 | `payload.chunk_count` | 当前快照 chunk 总数 | 每个完整快照 | 协议元数据 |
 | `payload.truncated` | 是否有单条超预算记录被省略 | 每个完整快照 | 质量标记 |
-| `payload.omitted_records` | 被省略的 Mod / force fragment / prototype 数 | 每个完整快照 | 聚合计数 |
+| `payload.omitted_records` | 被省略的 Mod / force fragment / recipe / machine / module 数 | 每个完整快照 | 聚合计数 |
 | `payload.game` | 只在 chunk `0` 中出现 | 每个完整快照 | 见下行 |
 | `payload.game.version` | `script.active_mods.base` | 启动 / 配置变化 / 重同步 | 游戏标识 |
 | `payload.game.mods[].id` | `script.active_mods` 的 Mod ID | 同上 | Mod 标识 |
@@ -130,6 +132,9 @@ chunk 到齐后才原子替换当前状态。空闲期间没有 dirty revision �
 | `forces[].id` | `LuaForce.name` | 完整快照 | 游戏内 ID |
 | `forces[].researched_technologies[]` | `force.technologies[*].researched` 为 true 的 technology ID | 完整快照；之后由 delta 更新 | 游戏内 ID 集合 |
 | `forces[].available_recipes[]` | `force.recipes[*].enabled` 且非 hidden 的 recipe ID | 完整快照；之后由 delta 更新 | 游戏内 ID 集合 |
+| `forces[].recipe_productivity_bonuses[]` | 非零的 `LuaRecipe.productivity_bonus` | 完整快照；之后由 delta 整体替换 | 原型 ID + 静态数值 |
+| `recipe_productivity_bonuses[].recipe_id` | recipe ID | 同上 | 原型 ID |
+| `recipe_productivity_bonuses[].bonus` | 科技 / force 对该 recipe 的产能加成倍率 | 同上 | 静态数值 |
 
 只采集至少拥有一个玩家的 force；不发送玩家 ID、显示名或玩家列表。
 
@@ -145,9 +150,13 @@ chunk 到齐后才原子替换当前状态。空闲期间没有 dirty revision �
 | `recipes[].energy_seconds` | `LuaRecipePrototype.energy`，秒 / craft（速度 1） | 完整快照 | 静态数值 |
 | `recipes[].ingredients[]` | `LuaRecipePrototype.ingredients` | 完整快照 | 原型 ID + 静态数值 |
 | `recipes[].products[]` | `LuaRecipePrototype.products` | 完整快照 | 原型 ID + 静态数值 |
+| `recipes[].allowed_effects[]` | `LuaRecipePrototype.allowed_effects` | 完整快照 | 原型 ID 集合 |
+| `recipes[].allowed_module_categories[]` | `LuaRecipePrototype.allowed_module_categories` | 完整快照 | 原型 ID 集合 |
+| `recipes[].maximum_productivity` | `LuaRecipePrototype.maximum_productivity`，倍率 | 完整快照 | 静态数值 |
 | `ingredients/products[].kind` | `item` 或 `fluid` | 完整快照 | 原型分类 |
 | `ingredients/products[].id` | item / fluid prototype ID | 完整快照 | 原型 ID |
 | `ingredients/products[].amount` | ingredient 原始数量；随机 product 为 `(min+max)/2 × probability`，并计入 `extra_count_fraction` | 完整快照 | 静态数值 |
+| `products[].ignored_by_productivity` | 不受产能加成影响的期望产量；无时省略 | 完整快照 | 静态数值 |
 | `ingredients/products[].temperature` | 固定流体温度，摄氏度；无约束时省略 | 完整快照 | 静态数值 |
 | `ingredients[].minimum_temperature` | 流体最低温度，摄氏度；无约束时省略 | 完整快照 | 静态数值 |
 | `ingredients[].maximum_temperature` | 流体最高温度，摄氏度；无约束时省略 | 完整快照 | 静态数值 |
@@ -164,6 +173,19 @@ chunk 到齐后才原子替换当前状态。空闲期间没有 dirty revision �
 | `machines[].crafting_speed` | `get_crafting_speed()`，倍率 | 完整快照 | 静态数值 |
 | `machines[].crafting_categories[]` | `crafting_categories` 的 category ID | 完整快照 | 原型 ID 集合 |
 | `machines[].module_slots` | `module_inventory_size`，槽位数 | 完整快照 | 静态数值 |
+| `machines[].allowed_effects[]` | `LuaEntityPrototype.allowed_effects` | 完整快照 | 原型 ID 集合 |
+| `machines[].allowed_module_categories[]` | `LuaEntityPrototype.allowed_module_categories` | 完整快照 | 原型 ID 集合 |
+
+### 插件字段
+
+插件来自具有 `module_effects` 和 `category`、非 hidden 的 `prototypes.item`。
+
+| 字段 | 来源 / 单位 | 刷新条件 | 隐私分类 |
+| --- | --- | --- | --- |
+| `modules[].id` | `LuaItemPrototype.name` | 完整快照 | 原型 ID |
+| `modules[].category` | `LuaItemPrototype.category` | 完整快照 | 原型 ID |
+| `modules[].effects` | `LuaItemPrototype.module_effects` | 完整快照 | 静态数值 |
+| `effects.consumption/speed/productivity/pollution/quality` | 对应效果倍率；不存在的效果省略 | 完整快照 | 静态数值 |
 
 ## `static_delta`
 
@@ -176,6 +198,7 @@ chunk 到齐后才原子替换当前状态。空闲期间没有 dirty revision �
 | `payload.force.id` | 发生变化的 force ID | 研究变化 | 游戏内 ID |
 | `researched_technologies_added/removed[]` | 与缓存的已研究集合做差 | 研究变化 | 游戏内 ID 集合 |
 | `available_recipes_added/removed[]` | 与缓存的可用配方集合做差 | 研究变化 | 游戏内 ID 集合 |
+| `recipe_productivity_bonuses[]` | 变化后该 force 的完整非零 recipe 产能加成列表 | 研究变化 | 原型 ID + 静态数值 |
 
 若 delta 超过 16 KiB、前序 revision 尚未确认或 Companion 的 base revision 不匹配，
 Mod / Companion 会改用完整快照，不会猜测合并。
@@ -187,7 +210,7 @@ Mod / Companion 会改用完整快照，不会猜测合并。
 ```json
 {
   "protocol_version": 1,
-  "schema_version": 1,
+  "schema_version": 2,
   "message_id": "factorio-dynamic-3900-8",
   "type": "dynamic_snapshot",
   "tick": 3900,

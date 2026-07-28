@@ -5,6 +5,9 @@
       "path": "./packages/protocol"
     },
     {
+      "path": "./packages/calculator"
+    },
+    {
       "path": "./companion"
     }
   ]
