@@ -117,6 +117,8 @@ Copy-Item .\companion.config.example.json .\companion.config.json
 9. Alerts 显示当前 force 的活动告警、证据与建议。可在面板直接静音 / 恢复规则，也可
    在 **Settings → Mod settings → Map** 临时调低持续门槛验证 8 秒 toast；测试后恢复
    默认值。全部默认阈值见 [`advisor.md`](advisor.md)。
+10. 有活动告警时，屏幕左上角会出现常驻提醒卡片。每条卡片可直接“打开顾问”或忽略；
+    忽略只隐藏当前这次告警，告警关闭后再次触发会重新出现，规则静音仍是独立开关。
 
 没有可控存档数据时，可先停止 Companion，再用内置 mock harness 逐一检查关键状态：
 
@@ -126,6 +128,14 @@ Copy-Item .\companion.config.example.json .\companion.config.json
 /factorio-ai-assistant-mock loading
 /factorio-ai-assistant-mock timeout
 /factorio-ai-assistant-mock incompatible
+/factorio-ai-assistant-mock chat-long
+/factorio-ai-assistant-mock chat-append
+/factorio-ai-assistant-mock chat-cleared
+/factorio-ai-assistant-mock alerts-none
+/factorio-ai-assistant-mock alerts-one
+/factorio-ai-assistant-mock alerts-many
+/factorio-ai-assistant-mock alert-close
+/factorio-ai-assistant-mock alert-reopen
 /factorio-ai-assistant-mock clear
 ```
 

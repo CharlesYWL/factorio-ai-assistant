@@ -109,10 +109,15 @@ for (const packetType of [
 }
 for (const transition of [
   "queue_chat",
+  "clear_chat",
   "complete_chat",
   "queue_calculation",
   "complete_calculation",
   "expire_requests",
+  "dismiss_alert",
+  "restore_alert",
+  "is_alert_dismissed",
+  "forget_alert",
 ]) {
   assert.ok(
     uiStateSource.includes(`function ui_state.${transition}`),
@@ -130,6 +135,24 @@ assert.ok(
   uiSource.includes("player.gui.screen"),
   "The advisor panel must use a movable screen GUI",
 );
+assert.ok(
+  uiSource.includes("scroll_to_bottom()"),
+  "The chat pane must be able to snap back to the newest message",
+);
+assert.ok(
+  uiSource.includes("mod_gui.get_frame_flow"),
+  "The persistent alert list must live in the top-left mod frame flow",
+);
+assert.ok(
+  uiSource.includes("function ui.refresh_alerts_hud"),
+  "ui.lua must expose the persistent alert list refresh",
+);
+for (const action of ["clear-chat", "dismiss-alert", "restore-alert"]) {
+  assert.ok(
+    controlSource.includes(`action == "${action}"`),
+    `control.lua must handle the ${action} GUI action`,
+  );
+}
 assert.ok(
   controlSource.includes("factorio-ai-assistant-mock"),
   "The in-game UI mock harness must stay available",
