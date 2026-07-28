@@ -118,6 +118,7 @@ export interface HelloAckPacket {
     reply_to: string;
     companion_version: string;
     static_revision?: number;
+    sampling_interval_ticks?: number;
   };
 }
 
@@ -347,6 +348,7 @@ interface HelloAckPacketInput {
   timestamp: number;
   companionVersion: string;
   staticRevision?: number;
+  samplingIntervalTicks?: number;
 }
 
 interface StateAckPacketInput {
@@ -397,6 +399,9 @@ export function createHelloAckPacket(input: HelloAckPacketInput): HelloAckPacket
       ...(input.staticRevision === undefined
         ? {}
         : { static_revision: input.staticRevision }),
+      ...(input.samplingIntervalTicks === undefined
+        ? {}
+        : { sampling_interval_ticks: input.samplingIntervalTicks }),
     },
   };
 }
@@ -548,6 +553,21 @@ function decodeHelloAck(
     payload.static_revision,
     "payload.static_revision",
   );
+  const samplingIntervalTicks =
+    payload.sampling_interval_ticks === undefined
+      ? undefined
+      : readPositiveInteger(
+          payload.sampling_interval_ticks,
+          "payload.sampling_interval_ticks",
+        );
+  if (
+    samplingIntervalTicks !== undefined &&
+    (samplingIntervalTicks < 60 || samplingIntervalTicks > 3_600)
+  ) {
+    throw invalidPacket(
+      "payload.sampling_interval_ticks must be between 60 and 3600",
+    );
+  }
 
   return {
     protocol_version: PROTOCOL_VERSION,
@@ -561,6 +581,9 @@ function decodeHelloAck(
         "payload.companion_version",
       ),
       ...(staticRevision === undefined ? {} : { static_revision: staticRevision }),
+      ...(samplingIntervalTicks === undefined
+        ? {}
+        : { sampling_interval_ticks: samplingIntervalTicks }),
     },
   };
 }

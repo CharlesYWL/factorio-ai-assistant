@@ -96,9 +96,32 @@ void test("encodes state-aware hello acknowledgements", () => {
     timestamp: 1_753_680_000_000,
     companionVersion: "0.1.0",
     staticRevision: 4,
+    samplingIntervalTicks: 120,
   });
 
   assert.deepEqual(decodePacket(new TextEncoder().encode(encodePacket(packet))), packet);
+});
+
+void test("validates the optional companion sampling interval", () => {
+  const packet = createHelloAckPacket({
+    messageId: "companion-sampling",
+    replyTo: "factorio-sampling",
+    timestamp: 1_753_680_000_000,
+    companionVersion: "0.1.0",
+    samplingIntervalTicks: 60,
+  });
+  assert.deepEqual(decodePacket(encodePacket(packet)), packet);
+
+  expectProtocolError(
+    () =>
+      decodePacket(
+        JSON.stringify({
+          ...packet,
+          payload: { ...packet.payload, sampling_interval_ticks: 59 },
+        }),
+      ),
+    "INVALID_PACKET",
+  );
 });
 
 void test("encodes state acknowledgements and resync requests", () => {

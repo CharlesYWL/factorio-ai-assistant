@@ -7,7 +7,10 @@ local MAX_PACKET_BYTES = 16 * 1024
 local POLL_INTERVAL_TICKS = 15
 local UI_REFRESH_INTERVAL_TICKS = 60
 local HELLO_INTERVAL_TICKS = 300
-local SAMPLE_INTERVAL_TICKS = 300
+local SAMPLE_CHECK_INTERVAL_TICKS = 60
+local DEFAULT_SAMPLE_INTERVAL_TICKS = 300
+local MIN_SAMPLE_INTERVAL_TICKS = 60
+local MAX_SAMPLE_INTERVAL_TICKS = 3600
 local STATIC_RETRY_INTERVAL_TICKS = 300
 local CONNECTION_TIMEOUT_TICKS = 600
 local PENDING_TIMEOUT_TICKS = 1200
@@ -78,6 +81,8 @@ local function get_state()
     pending = {},
     static_pending = {},
     advisor_alerts = {},
+    sampling_interval_ticks = DEFAULT_SAMPLE_INTERVAL_TICKS,
+    last_dynamic_tick = nil,
     receive_error_logged = false,
     unsupported_version_logged = false,
   }
@@ -87,6 +92,8 @@ local function get_state()
   state.pending = state.pending or {}
   state.static_pending = state.static_pending or {}
   state.advisor_alerts = state.advisor_alerts or {}
+  state.sampling_interval_ticks =
+    state.sampling_interval_ticks or DEFAULT_SAMPLE_INTERVAL_TICKS
   state.receive_error_logged = state.receive_error_logged or false
   state.unsupported_version_logged = state.unsupported_version_logged or false
 
@@ -508,9 +515,11 @@ local function send_dynamic_snapshot()
     return
   end
 
+  local sampling_interval_ticks = state.sampling_interval_ticks
+  state.last_dynamic_tick = game.tick
   local profiler = game.create_profiler()
   local result =
-    state_collector.build_dynamic_snapshot(state, SAMPLE_INTERVAL_TICKS)
+    state_collector.build_dynamic_snapshot(state, sampling_interval_ticks)
 
   profiler.stop()
 
@@ -523,7 +532,7 @@ local function send_dynamic_snapshot()
   if state_collector.should_log_sample(state, result.packet) then
     log(
       "[factorio-ai-assistant] State sample: interval="
-        .. SAMPLE_INTERVAL_TICKS
+        .. sampling_interval_ticks
         .. " ticks, duration="
         .. tostring(profiler)
         .. ", bytes="
@@ -534,6 +543,17 @@ local function send_dynamic_snapshot()
         .. result.packet.payload.omitted_series
     )
   end
+end
+
+local function maybe_send_dynamic_snapshot()
+  local state = get_state()
+  if state.last_dynamic_tick ~= nil
+    and game.tick - state.last_dynamic_tick < state.sampling_interval_ticks
+  then
+    return
+  end
+
+  send_dynamic_snapshot()
 end
 
 local function poll_udp()
@@ -573,6 +593,14 @@ local function handle_hello_ack(packet, event)
       packet.payload.static_revision ~= nil
       and not is_non_negative_integer(packet.payload.static_revision)
     )
+    or (
+      packet.payload.sampling_interval_ticks ~= nil
+      and (
+        not is_non_negative_integer(packet.payload.sampling_interval_ticks)
+        or packet.payload.sampling_interval_ticks < MIN_SAMPLE_INTERVAL_TICKS
+        or packet.payload.sampling_interval_ticks > MAX_SAMPLE_INTERVAL_TICKS
+      )
+    )
   then
     return
   end
@@ -586,6 +614,9 @@ local function handle_hello_ack(packet, event)
   state.connected = true
   state.last_response_tick = event.tick
   state.companion_version = packet.payload.companion_version
+  if packet.payload.sampling_interval_ticks ~= nil then
+    state.sampling_interval_ticks = packet.payload.sampling_interval_ticks
+  end
 
   if not has_static_pending(state)
     and packet.payload.static_revision ~= nil
@@ -910,13 +941,13 @@ end)
 local function run_periodic_network_tasks()
   send_hello()
   retry_static_packets()
-  send_dynamic_snapshot()
 end
 
 if UDP_AVAILABLE then
   script.on_event(UDP_EVENT, handle_udp_packet)
   script.on_nth_tick(POLL_INTERVAL_TICKS, poll_udp)
   script.on_nth_tick(HELLO_INTERVAL_TICKS, run_periodic_network_tasks)
+  script.on_nth_tick(SAMPLE_CHECK_INTERVAL_TICKS, maybe_send_dynamic_snapshot)
 end
 
 script.on_nth_tick(UI_REFRESH_INTERVAL_TICKS, update_connection_status)

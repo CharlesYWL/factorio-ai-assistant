@@ -94,7 +94,8 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
   "payload": {
     "reply_to": "factorio-hello-600-2",
     "companion_version": "0.1.0",
-    "static_revision": 3
+    "static_revision": 3,
+    "sampling_interval_ticks": 300
   }
 }
 ```
@@ -104,9 +105,11 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
 | `payload.reply_to` | 收到的 `hello.message_id` | 每次应答 | 协议元数据 |
 | `payload.companion_version` | Companion 常量 | 每次应答 | 应用标识 |
 | `payload.static_revision` | Companion 内存状态；`0` 表示尚无完整快照 | 每次应答 | 协议元数据 |
+| `payload.sampling_interval_ticks` | Companion 本机配置，`60..3600` tick；旧 Companion 可省略 | 每次应答 | 本地配置 |
 
-旧 Companion 可以省略 `static_revision`。新 Mod 会接受该响应，但只有携带 revision
-的 Companion 才能在重启后主动触发完整重同步。
+旧 Companion 可以省略 `static_revision` 和 `sampling_interval_ticks`。新 Mod 会接受
+该响应；无采样字段时继续使用 300 tick，只有携带 revision 的 Companion 才能在重启后
+主动触发完整重同步。
 
 ## `static_snapshot`
 
@@ -365,6 +368,8 @@ Companion 在告警打开、关闭或冷却后提醒时发送。活动告警的�
 
 - Companion 对每个有效 `static_snapshot` chunk 和 `static_delta` 返回 `state_ack`，
   `payload.reply_to` 是被确认的 `message_id`，`payload.revision` 是对应 revision。
+- Companion 按 UDP 来源、`message_id` 和内容摘要缓存最近 60 秒 / 最多 1,024 个请求。
+  完全相同的重试包重放同一个响应；相同 ID 但内容不同的包拒绝，避免重复副作用。
 - Mod 只重试未确认的静态 packet，间隔 300 tick；全部确认后空闲，不周期重发静态
   内容。
 - Companion 原子组装完整 chunk 集合；重复 packet 幂等处理，冲突 chunk 或 delta

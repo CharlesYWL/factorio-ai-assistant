@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-fixture",
+  "object": "chat.completion",
+  "created": 1753680000,
+  "model": "fixture-model",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "当前电力满足率为 42%，请先增加发电并检查燃料供应。"
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 24,
+    "total_tokens": 144
+  }
+}

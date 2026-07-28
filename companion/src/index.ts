@@ -1,11 +1,21 @@
-import { parseCompanionPort, startCompanionServer } from "./server.js";
+import { loadCompanionConfig } from "./config.js";
+import { JsonLogger } from "./logger.js";
+import { startCompanionServer } from "./server.js";
 
 async function main(): Promise<void> {
-  const port = parseCompanionPort(process.env.FACTORIO_ASSISTANT_COMPANION_PORT);
-  const server = await startCompanionServer({ port });
+  const config = await loadCompanionConfig();
+  const logger = new JsonLogger();
+  const server = await startCompanionServer({ config, logger });
+  const status = server.assistant.status;
+  logger.info("assistant_mode", {
+    mode: status.mode,
+    provider: status.provider,
+    model: status.model,
+    reason: status.reason,
+  });
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
-    console.info(`Received ${signal}; closing companion.`);
+    logger.info("companion_shutdown", { signal });
     await server.close();
   };
 
@@ -20,6 +30,9 @@ async function main(): Promise<void> {
 try {
   await main();
 } catch (error: unknown) {
-  console.error(error instanceof Error ? error.message : String(error));
+  new JsonLogger().error("companion_start_failed", {
+    error_name: error instanceof Error ? error.name : "unknown",
+    error_message: error instanceof Error ? error.message : String(error),
+  });
   process.exitCode = 1;
 }
