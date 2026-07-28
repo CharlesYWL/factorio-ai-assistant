@@ -123,9 +123,9 @@ void test(
       kind: "openai-compatible",
       complete(request) {
         providerCalls += 1;
-        assert.equal(firstEvidenceId(request.context), "A1");
+        assert.equal(firstEvidenceId(request.context), "S1");
         return Promise.resolve({
-          text: "同步状态可以用于定性分析 [A1]。",
+          text: "当前电力满足率为 40% [S1]。",
           model: "state-aware-no-alerts",
         });
       },
@@ -148,8 +148,12 @@ void test(
 
     assert.equal(providerCalls, 1);
     assert.equal(answer.mode, "model");
-    assert.match(answer.text, /当前 force 的动态快照已同步/);
-    assert.match(answer.text, /同步状态可以用于定性分析 \[A1\]/);
+    assert.match(answer.text, /电力网络 1 个/);
+    assert.match(answer.text, /发电 40 MW/);
+    assert.match(answer.text, /用电 100 MW/);
+    assert.match(answer.text, /满足率 40%/);
+    assert.match(answer.text, /当前没有进行中的研究/);
+    assert.match(answer.text, /当前电力满足率为 40% \[S1\]/);
   },
 );
 

@@ -245,7 +245,9 @@ function buildMessages(request: ProviderRequest): {
           "missing tool call. Treat tool facts and calculation numbers as authoritative, " +
           "and clearly distinguish facts, calculations, inference, assumptions, and " +
           "missing data. Return at most one concise inference paragraph, cite supplied " +
-          "evidence IDs such as [C1] or [A1], do not repeat any numbers, and do not output " +
+          "evidence IDs such as [C1], [A1], or [S1]. You may repeat a number only when it " +
+          "appears verbatim in cited deterministic evidence; preserve its exact Arabic " +
+          "token and unit, and never add, convert, or estimate a number. Do not output " +
           "an ordered action list because the companion appends all authoritative numbers " +
           "and at most three grounded actions. Do not invent game state, output executable " +
           "Lua/RCON, or claim to change the factory.",

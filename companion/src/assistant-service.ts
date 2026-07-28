@@ -340,7 +340,7 @@ function reconcileModelInference(
     return { kind: "conflict", type: "citation" };
   }
 
-  if (containsUnsupportedNumber(text)) {
+  if (containsUnsupportedNumber(text, grounding)) {
     return { kind: "conflict", type: "numeric" };
   }
   return { kind: "ok", text };
@@ -356,10 +356,26 @@ function containsOrderedActions(value: string): boolean {
   return /(?:^|\n)\s*(?:\d{1,2}[.)、]|[-*])\s+/u.test(value);
 }
 
-function containsUnsupportedNumber(value: string): boolean {
+function containsUnsupportedNumber(
+  value: string,
+  grounding: AssistantGrounding,
+): boolean {
   const withoutCitations = value.replace(/\[[A-Z]\d+\]/g, "");
-  return (
-    /[零〇一二三四五六七八九十百千万两]/u.test(withoutCitations) ||
-    /-?\d+(?:[.,]\d+)?%?/u.test(withoutCitations)
+  const allowedNumbers = new Set(
+    grounding.evidence.flatMap(({ text }) => extractArabicNumbers(text)),
+  );
+  const addsArabicNumber = extractArabicNumbers(withoutCitations).some(
+    (number) => !allowedNumbers.has(number),
+  );
+  const addsChineseQuantity =
+    /(?:百分之[零〇一二三四五六七八九十百千万两]+|[零〇一二三四五六七八九十百千万两]+(?:台|级|秒|分钟|小时|天|瓦|千瓦|兆瓦|吉瓦|成|倍|%|％))/u.test(
+      withoutCitations,
+    );
+  return addsArabicNumber || addsChineseQuantity;
+}
+
+function extractArabicNumbers(value: string): string[] {
+  return [...value.matchAll(/-?\d+(?:[.,]\d+)?%?/g)].map(
+    (match) => match[0],
   );
 }

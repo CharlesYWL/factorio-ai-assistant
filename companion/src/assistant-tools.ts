@@ -1,6 +1,7 @@
 import type { ProductionResult } from "@factorio-ai-assistant/calculator";
 import type {
   AdvisorAlert,
+  DynamicForceSummary,
   ResourceKind,
 } from "@factorio-ai-assistant/protocol";
 
@@ -470,20 +471,13 @@ export class AssistantToolbox {
       (alert) => forceId === undefined || alert.force_id === forceId,
     );
     const alerts = selectAlerts(intent, question, availableAlerts).slice(0, 3);
-    const evidence = alerts.map((alert, index) => ({
+    const evidence: GroundingEvidence[] = alerts.map((alert, index) => ({
       id: `A${index + 1}`,
       category: "fact" as const,
       text: alert.evidence,
     }));
-    if (dynamicForce !== undefined && evidence.length === 0) {
-      evidence.push({
-        id: "A1",
-        category: "fact",
-        text:
-          this.#language === "zh-CN"
-            ? "当前 force 的动态快照已同步；确定性规则当前没有活动告警。"
-            : "The current force snapshot is synchronized; no deterministic advisor rule is active.",
-      });
+    if (dynamicForce !== undefined) {
+      evidence.push(...synchronizedStateEvidence(this.#language, dynamicForce));
     }
     const actions = alerts.map((alert, index) => ({
       text: alert.recommendation,
@@ -536,16 +530,11 @@ export class AssistantToolbox {
                     evidence: alert.evidence,
                     recommendation: alert.recommendation,
                   })),
-                  ...(alerts.length === 0
-                    ? {
-                        synchronized_snapshot: {
-                          evidence_id: "A1",
-                          truncated:
-                            this.#stateStore.dynamicState?.payload.truncated ===
-                            true,
-                        },
-                      }
-                    : {}),
+                  synchronized_snapshot: {
+                    evidence_ids: ["S1", "S2"],
+                    truncated:
+                      this.#stateStore.dynamicState?.payload.truncated === true,
+                  },
                 },
               }),
         },
@@ -558,7 +547,12 @@ export class AssistantToolbox {
           : "Bottlenecks are ordered by severity, first-seen time, and rule ID, with a maximum of three.",
       ],
       missingData,
-      localInference: localAdvisorInference(this.#language, intent, alerts.length),
+      localInference: localAdvisorInference(
+        this.#language,
+        intent,
+        alerts.length,
+        dynamicForce !== undefined,
+      ),
       alerts,
     };
   }
@@ -709,6 +703,30 @@ function selectAlerts(
   return alerts;
 }
 
+function synchronizedStateEvidence(
+  language: AssistantLanguage,
+  force: DynamicForceSummary,
+): GroundingEvidence[] {
+  const power = force.power;
+  const powerText =
+    language === "zh-CN"
+      ? `电力网络 ${power.network_count} 个；发电 ${formatPower(power.generated_watts)}；用电 ${formatPower(power.consumed_watts)}；满足率 ${formatNumber(power.satisfaction_ratio * 100)}%。`
+      : `Power networks: ${power.network_count}; generation: ${formatPower(power.generated_watts)}; consumption: ${formatPower(power.consumed_watts)}; satisfaction: ${formatNumber(power.satisfaction_ratio * 100)}%.`;
+  const researchText =
+    force.research === null
+      ? language === "zh-CN"
+        ? "当前没有进行中的研究。"
+        : "No research is currently active."
+      : language === "zh-CN"
+        ? `当前研究 ${force.research.technology_id}；进度 ${formatNumber(force.research.progress * 100)}%。`
+        : `Current research: ${force.research.technology_id}; progress: ${formatNumber(force.research.progress * 100)}%.`;
+
+  return [
+    { id: "S1", category: "fact", text: powerText },
+    { id: "S2", category: "fact", text: researchText },
+  ];
+}
+
 function missingAdvisorEvidence(
   language: AssistantLanguage,
   intent: Exclude<AssistantIntent, "calculation">,
@@ -759,10 +777,13 @@ function localAdvisorInference(
   language: AssistantLanguage,
   intent: Exclude<AssistantIntent, "calculation">,
   alertCount: number,
+  hasDynamicState: boolean,
 ): string {
   if (language === "zh-CN") {
     if (alertCount === 0) {
-      return "当前为本地模式（确定性规则）；没有足够证据形成状态结论。";
+      return hasDynamicState
+        ? "电力与科研事实来自最新同步快照；未触发告警只表示当前未达到确定性规则阈值。"
+        : "当前为本地模式（确定性规则）；没有足够证据形成状态结论。";
     }
     if (intent === "diagnosis") {
       return "这些规则信号给出可能原因范围，但不能证明某一台机器或管道就是根因。";
@@ -773,7 +794,9 @@ function localAdvisorInference(
     return "优先级来自确定性规则的严重度与触发证据。";
   }
   if (alertCount === 0) {
-    return "Local rule mode has insufficient evidence for a state conclusion.";
+    return hasDynamicState
+      ? "Power and research facts come from the latest synchronized snapshot; no alert only means that deterministic rule thresholds are not currently met."
+      : "Local rule mode has insufficient evidence for a state conclusion.";
   }
   if (intent === "diagnosis") {
     return "These rule signals narrow possible causes but do not prove that one machine or pipe is the root cause.";
@@ -796,4 +819,17 @@ function appendSection(lines: string[], heading: string, values: string[]): void
 
 function formatNumber(value: number): string {
   return String(Math.round(value * 1_000) / 1_000);
+}
+
+function formatPower(value: number): string {
+  if (value >= 1_000_000_000) {
+    return `${formatNumber(value / 1_000_000_000)} GW`;
+  }
+  if (value >= 1_000_000) {
+    return `${formatNumber(value / 1_000_000)} MW`;
+  }
+  if (value >= 1_000) {
+    return `${formatNumber(value / 1_000)} kW`;
+  }
+  return `${formatNumber(value)} W`;
 }
