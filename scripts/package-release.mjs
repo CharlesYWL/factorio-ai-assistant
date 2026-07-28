@@ -108,7 +108,7 @@ await Promise.all([
     path.join(releaseDirectory, "performance-baseline.json"),
   ),
   copyFile(
-    path.join(root, "docs/releases/v0.1.0-rc.1.md"),
+    path.join(root, `docs/releases/${release.release_tag}.md`),
     path.join(releaseDirectory, "RELEASE_NOTES.md"),
   ),
 ]);

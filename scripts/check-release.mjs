@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+const release = await readJson("release.config.json");
+const releaseNotesPath = `docs/releases/${release.release_tag}.md`;
+
 const [
-  release,
   rootPackage,
   lockfile,
   companionPackage,
@@ -23,7 +25,6 @@ const [
   guideSource,
   guideDoc,
 ] = await Promise.all([
-  readJson("release.config.json"),
   readJson("package.json"),
   readJson("package-lock.json"),
   readJson("companion/package.json"),
@@ -36,13 +37,17 @@ const [
   readText("factorio-mod/control.lua"),
   readText("factorio-mod/state_collector.lua"),
   readText("factorio-mod/localization.lua"),
-  readText("docs/releases/v0.1.0-rc.1.md"),
+  readText(releaseNotesPath),
   readText("packages/guide/src/data.ts"),
   readText("docs/guide.md"),
 ]);
 
 assert.match(release.version, /^\d+\.\d+\.\d+$/u, "Release version must be numeric semver");
-assert.equal(release.release_tag, `v${release.version}-rc.1`);
+assert.match(
+  release.release_tag,
+  new RegExp(`^v${release.version.replaceAll(".", "\\.")}-rc\\.\\d+$`, "u"),
+  "Release tag must be the release version with an -rc.<n> suffix",
+);
 for (const [name, manifest] of [
   ["root", rootPackage],
   ["companion", companionPackage],
@@ -99,6 +104,15 @@ assert.equal(
     "Companion version",
   ),
   release.version,
+);
+assert.equal(
+  readStringConstant(
+    serverSource,
+    /COMPANION_BUILD = "([^"]+)"/u,
+    "Companion build marker",
+  ),
+  release.release_tag,
+  "Companion build marker must be the release tag, not an ad-hoc hotfix label",
 );
 assert.equal(
   readNumericConstant(
