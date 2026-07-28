@@ -64,6 +64,7 @@ local add_calculation_error
 local render_alerts
 local render_status
 local refresh_header_status
+local incompatibility_caption
 local add_state_banner
 local add_wrapped_label
 local add_field_label
@@ -345,13 +346,12 @@ add_tabs = function(parent, active_tab)
 end
 
 render_chat = function(parent, state, player_state)
-  if not state.connected then
+  local incompatible = incompatibility_caption(state)
+  if incompatible ~= nil then
+    add_state_banner(parent, "warning", incompatible)
+  elseif not state.connected then
     add_state_banner(parent, "offline", {
       "factorio-ai-assistant.chat-offline",
-    })
-  elseif state.assistant_status == nil then
-    add_state_banner(parent, "warning", {
-      "factorio-ai-assistant.protocol-incompatible",
     })
   end
 
@@ -484,13 +484,12 @@ render_chat_entry = function(parent, entry, player_state)
 end
 
 render_calculator = function(parent, state, player_state)
-  if not state.connected then
+  local incompatible = incompatibility_caption(state)
+  if incompatible ~= nil then
+    add_state_banner(parent, "warning", incompatible)
+  elseif not state.connected then
     add_state_banner(parent, "offline", {
       "factorio-ai-assistant.calculator-offline",
-    })
-  elseif state.assistant_status == nil then
-    add_state_banner(parent, "warning", {
-      "factorio-ai-assistant.protocol-incompatible",
     })
   end
 
@@ -682,7 +681,10 @@ add_calculation_error = function(parent, error_code)
 end
 
 render_alerts = function(parent, state, force_id)
-  if not state.connected then
+  local incompatible = incompatibility_caption(state)
+  if incompatible ~= nil then
+    add_state_banner(parent, "warning", incompatible)
+  elseif not state.connected then
     add_state_banner(parent, "offline", {
       "factorio-ai-assistant.alerts-offline",
     })
@@ -780,13 +782,12 @@ render_alerts = function(parent, state, force_id)
 end
 
 render_status = function(parent, state)
-  if not state.connected then
+  local incompatible = incompatibility_caption(state)
+  if incompatible ~= nil then
+    add_state_banner(parent, "warning", incompatible)
+  elseif not state.connected then
     add_state_banner(parent, "offline", {
       "factorio-ai-assistant.status-offline-detail",
-    })
-  elseif state.assistant_status == nil then
-    add_state_banner(parent, "warning", {
-      "factorio-ai-assistant.protocol-incompatible",
     })
   end
 
@@ -799,6 +800,11 @@ render_status = function(parent, state)
     table_element,
     "status-companion",
     state.connected and "connected" or "disconnected"
+  )
+  add_status_value(
+    table_element,
+    "status-mod-version",
+    state.mod_version or "-"
   )
   add_status_value(
     table_element,
@@ -870,16 +876,37 @@ refresh_header_status = function(frame, state)
   if status == nil then
     return
   end
-  if not state.connected then
-    status.caption = { "factorio-ai-assistant.header-offline" }
-    status.style.font_color = { r = 1, g = 0.35, b = 0.32 }
-  elseif state.assistant_status == nil then
+  if incompatibility_caption(state) ~= nil then
     status.caption = { "factorio-ai-assistant.header-incompatible" }
     status.style.font_color = { r = 1, g = 0.72, b = 0.2 }
+  elseif not state.connected then
+    status.caption = { "factorio-ai-assistant.header-offline" }
+    status.style.font_color = { r = 1, g = 0.35, b = 0.32 }
   else
     status.caption = { "factorio-ai-assistant.header-online" }
     status.style.font_color = { r = 0.3, g = 0.88, b = 0.48 }
   end
+end
+
+incompatibility_caption = function(state)
+  if state.protocol_mismatch ~= nil then
+    return {
+      "factorio-ai-assistant.protocol-version-incompatible",
+      tostring(state.protocol_version or 1),
+      tostring(state.protocol_mismatch),
+    }
+  end
+  if state.component_version_mismatch ~= nil then
+    return {
+      "factorio-ai-assistant.component-version-incompatible",
+      state.component_version_mismatch.mod_version,
+      state.component_version_mismatch.companion_version,
+    }
+  end
+  if state.connected and state.assistant_status == nil then
+    return { "factorio-ai-assistant.protocol-incompatible" }
+  end
+  return nil
 end
 
 add_state_banner = function(parent, kind, caption)

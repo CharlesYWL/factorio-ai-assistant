@@ -216,6 +216,12 @@ async function handleDatagram(
 
   switch (packet.type) {
     case "hello":
+      if (packet.payload.mod_version !== COMPANION_VERSION) {
+        logger.warn("component_version_mismatch", {
+          mod_version: packet.payload.mod_version,
+          companion_version: COMPANION_VERSION,
+        });
+      }
       if (packet.payload.advisor_config !== undefined) {
         advisor.configure(packet.payload.advisor_config);
       }

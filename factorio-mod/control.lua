@@ -115,6 +115,8 @@ local function get_state()
   state.toast_expiry = state.toast_expiry or {}
   state.protocol_version = PROTOCOL_VERSION
   state.schema_version = STATE_SCHEMA_VERSION
+  state.mod_version =
+    script.active_mods["factorio-ai-assistant"] or "unknown"
 
   return state
 end
@@ -328,17 +330,20 @@ local function send_chat_request(player, question)
   local state = get_state()
   local player_state = ui_state.ensure_player(state, player.index)
   question = trim(question)
-  if not state.connected then
-    ui_state.append_system(player_state, "chat-offline", game.tick)
-    ui.render(player, state, player_state)
-    return
-  end
-  if state.assistant_status == nil then
+  if state.protocol_mismatch ~= nil
+    or state.component_version_mismatch ~= nil
+    or (state.connected and state.assistant_status == nil)
+  then
     ui_state.append_system(
       player_state,
       "protocol-incompatible",
       game.tick
     )
+    ui.render(player, state, player_state)
+    return
+  end
+  if not state.connected then
+    ui_state.append_system(player_state, "chat-offline", game.tick)
     ui.render(player, state, player_state)
     return
   end
@@ -420,6 +425,18 @@ local function send_calculation_request(player)
   for field, value in pairs(values) do
     ui_state.update_calculator_input(player_state, field, value)
   end
+  if state.protocol_mismatch ~= nil
+    or state.component_version_mismatch ~= nil
+    or (state.connected and state.assistant_status == nil)
+  then
+    ui_state.set_calculation_error(
+      player_state,
+      "PROTOCOL_INCOMPATIBLE",
+      nil
+    )
+    ui.render(player, state, player_state)
+    return
+  end
   if not state.connected then
     ui_state.set_calculation_error(
       player_state,
@@ -429,16 +446,6 @@ local function send_calculation_request(player)
     ui.render(player, state, player_state)
     return
   end
-  if state.assistant_status == nil then
-    ui_state.set_calculation_error(
-      player_state,
-      "PROTOCOL_INCOMPATIBLE",
-      nil
-    )
-    ui.render(player, state, player_state)
-    return
-  end
-
   local target_id = trim(values.target_id)
   local machine_id = trim(values.machine_id)
   local rate = tonumber(trim(values.rate_per_minute))
@@ -719,8 +726,22 @@ local function handle_hello_ack(packet, event)
   state.connected = true
   state.last_response_tick = event.tick
   state.companion_version = packet.payload.companion_version
-  state.assistant_status = packet.payload.assistant_status
   state.static_revision = packet.payload.static_revision or 0
+  state.protocol_mismatch = nil
+  state.component_version_mismatch = nil
+  if packet.payload.companion_version ~= state.mod_version then
+    state.connected = false
+    state.component_version_mismatch = {
+      mod_version = state.mod_version,
+      companion_version = packet.payload.companion_version,
+    }
+    state.assistant_status = nil
+    state.static_pending = {}
+    refresh_all_status()
+    return
+  end
+
+  state.assistant_status = packet.payload.assistant_status
   if packet.payload.sampling_interval_ticks ~= nil then
     state.sampling_interval_ticks = packet.payload.sampling_interval_ticks
   end
@@ -1033,8 +1054,19 @@ local function handle_udp_packet(event)
     return
   end
 
-  if packet.protocol_version ~= PROTOCOL_VERSION
-    or not is_non_empty_string(packet.message_id)
+  if packet.protocol_version ~= PROTOCOL_VERSION then
+    if is_non_negative_integer(packet.protocol_version) then
+      local state = get_state()
+      state.connected = false
+      state.assistant_status = nil
+      state.protocol_mismatch = packet.protocol_version
+      state.component_version_mismatch = nil
+      refresh_all_status()
+    end
+    return
+  end
+
+  if not is_non_empty_string(packet.message_id)
     or type(packet.payload) ~= "table"
   then
     return
@@ -1470,6 +1502,9 @@ local function apply_ui_mock(player, mode)
       state.last_sync_tick = backup.last_sync_tick
       state.companion_version = backup.companion_version
       state.assistant_status = backup.assistant_status
+      state.protocol_mismatch = backup.protocol_mismatch
+      state.component_version_mismatch =
+        backup.component_version_mismatch
       state.static_revision = backup.static_revision
       state.advisor_alerts = backup.advisor_alerts
       state.ui_mock_backup = nil
@@ -1487,6 +1522,9 @@ local function apply_ui_mock(player, mode)
       last_sync_tick = state.last_sync_tick,
       companion_version = state.companion_version,
       assistant_status = copy_table(state.assistant_status),
+      protocol_mismatch = state.protocol_mismatch,
+      component_version_mismatch =
+        copy_table(state.component_version_mismatch),
       static_revision = state.static_revision,
       advisor_alerts = copy_table(state.advisor_alerts),
     }
@@ -1503,14 +1541,17 @@ local function apply_ui_mock(player, mode)
     reason = "mock",
     privacy = "local-only",
   }
+  state.protocol_mismatch = nil
+  state.component_version_mismatch = nil
   state.advisor_alerts = {}
 
   if mode == "offline" then
     state.connected = false
     state.assistant_status = nil
   elseif mode == "incompatible" then
-    state.connected = true
+    state.connected = false
     state.assistant_status = nil
+    state.protocol_mismatch = PROTOCOL_VERSION + 1
   elseif mode == "loading" then
     state.connected = true
     ui_state.append_mock_message(

@@ -1,10 +1,27 @@
 # Factorio AI Assistant
 
-Factorio 2.0 原版的只读游戏内顾问。当前 M6 把聊天、确定性生产比例、实时提醒和连接
+Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.1 把聊天、确定性生产比例、实时提醒和连接
 状态整合进可移动的游戏内面板，并让状态问答只通过受限的只读计算器 / 顾问工具取得
 数字与证据；Companion 支持 OpenClaw / OpenAI-compatible 与 Ollama，无 Key、模型
 离线、限流、超时或与工具冲突时自动保留本地计算与规则答案。系统不发送地图，也不会
 修改工厂。
+
+> **Steam 成就警告：** Factorio 启用任何 Mod 后，该存档都不能获得 Steam 成就。
+> 安装前备份存档，并优先使用专门的测试副本。
+
+## v0.1.0-rc.1 私有候选
+
+CI 生成可重复验证的 Mod ZIP、Windows Companion ZIP、示例配置、性能报告、
+`SHA256SUMS` 和总 bundle。推荐流程：
+
+1. 从私有 GitHub Release 下载同一个 `v0.1.0-rc.1` 的全部资产并核对 SHA-256。
+2. 按 [`docs/setup-windows.md`](docs/setup-windows.md) 安装 Mod、配置 Steam UDP 参数并
+   运行 `start-companion.cmd`。
+3. 按 [`docs/windows-smoke-test.md`](docs/windows-smoke-test.md) 做 15–30 分钟实机冒烟；
+   再按 [`docs/performance.md`](docs/performance.md) 完成三场景、30 分钟稳定性/UPS 验证。
+
+Mod 和 Companion 必须来自同一 bundle；混用版本时 UI 会显示双方版本并要求成对升级
+或降级。此候选不会自动发布到 Factorio Mod Portal。
 
 ## 架构
 
@@ -73,6 +90,11 @@ npm install
 npm run build
 npm test
 npm run lint
+npm run check:release
+npm run check:security
+npm run benchmark
+npm run package
+npm run package:verify
 ```
 
 启动 Companion：
@@ -112,7 +134,7 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 物品和流体速率、外部原料、副产物及各级传送带需求。循环、不可达目标、替代配方歧义、
 不兼容机器 / 插件和无法平衡的多产物流都会返回结构化错误，不会递归死循环。
 
-完整的 Mod 安装、Steam 启动参数和 UI 预期见
+完整的 Mod 安装、升级/降级、卸载、Steam 启动参数和 UI 预期见
 [`docs/setup-windows.md`](docs/setup-windows.md)。线协议见
 [`docs/protocol.md`](docs/protocol.md)。规则证据、默认阈值、静音和全部玩家可配置项见
 [`docs/advisor.md`](docs/advisor.md)。
@@ -124,6 +146,8 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 - 模型调用只能取消仍在进行的请求；已经完成并进入 UDP 的响应可能先于取消到达。
 - 自动化测试覆盖协议、Companion、计算服务、Lua 语法、UI 状态契约和中英文 key
   对齐；像素布局、键盘焦点和不同 DPI 仍需 Windows Factorio 实机确认。
+- 自动性能报告覆盖 Node 状态处理和 30 分钟提醒模拟；真实 Lua/UI UPS 与连续运行仍需
+  Windows 实机验收。
 
 ## 安全边界
 

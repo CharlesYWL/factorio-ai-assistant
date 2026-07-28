@@ -90,6 +90,49 @@ void test(
 );
 
 void test(
+  "logs a component version mismatch while completing the handshake",
+  { timeout: 3_000 },
+  async (context) => {
+    const warnings: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const logger: CompanionLogger = {
+      info: () => undefined,
+      warn: (event, fields = {}) => warnings.push({ event, fields }),
+      error: () => undefined,
+    };
+    const companion = await startCompanionServer({ port: 0, logger });
+    const factorio = createSocket("udp4");
+    context.after(async () => {
+      await closeSocket(factorio);
+      await companion.close();
+    });
+    await bindSocket(factorio);
+    const hello = createHelloPacket({
+      messageId: "factorio-version-mismatch",
+      tick: 600,
+      modVersion: "0.0.9",
+    });
+
+    const responsePromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(hello),
+      companion.address.port,
+      companion.address.address,
+    );
+    assert.equal(decodePacket((await responsePromise).datagram).type, "hello_ack");
+    assert.deepEqual(warnings, [
+      {
+        event: "component_version_mismatch",
+        fields: {
+          mod_version: "0.0.9",
+          companion_version: "0.1.0",
+        },
+      },
+    ]);
+  },
+);
+
+void test(
   "answers and cancels in-game assistant requests",
   { timeout: 3_000 },
   async (context) => {
