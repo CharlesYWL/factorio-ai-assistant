@@ -2,7 +2,7 @@ local mod_gui = require("__core__.lualib.mod-gui")
 local state_collector = require("state_collector")
 
 local PROTOCOL_VERSION = 1
-local STATE_SCHEMA_VERSION = 1
+local STATE_SCHEMA_VERSION = 2
 local MAX_PACKET_BYTES = 16 * 1024
 local POLL_INTERVAL_TICKS = 15
 local UI_REFRESH_INTERVAL_TICKS = 60

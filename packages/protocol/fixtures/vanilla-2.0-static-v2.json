@@ -1,6 +1,6 @@
 {
   "protocol_version": 1,
-  "schema_version": 1,
+  "schema_version": 2,
   "message_id": "factorio-static-3600-1",
   "type": "static_snapshot",
   "tick": 3600,
@@ -35,6 +35,12 @@
           "copper-cable",
           "iron-gear-wheel",
           "iron-plate"
+        ],
+        "recipe_productivity_bonuses": [
+          {
+            "recipe_id": "iron-plate",
+            "bonus": 0.1
+          }
         ]
       }
     ],
@@ -56,7 +62,21 @@
             "id": "copper-cable",
             "amount": 2
           }
-        ]
+        ],
+        "allowed_effects": [
+          "consumption",
+          "pollution",
+          "productivity",
+          "quality",
+          "speed"
+        ],
+        "allowed_module_categories": [
+          "efficiency",
+          "productivity",
+          "quality",
+          "speed"
+        ],
+        "maximum_productivity": 3
       },
       {
         "id": "iron-gear-wheel",
@@ -75,7 +95,21 @@
             "id": "iron-gear-wheel",
             "amount": 1
           }
-        ]
+        ],
+        "allowed_effects": [
+          "consumption",
+          "pollution",
+          "productivity",
+          "quality",
+          "speed"
+        ],
+        "allowed_module_categories": [
+          "efficiency",
+          "productivity",
+          "quality",
+          "speed"
+        ],
+        "maximum_productivity": 3
       },
       {
         "id": "iron-plate",
@@ -94,7 +128,21 @@
             "id": "iron-plate",
             "amount": 1
           }
-        ]
+        ],
+        "allowed_effects": [
+          "consumption",
+          "pollution",
+          "productivity",
+          "quality",
+          "speed"
+        ],
+        "allowed_module_categories": [
+          "efficiency",
+          "productivity",
+          "quality",
+          "speed"
+        ],
+        "maximum_productivity": 3
       }
     ],
     "machines": [
@@ -107,7 +155,13 @@
           "basic-crafting",
           "crafting"
         ],
-        "module_slots": 0
+        "module_slots": 0,
+        "allowed_effects": [
+          "consumption",
+          "pollution",
+          "speed"
+        ],
+        "allowed_module_categories": []
       },
       {
         "id": "stone-furnace",
@@ -116,7 +170,25 @@
         "crafting_categories": [
           "smelting"
         ],
-        "module_slots": 0
+        "module_slots": 0,
+        "allowed_effects": [
+          "consumption",
+          "pollution",
+          "speed"
+        ],
+        "allowed_module_categories": []
+      }
+    ],
+    "modules": [
+      {
+        "id": "productivity-module",
+        "category": "productivity",
+        "effects": {
+          "consumption": 0.4,
+          "pollution": 0.05,
+          "productivity": 0.04,
+          "speed": -0.05
+        }
       }
     ]
   }

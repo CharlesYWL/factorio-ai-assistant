@@ -31,6 +31,7 @@ void test("assembles out-of-order static chunks atomically", async () => {
       chunk_count: 2,
       recipes: [firstRecipe],
       machines: [],
+      modules: [],
     },
   };
   const secondChunk: StaticSnapshotPacket = {
@@ -46,6 +47,7 @@ void test("assembles out-of-order static chunks atomically", async () => {
       forces: [],
       recipes: remainingRecipes,
       machines: fixture.payload.machines,
+      modules: fixture.payload.modules,
     },
   };
   const store = new CompanionStateStore();
@@ -62,6 +64,10 @@ void test("assembles out-of-order static chunks atomically", async () => {
   assert.deepEqual(
     store.staticState?.machines.map((machine) => machine.id),
     ["assembling-machine-1", "stone-furnace"],
+  );
+  assert.deepEqual(
+    store.staticState?.modules.map((module) => module.id),
+    ["productivity-module"],
   );
 });
 
@@ -85,6 +91,12 @@ void test("applies static deltas idempotently and detects revision gaps", async 
         researched_technologies_removed: [],
         available_recipes_added: ["assembling-machine-2"],
         available_recipes_removed: ["iron-plate"],
+        recipe_productivity_bonuses: [
+          {
+            recipe_id: "copper-cable",
+            bonus: 0.2,
+          },
+        ],
       },
     },
   };
@@ -101,6 +113,12 @@ void test("applies static deltas idempotently and detects revision gaps", async 
     "assembling-machine-2",
     "copper-cable",
     "iron-gear-wheel",
+  ]);
+  assert.deepEqual(store.staticState?.forces[0]?.recipe_productivity_bonuses, [
+    {
+      recipe_id: "copper-cable",
+      bonus: 0.2,
+    },
   ]);
 
   const skippedRevision: StaticDeltaPacket = {
@@ -126,7 +144,7 @@ void test("applies static deltas idempotently and detects revision gaps", async 
 
 void test("retains the latest validated dynamic snapshot", async () => {
   const encoded = await readFile(
-    new URL("vanilla-2.0-dynamic-v1.json", fixtureDirectory),
+    new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),
     "utf8",
   );
   const packet = decodePacket(encoded);
@@ -141,7 +159,7 @@ void test("retains the latest validated dynamic snapshot", async () => {
 
 async function readStaticFixture(): Promise<StaticSnapshotPacket> {
   const encoded = await readFile(
-    new URL("vanilla-2.0-static-v1.json", fixtureDirectory),
+    new URL("vanilla-2.0-static-v2.json", fixtureDirectory),
     "utf8",
   );
   const packet = decodePacket(encoded);

@@ -89,7 +89,7 @@ void test(
     await bindSocket(factorio);
     const staticPacket = await readFile(
       new URL(
-        "../../packages/protocol/fixtures/vanilla-2.0-static-v1.json",
+        "../../packages/protocol/fixtures/vanilla-2.0-static-v2.json",
         import.meta.url,
       ),
       "utf8",

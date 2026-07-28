@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 1 as const;
-export const STATE_SCHEMA_VERSION = 1 as const;
+export const STATE_SCHEMA_VERSION = 2 as const;
 export const MAX_PACKET_BYTES = 16 * 1024;
 
 const MAX_ARRAY_ITEMS = 1_024;
@@ -21,6 +21,13 @@ export class ProtocolError extends Error {
     this.name = "ProtocolError";
     this.code = code;
   }
+}
+
+function readOptionalNonNegativeNumber(
+  value: unknown,
+  path: string,
+): number | undefined {
+  return value === undefined ? undefined : readNonNegativeNumber(value, path);
 }
 
 export interface HelloPacket {
@@ -59,12 +66,19 @@ export interface StaticForceDescriptor {
   id: string;
   researched_technologies: string[];
   available_recipes: string[];
+  recipe_productivity_bonuses: RecipeProductivityBonusDescriptor[];
+}
+
+export interface RecipeProductivityBonusDescriptor {
+  recipe_id: string;
+  bonus: number;
 }
 
 export interface RecipeComponent {
   kind: "item" | "fluid";
   id: string;
   amount: number;
+  ignored_by_productivity?: number;
   temperature?: number;
   minimum_temperature?: number;
   maximum_temperature?: number;
@@ -76,6 +90,9 @@ export interface RecipeDescriptor {
   energy_seconds: number;
   ingredients: RecipeComponent[];
   products: RecipeComponent[];
+  allowed_effects: string[];
+  allowed_module_categories: string[];
+  maximum_productivity: number;
 }
 
 export interface MachineDescriptor {
@@ -84,6 +101,22 @@ export interface MachineDescriptor {
   crafting_speed: number;
   crafting_categories: string[];
   module_slots: number;
+  allowed_effects: string[];
+  allowed_module_categories: string[];
+}
+
+export interface ModuleEffectsDescriptor {
+  consumption?: number;
+  speed?: number;
+  productivity?: number;
+  pollution?: number;
+  quality?: number;
+}
+
+export interface ModuleDescriptor {
+  id: string;
+  category: string;
+  effects: ModuleEffectsDescriptor;
 }
 
 export interface StaticSnapshotPayload {
@@ -97,6 +130,7 @@ export interface StaticSnapshotPayload {
   forces: StaticForceDescriptor[];
   recipes: RecipeDescriptor[];
   machines: MachineDescriptor[];
+  modules: ModuleDescriptor[];
 }
 
 export interface StaticSnapshotPacket {
@@ -114,6 +148,7 @@ export interface StaticForceDelta {
   researched_technologies_removed: string[];
   available_recipes_added: string[];
   available_recipes_removed: string[];
+  recipe_productivity_bonuses: RecipeProductivityBonusDescriptor[];
 }
 
 export interface StaticDeltaPacket {
@@ -445,6 +480,7 @@ function decodeStaticSnapshot(
       forces: readArray(payload.forces, "payload.forces", readStaticForceDescriptor),
       recipes: readArray(payload.recipes, "payload.recipes", readRecipeDescriptor),
       machines: readArray(payload.machines, "payload.machines", readMachineDescriptor),
+      modules: readArray(payload.modules, "payload.modules", readModuleDescriptor),
     },
   };
 }
@@ -494,6 +530,11 @@ function decodeStaticDelta(
         available_recipes_removed: readStringArray(
           force.available_recipes_removed,
           "payload.force.available_recipes_removed",
+        ),
+        recipe_productivity_bonuses: readArray(
+          force.recipe_productivity_bonuses,
+          "payload.force.recipe_productivity_bonuses",
+          readRecipeProductivityBonusDescriptor,
         ),
       },
     },
@@ -617,6 +658,23 @@ function readStaticForceDescriptor(
       record.available_recipes,
       `${path}.available_recipes`,
     ),
+    recipe_productivity_bonuses: readArray(
+      record.recipe_productivity_bonuses,
+      `${path}.recipe_productivity_bonuses`,
+      readRecipeProductivityBonusDescriptor,
+    ),
+  };
+}
+
+function readRecipeProductivityBonusDescriptor(
+  value: unknown,
+  path: string,
+): RecipeProductivityBonusDescriptor {
+  const record = readRecord(value, path);
+
+  return {
+    recipe_id: readNonEmptyString(record.recipe_id, `${path}.recipe_id`),
+    bonus: readFiniteNumber(record.bonus, `${path}.bonus`),
   };
 }
 
@@ -626,7 +684,7 @@ function readRecipeDescriptor(value: unknown, path: string): RecipeDescriptor {
   return {
     id: readNonEmptyString(record.id, `${path}.id`),
     category: readNonEmptyString(record.category, `${path}.category`),
-    energy_seconds: readNonNegativeNumber(
+    energy_seconds: readPositiveNumber(
       record.energy_seconds,
       `${path}.energy_seconds`,
     ),
@@ -641,6 +699,15 @@ function readRecipeDescriptor(value: unknown, path: string): RecipeDescriptor {
       `${path}.products`,
       readRecipeComponent,
       256,
+    ),
+    allowed_effects: readStringArray(record.allowed_effects, `${path}.allowed_effects`),
+    allowed_module_categories: readStringArray(
+      record.allowed_module_categories,
+      `${path}.allowed_module_categories`,
+    ),
+    maximum_productivity: readNonNegativeNumber(
+      record.maximum_productivity,
+      `${path}.maximum_productivity`,
     ),
   };
 }
@@ -660,6 +727,10 @@ function readRecipeComponent(value: unknown, path: string): RecipeComponent {
     record.maximum_temperature,
     `${path}.maximum_temperature`,
   );
+  const ignoredByProductivity = readOptionalNonNegativeNumber(
+    record.ignored_by_productivity,
+    `${path}.ignored_by_productivity`,
+  );
 
   if (
     minimumTemperature !== undefined &&
@@ -675,6 +746,9 @@ function readRecipeComponent(value: unknown, path: string): RecipeComponent {
     kind,
     id: readNonEmptyString(record.id, `${path}.id`),
     amount: readNonNegativeNumber(record.amount, `${path}.amount`),
+    ...(ignoredByProductivity === undefined
+      ? {}
+      : { ignored_by_productivity: ignoredByProductivity }),
     ...(temperature === undefined ? {} : { temperature }),
     ...(minimumTemperature === undefined
       ? {}
@@ -691,7 +765,7 @@ function readMachineDescriptor(value: unknown, path: string): MachineDescriptor 
   return {
     id: readNonEmptyString(record.id, `${path}.id`),
     kind: readNonEmptyString(record.kind, `${path}.kind`),
-    crafting_speed: readNonNegativeNumber(
+    crafting_speed: readPositiveNumber(
       record.crafting_speed,
       `${path}.crafting_speed`,
     ),
@@ -700,7 +774,38 @@ function readMachineDescriptor(value: unknown, path: string): MachineDescriptor 
       `${path}.crafting_categories`,
     ),
     module_slots: readNonNegativeInteger(record.module_slots, `${path}.module_slots`),
+    allowed_effects: readStringArray(record.allowed_effects, `${path}.allowed_effects`),
+    allowed_module_categories: readStringArray(
+      record.allowed_module_categories,
+      `${path}.allowed_module_categories`,
+    ),
   };
+}
+
+function readModuleDescriptor(value: unknown, path: string): ModuleDescriptor {
+  const record = readRecord(value, path);
+  const effects = readRecord(record.effects, `${path}.effects`);
+
+  return {
+    id: readNonEmptyString(record.id, `${path}.id`),
+    category: readNonEmptyString(record.category, `${path}.category`),
+    effects: {
+      ...readOptionalEffect(effects, "consumption", path),
+      ...readOptionalEffect(effects, "speed", path),
+      ...readOptionalEffect(effects, "productivity", path),
+      ...readOptionalEffect(effects, "pollution", path),
+      ...readOptionalEffect(effects, "quality", path),
+    },
+  };
+}
+
+function readOptionalEffect(
+  effects: Record<string, unknown>,
+  effect: keyof ModuleEffectsDescriptor,
+  path: string,
+): Partial<ModuleEffectsDescriptor> {
+  const value = readOptionalFiniteNumber(effects[effect], `${path}.effects.${effect}`);
+  return value === undefined ? {} : { [effect]: value };
 }
 
 function readDynamicForceSummary(
@@ -915,6 +1020,16 @@ function readNonNegativeNumber(value: unknown, path: string): number {
 
   if (result < 0) {
     throw invalidPacket(`${path} must be non-negative`);
+  }
+
+  return result;
+}
+
+function readPositiveNumber(value: unknown, path: string): number {
+  const result = readFiniteNumber(value, path);
+
+  if (result <= 0) {
+    throw invalidPacket(`${path} must be positive`);
   }
 
   return result;

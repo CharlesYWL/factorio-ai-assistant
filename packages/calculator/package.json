@@ -1,0 +1,23 @@
+{
+  "name": "@factorio-ai-assistant/calculator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "factorio-calculate": "./dist/cli.js"
+  },
+  "scripts": {
+    "calculate": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@factorio-ai-assistant/protocol": "*"
+  }
+}

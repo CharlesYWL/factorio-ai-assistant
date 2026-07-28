@@ -1,6 +1,6 @@
 local collector = {}
 
-local STATE_SCHEMA_VERSION = 1
+local STATE_SCHEMA_VERSION = 2
 local MAX_PACKET_BYTES = 16 * 1024
 local PACKET_TARGET_BYTES = MAX_PACKET_BYTES - 512
 local MAX_FORCE_FRAGMENT_IDS = 128
@@ -41,6 +41,19 @@ local function sorted_keys(values)
   return result
 end
 
+local function sorted_truthy_keys(values)
+  local result = {}
+
+  for key, enabled in pairs(values or {}) do
+    if enabled then
+      table.insert(result, key)
+    end
+  end
+
+  table.sort(result)
+  return result
+end
+
 local function rounded(value, decimal_places)
   local multiplier = 10 ^ decimal_places
   return math.floor(value * multiplier + 0.5) / multiplier
@@ -68,6 +81,7 @@ end
 local function collect_force_sets(force)
   local technologies = {}
   local recipes = {}
+  local productivity_bonuses = {}
 
   for name, technology in pairs(force.technologies) do
     if technology.researched then
@@ -79,11 +93,15 @@ local function collect_force_sets(force)
     if recipe.enabled and not recipe.hidden then
       recipes[name] = true
     end
+    if recipe.productivity_bonus ~= 0 then
+      productivity_bonuses[name] = rounded(recipe.productivity_bonus, 6)
+    end
   end
 
   return {
     technologies = technologies,
     recipes = recipes,
+    productivity_bonuses = productivity_bonuses,
   }
 end
 
@@ -97,16 +115,32 @@ local function array_slice(values, first, last)
   return result
 end
 
+local function productivity_bonus_descriptors(productivity_bonuses)
+  local result = {}
+
+  for _, recipe_id in ipairs(sorted_keys(productivity_bonuses)) do
+    table.insert(result, {
+      recipe_id = recipe_id,
+      bonus = productivity_bonuses[recipe_id],
+    })
+  end
+
+  return result
+end
+
 local function force_fragments(force, force_cache)
   local sets = collect_force_sets(force)
   force_cache[force.name] = sets
 
   local technologies = sorted_keys(sets.technologies)
   local recipes = sorted_keys(sets.recipes)
+  local productivity_bonuses =
+    productivity_bonus_descriptors(sets.productivity_bonuses)
   local fragment_count = math.max(
     1,
     math.ceil(#technologies / MAX_FORCE_FRAGMENT_IDS),
-    math.ceil(#recipes / MAX_FORCE_FRAGMENT_IDS)
+    math.ceil(#recipes / MAX_FORCE_FRAGMENT_IDS),
+    math.ceil(#productivity_bonuses / MAX_FORCE_FRAGMENT_IDS)
   )
   local fragments = {}
 
@@ -118,6 +152,8 @@ local function force_fragments(force, force_cache)
       id = force.name,
       researched_technologies = array_slice(technologies, first, last),
       available_recipes = array_slice(recipes, first, last),
+      recipe_productivity_bonuses =
+        array_slice(productivity_bonuses, first, last),
     })
   end
 
@@ -171,6 +207,12 @@ local function recipe_component(component, is_product)
   if component.maximum_temperature ~= nil then
     result.maximum_temperature = component.maximum_temperature
   end
+  if is_product and component.ignored_by_productivity ~= nil then
+    result.ignored_by_productivity = rounded(
+      component.ignored_by_productivity * (component.probability or 1),
+      6
+    )
+  end
 
   return result
 end
@@ -202,6 +244,10 @@ local function collect_recipe_descriptors()
         energy_seconds = recipe.energy,
         ingredients = collect_components(recipe.ingredients, false),
         products = collect_components(recipe.products, true),
+        allowed_effects = sorted_truthy_keys(recipe.allowed_effects),
+        allowed_module_categories =
+          sorted_truthy_keys(recipe.allowed_module_categories),
+        maximum_productivity = recipe.maximum_productivity,
       })
     end
   end
@@ -226,6 +272,45 @@ local function collect_machine_descriptors()
         crafting_speed = prototype.get_crafting_speed(),
         crafting_categories = sorted_keys(prototype.crafting_categories),
         module_slots = prototype.module_inventory_size or 0,
+        allowed_effects = sorted_truthy_keys(prototype.allowed_effects),
+        allowed_module_categories =
+          sorted_truthy_keys(prototype.allowed_module_categories),
+      })
+    end
+  end
+
+  table.sort(result, function(left, right)
+    return left.id < right.id
+  end)
+  return result
+end
+
+local function collect_module_descriptors()
+  local result = {}
+
+  for name, prototype in pairs(prototypes.item) do
+    if prototype.module_effects ~= nil
+      and prototype.category ~= nil
+      and not prototype.hidden
+    then
+      local effects = {}
+
+      for _, effect in ipairs({
+        "consumption",
+        "speed",
+        "productivity",
+        "pollution",
+        "quality",
+      }) do
+        if prototype.module_effects[effect] ~= nil then
+          effects[effect] = prototype.module_effects[effect]
+        end
+      end
+
+      table.insert(result, {
+        id = name,
+        category = prototype.category,
+        effects = effects,
       })
     end
   end
@@ -242,6 +327,7 @@ local function empty_chunk(game_descriptor)
     forces = {},
     recipes = {},
     machines = {},
+    modules = {},
   }
 end
 
@@ -250,6 +336,7 @@ local function chunk_has_records(chunk)
     or #chunk.forces > 0
     or #chunk.recipes > 0
     or #chunk.machines > 0
+    or #chunk.modules > 0
 end
 
 local function add_record(chunk, record)
@@ -280,6 +367,7 @@ local function packet_for_chunk(
     forces = chunk.forces,
     recipes = chunk.recipes,
     machines = chunk.machines,
+    modules = chunk.modules,
   }
 
   if chunk.game ~= nil then
@@ -348,6 +436,13 @@ function collector.build_static_snapshot(state)
     table.insert(records, {
       collection = "machines",
       value = machine,
+    })
+  end
+
+  for _, module in ipairs(collect_module_descriptors()) do
+    table.insert(records, {
+      collection = "modules",
+      value = module,
     })
   end
 
@@ -433,6 +528,20 @@ local function set_difference(left, right)
   return result
 end
 
+local function productivity_bonuses_changed(left, right)
+  for recipe_id, bonus in pairs(left or {}) do
+    if right == nil or right[recipe_id] ~= bonus then
+      return true
+    end
+  end
+  for recipe_id in pairs(right or {}) do
+    if left == nil or left[recipe_id] == nil then
+      return true
+    end
+  end
+  return false
+end
+
 function collector.build_static_delta(state, force)
   local collector_state = ensure_collector_state(state)
   local cached = collector_state.force_cache[force.name]
@@ -458,6 +567,10 @@ function collector.build_static_delta(state, force)
     and #technologies_removed == 0
     and #recipes_added == 0
     and #recipes_removed == 0
+    and not productivity_bonuses_changed(
+      cached.productivity_bonuses,
+      current.productivity_bonuses
+    )
   then
     return nil, false
   end
@@ -480,6 +593,8 @@ function collector.build_static_delta(state, force)
         researched_technologies_removed = technologies_removed,
         available_recipes_added = recipes_added,
         available_recipes_removed = recipes_removed,
+        recipe_productivity_bonuses =
+          productivity_bonus_descriptors(current.productivity_bonuses),
       },
     },
   }

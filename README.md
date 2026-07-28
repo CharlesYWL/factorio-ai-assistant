@@ -1,8 +1,8 @@
 # Factorio AI Assistant
 
-Factorio 2.0 原版的只读游戏内顾问。当前 M1 在 localhost UDP 桥接之上提供版本化
-静态 / 动态状态摘要：配方与机器原型、force 科技、滚动产销、当前研究和电力聚合。
-不接入模型、不发送地图或聊天，也不会修改工厂。
+Factorio 2.0 原版的只读游戏内顾问。当前 M2 在 localhost UDP 桥接之上提供版本化
+状态摘要和确定性生产比例引擎：配方、机器、插件、force 科技加成、滚动产销、当前
+研究和电力聚合。比例计算不接入模型，不发送地图或聊天，也不会修改工厂。
 
 ## 架构
 
@@ -27,6 +27,7 @@ flowchart LR
 | `factorio-mod/` | Factorio 2.0 Mod、事件缓存、状态采样和连接面板 |
 | `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion 与 revision 状态缓存 |
 | `packages/protocol/` | 严格的版本化消息编解码与校验 |
+| `packages/calculator/` | 精确有理数生产流求解器、Factorio 2.0 fixture 与 JSON CLI |
 | `docs/` | Windows 安装、协议、排错和实机验证清单 |
 
 ## 本地验证
@@ -45,6 +46,33 @@ npm run lint
 ```bash
 npm start
 ```
+
+独立运行比例计算器（不需要游戏或 AI Key）：
+
+```bash
+npm run calculate -- \
+  --catalog packages/calculator/fixtures/vanilla-2.0.72-base.json \
+  --request packages/calculator/fixtures/chemical-science-120-per-minute.json \
+  --pretty
+```
+
+catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 force 的
+`recipe_productivity_bonuses`。request 的核心字段如下：
+
+| 字段 | 说明 |
+| --- | --- |
+| `targets[]` | `kind`、`id`、`rate` 和可选 `unit`（`second` / `minute`） |
+| `available_recipe_ids` / `recipe_choices` | 当前可用配方与替代配方显式选择；选择键为 `item:<id>` / `fluid:<id>` |
+| `allowed_machine_ids` / `machine_choices` | 允许机器集合与按 recipe ID 的显式机器选择 |
+| `module_loadouts` | 按 recipe ID 指定插件 ID 数组；校验槽位、类别和效果限制 |
+| `technology_productivity_bonuses` | 按 recipe ID 覆盖当前科技产能加成 |
+| `source_resources` | 视为外部供给、不继续展开的原料键 |
+| `byproduct_handlers` / `byproduct_policy` | 指定副产物消费配方；`balanced` 要求无剩余，`surplus` 显示剩余 |
+| `belt_speeds` | 可选物品带宽档位；默认原版黄 / 红 / 蓝带 `15 / 30 / 45 item/s` |
+
+输出包含每条配方的 craft 速率、精确与向上取整机器数、机器 / 插件 / 科技假设、各层
+物品和流体速率、外部原料、副产物及各级传送带需求。循环、不可达目标、替代配方歧义、
+不兼容机器 / 插件和无法平衡的多产物流都会返回结构化错误，不会递归死循环。
 
 完整的 Mod 安装、Steam 启动参数和 UI 预期见
 [`docs/setup-windows.md`](docs/setup-windows.md)。线协议见

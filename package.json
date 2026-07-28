@@ -12,8 +12,9 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "start": "npm run start --workspace @factorio-ai-assistant/companion",
+    "calculate": "node packages/calculator/dist/cli.js",
     "pretest": "npm run build",
-    "test": "node --test packages/protocol/dist/*.test.js companion/dist/*.test.js",
+    "test": "node --test packages/*/dist/*.test.js companion/dist/*.test.js",
     "lint": "eslint . && node scripts/lint-factorio-mod.mjs"
   },
   "engines": {

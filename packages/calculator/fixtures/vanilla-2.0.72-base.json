@@ -1,0 +1,643 @@
+{
+  "recipes": [
+    {
+      "id": "automation-science-pack",
+      "category": "crafting",
+      "energy_seconds": 5,
+      "ingredients": [
+        { "kind": "item", "id": "copper-plate", "amount": 1 },
+        { "kind": "item", "id": "iron-gear-wheel", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "automation-science-pack", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "logistic-science-pack",
+      "category": "crafting",
+      "energy_seconds": 6,
+      "ingredients": [
+        { "kind": "item", "id": "inserter", "amount": 1 },
+        { "kind": "item", "id": "transport-belt", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "logistic-science-pack", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "chemical-science-pack",
+      "category": "crafting",
+      "energy_seconds": 24,
+      "ingredients": [
+        { "kind": "item", "id": "engine-unit", "amount": 2 },
+        { "kind": "item", "id": "advanced-circuit", "amount": 3 },
+        { "kind": "item", "id": "sulfur", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "chemical-science-pack", "amount": 2 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "production-science-pack",
+      "category": "crafting",
+      "energy_seconds": 21,
+      "ingredients": [
+        { "kind": "item", "id": "electric-furnace", "amount": 1 },
+        { "kind": "item", "id": "productivity-module", "amount": 1 },
+        { "kind": "item", "id": "rail", "amount": 30 }
+      ],
+      "products": [
+        { "kind": "item", "id": "production-science-pack", "amount": 3 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "utility-science-pack",
+      "category": "crafting",
+      "energy_seconds": 21,
+      "ingredients": [
+        { "kind": "item", "id": "low-density-structure", "amount": 3 },
+        { "kind": "item", "id": "processing-unit", "amount": 2 },
+        { "kind": "item", "id": "flying-robot-frame", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "utility-science-pack", "amount": 3 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "iron-gear-wheel",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "iron-plate", "amount": 2 }
+      ],
+      "products": [
+        { "kind": "item", "id": "iron-gear-wheel", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "copper-cable",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "copper-plate", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "copper-cable", "amount": 2 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "electronic-circuit",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "iron-plate", "amount": 1 },
+        { "kind": "item", "id": "copper-cable", "amount": 3 }
+      ],
+      "products": [
+        { "kind": "item", "id": "electronic-circuit", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "transport-belt",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "iron-plate", "amount": 1 },
+        { "kind": "item", "id": "iron-gear-wheel", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "transport-belt", "amount": 2 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "quality", "speed"],
+      "maximum_productivity": 0
+    },
+    {
+      "id": "inserter",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "electronic-circuit", "amount": 1 },
+        { "kind": "item", "id": "iron-gear-wheel", "amount": 1 },
+        { "kind": "item", "id": "iron-plate", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "inserter", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "quality", "speed"],
+      "maximum_productivity": 0
+    },
+    {
+      "id": "engine-unit",
+      "category": "advanced-crafting",
+      "energy_seconds": 10,
+      "ingredients": [
+        { "kind": "item", "id": "steel-plate", "amount": 1 },
+        { "kind": "item", "id": "iron-gear-wheel", "amount": 1 },
+        { "kind": "item", "id": "pipe", "amount": 2 }
+      ],
+      "products": [
+        { "kind": "item", "id": "engine-unit", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "pipe",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "iron-plate", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "pipe", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "advanced-circuit",
+      "category": "crafting",
+      "energy_seconds": 6,
+      "ingredients": [
+        { "kind": "item", "id": "electronic-circuit", "amount": 2 },
+        { "kind": "item", "id": "plastic-bar", "amount": 2 },
+        { "kind": "item", "id": "copper-cable", "amount": 4 }
+      ],
+      "products": [
+        { "kind": "item", "id": "advanced-circuit", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "sulfur",
+      "category": "chemistry",
+      "energy_seconds": 1,
+      "ingredients": [
+        { "kind": "fluid", "id": "water", "amount": 30 },
+        { "kind": "fluid", "id": "petroleum-gas", "amount": 30 }
+      ],
+      "products": [
+        { "kind": "item", "id": "sulfur", "amount": 2 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "electric-furnace",
+      "category": "crafting",
+      "energy_seconds": 5,
+      "ingredients": [
+        { "kind": "item", "id": "steel-plate", "amount": 10 },
+        { "kind": "item", "id": "advanced-circuit", "amount": 5 },
+        { "kind": "item", "id": "stone-brick", "amount": 10 }
+      ],
+      "products": [
+        { "kind": "item", "id": "electric-furnace", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "quality", "speed"],
+      "maximum_productivity": 0
+    },
+    {
+      "id": "productivity-module",
+      "category": "crafting",
+      "energy_seconds": 15,
+      "ingredients": [
+        { "kind": "item", "id": "advanced-circuit", "amount": 5 },
+        { "kind": "item", "id": "electronic-circuit", "amount": 5 }
+      ],
+      "products": [
+        { "kind": "item", "id": "productivity-module", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "quality", "speed"],
+      "maximum_productivity": 0
+    },
+    {
+      "id": "rail",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "stone", "amount": 1 },
+        { "kind": "item", "id": "iron-stick", "amount": 1 },
+        { "kind": "item", "id": "steel-plate", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "rail", "amount": 2 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "quality", "speed"],
+      "maximum_productivity": 0
+    },
+    {
+      "id": "iron-stick",
+      "category": "crafting",
+      "energy_seconds": 0.5,
+      "ingredients": [
+        { "kind": "item", "id": "iron-plate", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "iron-stick", "amount": 2 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "flying-robot-frame",
+      "category": "crafting",
+      "energy_seconds": 20,
+      "ingredients": [
+        { "kind": "item", "id": "electric-engine-unit", "amount": 1 },
+        { "kind": "item", "id": "battery", "amount": 2 },
+        { "kind": "item", "id": "steel-plate", "amount": 1 },
+        { "kind": "item", "id": "electronic-circuit", "amount": 3 }
+      ],
+      "products": [
+        { "kind": "item", "id": "flying-robot-frame", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "electric-engine-unit",
+      "category": "crafting-with-fluid",
+      "energy_seconds": 10,
+      "ingredients": [
+        { "kind": "item", "id": "engine-unit", "amount": 1 },
+        { "kind": "fluid", "id": "lubricant", "amount": 15 },
+        { "kind": "item", "id": "electronic-circuit", "amount": 2 }
+      ],
+      "products": [
+        { "kind": "item", "id": "electric-engine-unit", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "battery",
+      "category": "chemistry",
+      "energy_seconds": 4,
+      "ingredients": [
+        { "kind": "fluid", "id": "sulfuric-acid", "amount": 20 },
+        { "kind": "item", "id": "iron-plate", "amount": 1 },
+        { "kind": "item", "id": "copper-plate", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "battery", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "low-density-structure",
+      "category": "crafting",
+      "energy_seconds": 15,
+      "ingredients": [
+        { "kind": "item", "id": "steel-plate", "amount": 2 },
+        { "kind": "item", "id": "copper-plate", "amount": 20 },
+        { "kind": "item", "id": "plastic-bar", "amount": 5 }
+      ],
+      "products": [
+        { "kind": "item", "id": "low-density-structure", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "processing-unit",
+      "category": "crafting-with-fluid",
+      "energy_seconds": 10,
+      "ingredients": [
+        { "kind": "item", "id": "electronic-circuit", "amount": 20 },
+        { "kind": "item", "id": "advanced-circuit", "amount": 2 },
+        { "kind": "fluid", "id": "sulfuric-acid", "amount": 5 }
+      ],
+      "products": [
+        { "kind": "item", "id": "processing-unit", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "plastic-bar",
+      "category": "chemistry",
+      "energy_seconds": 1,
+      "ingredients": [
+        { "kind": "fluid", "id": "petroleum-gas", "amount": 20 },
+        { "kind": "item", "id": "coal", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "plastic-bar", "amount": 2 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "sulfuric-acid",
+      "category": "chemistry",
+      "energy_seconds": 1,
+      "ingredients": [
+        { "kind": "item", "id": "sulfur", "amount": 5 },
+        { "kind": "item", "id": "iron-plate", "amount": 1 },
+        { "kind": "fluid", "id": "water", "amount": 100 }
+      ],
+      "products": [
+        { "kind": "fluid", "id": "sulfuric-acid", "amount": 50 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "lubricant",
+      "category": "chemistry",
+      "energy_seconds": 1,
+      "ingredients": [
+        { "kind": "fluid", "id": "heavy-oil", "amount": 10 }
+      ],
+      "products": [
+        { "kind": "fluid", "id": "lubricant", "amount": 10 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "solid-fuel-from-light-oil",
+      "category": "chemistry",
+      "energy_seconds": 1,
+      "ingredients": [
+        { "kind": "fluid", "id": "light-oil", "amount": 10 }
+      ],
+      "products": [
+        { "kind": "item", "id": "solid-fuel", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "rocket-fuel",
+      "category": "crafting-with-fluid",
+      "energy_seconds": 15,
+      "ingredients": [
+        { "kind": "item", "id": "solid-fuel", "amount": 10 },
+        { "kind": "fluid", "id": "light-oil", "amount": 10 }
+      ],
+      "products": [
+        { "kind": "item", "id": "rocket-fuel", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "advanced-oil-processing",
+      "category": "oil-processing",
+      "energy_seconds": 5,
+      "ingredients": [
+        { "kind": "fluid", "id": "water", "amount": 50 },
+        { "kind": "fluid", "id": "crude-oil", "amount": 100 }
+      ],
+      "products": [
+        { "kind": "fluid", "id": "heavy-oil", "amount": 25 },
+        { "kind": "fluid", "id": "light-oil", "amount": 45 },
+        { "kind": "fluid", "id": "petroleum-gas", "amount": 55 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "heavy-oil-cracking",
+      "category": "chemistry",
+      "energy_seconds": 2,
+      "ingredients": [
+        { "kind": "fluid", "id": "water", "amount": 30 },
+        { "kind": "fluid", "id": "heavy-oil", "amount": 40 }
+      ],
+      "products": [
+        { "kind": "fluid", "id": "light-oil", "amount": 30 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "light-oil-cracking",
+      "category": "chemistry",
+      "energy_seconds": 2,
+      "ingredients": [
+        { "kind": "fluid", "id": "water", "amount": 30 },
+        { "kind": "fluid", "id": "light-oil", "amount": 30 }
+      ],
+      "products": [
+        { "kind": "fluid", "id": "petroleum-gas", "amount": 20 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "iron-plate",
+      "category": "smelting",
+      "energy_seconds": 3.2,
+      "ingredients": [
+        { "kind": "item", "id": "iron-ore", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "iron-plate", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "copper-plate",
+      "category": "smelting",
+      "energy_seconds": 3.2,
+      "ingredients": [
+        { "kind": "item", "id": "copper-ore", "amount": 1 }
+      ],
+      "products": [
+        { "kind": "item", "id": "copper-plate", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "steel-plate",
+      "category": "smelting",
+      "energy_seconds": 16,
+      "ingredients": [
+        { "kind": "item", "id": "iron-plate", "amount": 5 }
+      ],
+      "products": [
+        { "kind": "item", "id": "steel-plate", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    },
+    {
+      "id": "stone-brick",
+      "category": "smelting",
+      "energy_seconds": 3.2,
+      "ingredients": [
+        { "kind": "item", "id": "stone", "amount": 2 }
+      ],
+      "products": [
+        { "kind": "item", "id": "stone-brick", "amount": 1 }
+      ],
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"],
+      "maximum_productivity": 3
+    }
+  ],
+  "machines": [
+    {
+      "id": "assembling-machine-1",
+      "kind": "assembling-machine",
+      "crafting_speed": 0.5,
+      "crafting_categories": ["crafting", "advanced-crafting"],
+      "module_slots": 0,
+      "allowed_effects": ["consumption", "pollution", "speed"],
+      "allowed_module_categories": []
+    },
+    {
+      "id": "assembling-machine-2",
+      "kind": "assembling-machine",
+      "crafting_speed": 0.75,
+      "crafting_categories": ["crafting", "advanced-crafting", "crafting-with-fluid"],
+      "module_slots": 2,
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"]
+    },
+    {
+      "id": "assembling-machine-3",
+      "kind": "assembling-machine",
+      "crafting_speed": 1.25,
+      "crafting_categories": ["basic-crafting", "crafting", "advanced-crafting", "crafting-with-fluid"],
+      "module_slots": 4,
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"]
+    },
+    {
+      "id": "stone-furnace",
+      "kind": "furnace",
+      "crafting_speed": 1,
+      "crafting_categories": ["smelting"],
+      "module_slots": 0,
+      "allowed_effects": ["consumption", "pollution", "speed"],
+      "allowed_module_categories": []
+    },
+    {
+      "id": "steel-furnace",
+      "kind": "furnace",
+      "crafting_speed": 2,
+      "crafting_categories": ["smelting"],
+      "module_slots": 0,
+      "allowed_effects": ["consumption", "pollution", "speed"],
+      "allowed_module_categories": []
+    },
+    {
+      "id": "electric-furnace",
+      "kind": "furnace",
+      "crafting_speed": 2,
+      "crafting_categories": ["smelting"],
+      "module_slots": 2,
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"]
+    },
+    {
+      "id": "chemical-plant",
+      "kind": "assembling-machine",
+      "crafting_speed": 1,
+      "crafting_categories": ["chemistry"],
+      "module_slots": 3,
+      "allowed_effects": ["consumption", "pollution", "productivity", "quality", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "quality", "speed"]
+    },
+    {
+      "id": "oil-refinery",
+      "kind": "assembling-machine",
+      "crafting_speed": 1,
+      "crafting_categories": ["oil-processing"],
+      "module_slots": 3,
+      "allowed_effects": ["consumption", "pollution", "productivity", "speed"],
+      "allowed_module_categories": ["efficiency", "productivity", "speed"]
+    }
+  ],
+  "modules": [
+    {
+      "id": "speed-module",
+      "category": "speed",
+      "effects": { "speed": 0.2, "consumption": 0.5, "quality": -0.01 }
+    },
+    {
+      "id": "speed-module-2",
+      "category": "speed",
+      "effects": { "speed": 0.3, "consumption": 0.6, "quality": -0.015 }
+    },
+    {
+      "id": "speed-module-3",
+      "category": "speed",
+      "effects": { "speed": 0.5, "consumption": 0.7, "quality": -0.025 }
+    },
+    {
+      "id": "productivity-module",
+      "category": "productivity",
+      "effects": { "productivity": 0.04, "consumption": 0.4, "pollution": 0.05, "speed": -0.05 }
+    },
+    {
+      "id": "productivity-module-2",
+      "category": "productivity",
+      "effects": { "productivity": 0.06, "consumption": 0.6, "pollution": 0.07, "speed": -0.1 }
+    },
+    {
+      "id": "productivity-module-3",
+      "category": "productivity",
+      "effects": { "productivity": 0.1, "consumption": 0.8, "pollution": 0.1, "speed": -0.15 }
+    }
+  ],
+  "recipe_productivity_bonuses": []
+}

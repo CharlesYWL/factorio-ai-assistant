@@ -1,0 +1,18 @@
+{
+  "targets": [
+    {
+      "kind": "item",
+      "id": "chemical-science-pack",
+      "rate": 120,
+      "unit": "minute"
+    }
+  ],
+  "recipe_choices": {
+    "fluid:petroleum-gas": "advanced-oil-processing"
+  },
+  "source_resources": [
+    "fluid:petroleum-gas",
+    "fluid:water"
+  ],
+  "byproduct_policy": "surplus"
+}
