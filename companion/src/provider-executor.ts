@@ -9,32 +9,51 @@ export interface ProviderExecutorOptions {
   timeoutMs: number;
   retryCount: 0 | 1;
   retryDelayMs?: number;
+  totalTimeoutMs?: number;
 }
+
+export const MAX_PROVIDER_TOTAL_WAIT_MS = 9_000;
 
 export class ProviderExecutor {
   readonly #provider: AIProvider;
   readonly #timeoutMs: number;
   readonly #retryCount: 0 | 1;
   readonly #retryDelayMs: number;
+  readonly #totalTimeoutMs: number;
 
   public constructor(provider: AIProvider, options: ProviderExecutorOptions) {
     this.#provider = provider;
     this.#timeoutMs = options.timeoutMs;
     this.#retryCount = options.retryCount;
     this.#retryDelayMs = options.retryDelayMs ?? 100;
+    this.#totalTimeoutMs =
+      options.totalTimeoutMs ?? MAX_PROVIDER_TOTAL_WAIT_MS;
   }
 
   public async complete(
     request: ProviderRequest,
     signal?: AbortSignal,
   ): Promise<ProviderResponse> {
+    const deadline = Date.now() + this.#totalTimeoutMs;
     for (let attempt = 0; attempt <= this.#retryCount; attempt += 1) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw totalTimeout(this.#totalTimeoutMs);
+      }
       try {
-        return await this.#completeAttempt(request, signal);
+        return await this.#completeAttempt(
+          request,
+          signal,
+          Math.min(this.#timeoutMs, remainingMs),
+        );
       } catch (error: unknown) {
         const providerError = normalizeProviderError(error, signal);
         if (!providerError.retryable || attempt === this.#retryCount) {
           throw providerError;
+        }
+        const retryBudgetMs = deadline - Date.now();
+        if (retryBudgetMs <= this.#retryDelayMs) {
+          throw totalTimeout(this.#totalTimeoutMs);
         }
         await wait(this.#retryDelayMs, signal);
       }
@@ -46,6 +65,7 @@ export class ProviderExecutor {
   async #completeAttempt(
     request: ProviderRequest,
     parentSignal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<ProviderResponse> {
     if (parentSignal?.aborted === true) {
       throw cancelled();
@@ -70,11 +90,11 @@ export class ProviderExecutor {
       rejectBoundary?.(
         new ProviderError(
           "timeout",
-          `Provider timed out after ${this.#timeoutMs} ms`,
+          `Provider timed out after ${timeoutMs} ms`,
           true,
         ),
       );
-    }, this.#timeoutMs);
+    }, timeoutMs);
 
     try {
       return await Promise.race([
@@ -88,7 +108,7 @@ export class ProviderExecutor {
       if (timedOut) {
         throw new ProviderError(
           "timeout",
-          `Provider timed out after ${this.#timeoutMs} ms`,
+          `Provider timed out after ${timeoutMs} ms`,
           true,
         );
       }
@@ -118,6 +138,14 @@ function normalizeProviderError(
 
 function cancelled(): ProviderError {
   return new ProviderError("cancelled", "Provider request was cancelled", false);
+}
+
+function totalTimeout(milliseconds: number): ProviderError {
+  return new ProviderError(
+    "timeout",
+    `Provider exceeded the ${milliseconds} ms total response budget`,
+    false,
+  );
 }
 
 function wait(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {

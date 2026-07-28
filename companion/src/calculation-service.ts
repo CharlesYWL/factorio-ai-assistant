@@ -44,6 +44,12 @@ export class CalculationService {
   public calculate(
     input: CalculationRequestPacket["payload"],
   ): CalculationResultSummary {
+    return summarize(this.calculateDetailed(input));
+  }
+
+  public calculateDetailed(
+    input: CalculationRequestPacket["payload"],
+  ): ProductionResult {
     const staticState = this.#stateStore.staticState;
     if (staticState === undefined) {
       throw new CalculationServiceError(
@@ -102,7 +108,7 @@ export class CalculationService {
       });
     }
 
-    return summarize(result);
+    return result;
   }
 }
 

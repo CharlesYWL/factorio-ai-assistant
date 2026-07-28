@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "factorio_version": "2.0.72",
+  "force_id": "player",
+  "questions": [
+    {
+      "id": "production-ratio",
+      "question": "45 蓝瓶每分钟需要多少机器？",
+      "expected_tool": "calculate_production_ratio",
+      "expected_text": "chemical-science-pack"
+    },
+    {
+      "id": "oil-diagnosis",
+      "question": "为什么我的高级炼油停了？",
+      "expected_tool": "read_advisor_alerts",
+      "expected_text": "采集数据是 force 级聚合流量"
+    },
+    {
+      "id": "research-next",
+      "question": "我现在最该研究什么？",
+      "expected_tool": "read_advisor_alerts",
+      "expected_text": "建设机器人"
+    },
+    {
+      "id": "top-bottlenecks",
+      "question": "当前最大的三个瓶颈是什么？",
+      "expected_tool": "read_advisor_alerts",
+      "expected_text": "[行动]"
+    },
+    {
+      "id": "evidence",
+      "question": "这个建议依据什么数据？",
+      "expected_tool": "read_advisor_alerts",
+      "expected_text": "[事实]"
+    }
+  ],
+  "dynamic_snapshot": {
+    "protocol_version": 1,
+    "schema_version": 2,
+    "message_id": "factorio-state-aware-dialog",
+    "type": "dynamic_snapshot",
+    "tick": 9000,
+    "payload": {
+      "sample_interval_ticks": 300,
+      "sample_sequence": 30,
+      "truncated": false,
+      "omitted_forces": 0,
+      "omitted_series": 0,
+      "forces": [
+        {
+          "id": "player",
+          "research": null,
+          "items": [
+            {
+              "id": "chemical-science-pack",
+              "produced_per_minute_1m": 30,
+              "consumed_per_minute_1m": 20,
+              "produced_per_minute_10m": 30,
+              "consumed_per_minute_10m": 20
+            },
+            {
+              "id": "iron-plate",
+              "produced_per_minute_1m": 0,
+              "consumed_per_minute_1m": 180,
+              "produced_per_minute_10m": 100,
+              "consumed_per_minute_10m": 180
+            }
+          ],
+          "fluids": [
+            {
+              "id": "lubricant",
+              "produced_per_minute_1m": 0,
+              "consumed_per_minute_1m": 0,
+              "produced_per_minute_10m": 0,
+              "consumed_per_minute_10m": 0
+            },
+            {
+              "id": "heavy-oil",
+              "produced_per_minute_1m": 180,
+              "consumed_per_minute_1m": 20,
+              "produced_per_minute_10m": 170,
+              "consumed_per_minute_10m": 20
+            },
+            {
+              "id": "light-oil",
+              "produced_per_minute_1m": 20,
+              "consumed_per_minute_1m": 20,
+              "produced_per_minute_10m": 20,
+              "consumed_per_minute_10m": 20
+            },
+            {
+              "id": "petroleum-gas",
+              "produced_per_minute_1m": 20,
+              "consumed_per_minute_1m": 120,
+              "produced_per_minute_10m": 25,
+              "consumed_per_minute_10m": 115
+            },
+            {
+              "id": "crude-oil",
+              "produced_per_minute_1m": 20,
+              "consumed_per_minute_1m": 0,
+              "produced_per_minute_10m": 100,
+              "consumed_per_minute_10m": 0
+            }
+          ],
+          "power": {
+            "network_count": 1,
+            "generated_watts": 40000000,
+            "consumed_watts": 100000000,
+            "satisfaction_ratio": 0.4
+          }
+        }
+      ]
+    }
+  }
+}
