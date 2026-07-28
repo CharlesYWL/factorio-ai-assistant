@@ -303,6 +303,28 @@ void test("validates representative Factorio 2.0 static and dynamic fixtures", a
   }
 });
 
+void test("normalizes an omitted Factorio research field to null", async () => {
+  const encoded = await readFile(
+    new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),
+    "utf8",
+  );
+  const fixture = JSON.parse(encoded) as Record<string, unknown>;
+  const payload = fixture.payload as Record<string, unknown>;
+  const forces = payload.forces as Array<Record<string, unknown>>;
+  const firstForce = forces[0];
+
+  assert.ok(firstForce !== undefined);
+  delete firstForce.research;
+  firstForce.items = {};
+  firstForce.fluids = {};
+
+  const decoded = decodePacket(JSON.stringify(fixture));
+  assert.equal(decoded.type, "dynamic_snapshot");
+  assert.equal(decoded.payload.forces[0]?.research, null);
+  assert.deepEqual(decoded.payload.forces[0]?.items, []);
+  assert.deepEqual(decoded.payload.forces[0]?.fluids, []);
+});
+
 void test("ignores unknown fields while retaining strict known-field validation", async () => {
   const encoded = await readFile(
     new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),

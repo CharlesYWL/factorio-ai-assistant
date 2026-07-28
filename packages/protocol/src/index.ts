@@ -1585,7 +1585,7 @@ function readDynamicForceSummary(
   return {
     id: readNonEmptyString(record.id, `${path}.id`),
     research:
-      record.research === null
+      record.research === null || record.research === undefined
         ? null
         : readResearchSummary(record.research, `${path}.research`),
     items: readArray(record.items, `${path}.items`, readFlowMetric, 512),
