@@ -4,6 +4,74 @@ export const MAX_PACKET_BYTES = 16 * 1024;
 
 const MAX_ARRAY_ITEMS = 1_024;
 
+export const ADVISOR_RULE_IDS = [
+  "research-idle",
+  "power-low",
+  "lubricant-zero",
+  "oil-imbalance",
+  "robotics-stalled",
+  "material-deficit",
+  "production-decline",
+] as const;
+export const ADVISOR_SEVERITIES = ["info", "warning", "critical"] as const;
+export const ADVISOR_EVENT_TYPES = ["opened", "reminder", "closed"] as const;
+
+export type AdvisorRuleId = (typeof ADVISOR_RULE_IDS)[number];
+export type AdvisorSeverity = (typeof ADVISOR_SEVERITIES)[number];
+export type AdvisorEventType = (typeof ADVISOR_EVENT_TYPES)[number];
+
+export interface AdvisorConfig {
+  quiet_mode: boolean;
+  muted_rules: AdvisorRuleId[];
+  notification_cooldown_ticks: number;
+  critical_power_bypass: boolean;
+  recovery_ticks: number;
+  research_idle_ticks: number;
+  power_satisfaction_threshold: number;
+  critical_power_threshold: number;
+  power_low_ticks: number;
+  lubricant_zero_ticks: number;
+  oil_imbalance_ticks: number;
+  oil_surplus_min_per_minute: number;
+  petroleum_deficit_min_per_minute: number;
+  science_stable_ticks: number;
+  blue_science_min_per_minute: number;
+  material_deficit_ratio: number;
+  material_deficit_min_per_minute: number;
+  material_deficit_ticks: number;
+  crude_decline_ratio: number;
+  crude_baseline_min_per_minute: number;
+  crude_decline_ticks: number;
+  key_material_baseline_min_per_minute: number;
+  production_stop_ticks: number;
+}
+
+export const DEFAULT_ADVISOR_CONFIG: AdvisorConfig = {
+  quiet_mode: false,
+  muted_rules: [],
+  notification_cooldown_ticks: 18_000,
+  critical_power_bypass: true,
+  recovery_ticks: 1_800,
+  research_idle_ticks: 36_000,
+  power_satisfaction_threshold: 0.9,
+  critical_power_threshold: 0.5,
+  power_low_ticks: 3_600,
+  lubricant_zero_ticks: 36_000,
+  oil_imbalance_ticks: 18_000,
+  oil_surplus_min_per_minute: 60,
+  petroleum_deficit_min_per_minute: 30,
+  science_stable_ticks: 36_000,
+  blue_science_min_per_minute: 15,
+  material_deficit_ratio: 1.1,
+  material_deficit_min_per_minute: 30,
+  material_deficit_ticks: 18_000,
+  crude_decline_ratio: 0.5,
+  crude_baseline_min_per_minute: 60,
+  crude_decline_ticks: 18_000,
+  key_material_baseline_min_per_minute: 30,
+  production_stop_ticks: 10_800,
+};
+
 export type ProtocolErrorCode =
   | "INVALID_ENCODING"
   | "PACKET_TOO_LARGE"
@@ -37,6 +105,7 @@ export interface HelloPacket {
   tick: number;
   payload: {
     mod_version: string;
+    advisor_config?: AdvisorConfig;
   };
 }
 
@@ -231,6 +300,30 @@ export interface ResyncRequestPacket {
   };
 }
 
+export interface AdvisorAlert {
+  id: string;
+  rule_id: AdvisorRuleId;
+  force_id: string;
+  severity: AdvisorSeverity;
+  evidence: string;
+  recommendation: string;
+  first_seen: number;
+  last_seen: number;
+}
+
+export interface AdvisorUpdatePacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "advisor_update";
+  timestamp: number;
+  payload: {
+    event: AdvisorEventType;
+    proactive: boolean;
+    alert: AdvisorAlert;
+  };
+}
+
 export type ProtocolPacket =
   | HelloPacket
   | HelloAckPacket
@@ -238,12 +331,14 @@ export type ProtocolPacket =
   | StaticDeltaPacket
   | DynamicSnapshotPacket
   | StateAckPacket
-  | ResyncRequestPacket;
+  | ResyncRequestPacket
+  | AdvisorUpdatePacket;
 
 interface HelloPacketInput {
   messageId: string;
   tick: number;
   modVersion: string;
+  advisorConfig?: AdvisorConfig;
 }
 
 interface HelloAckPacketInput {
@@ -267,6 +362,14 @@ interface ResyncRequestPacketInput {
   expectedRevision: number;
 }
 
+interface AdvisorUpdatePacketInput {
+  messageId: string;
+  timestamp: number;
+  event: AdvisorEventType;
+  proactive: boolean;
+  alert: AdvisorAlert;
+}
+
 export function createHelloPacket(input: HelloPacketInput): HelloPacket {
   return {
     protocol_version: PROTOCOL_VERSION,
@@ -275,6 +378,9 @@ export function createHelloPacket(input: HelloPacketInput): HelloPacket {
     tick: input.tick,
     payload: {
       mod_version: input.modVersion,
+      ...(input.advisorConfig === undefined
+        ? {}
+        : { advisor_config: input.advisorConfig }),
     },
   };
 }
@@ -320,6 +426,23 @@ export function createResyncRequestPacket(
     timestamp: input.timestamp,
     payload: {
       expected_revision: input.expectedRevision,
+    },
+  };
+}
+
+export function createAdvisorUpdatePacket(
+  input: AdvisorUpdatePacketInput,
+): AdvisorUpdatePacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "advisor_update",
+    timestamp: input.timestamp,
+    payload: {
+      event: input.event,
+      proactive: input.proactive,
+      alert: input.alert,
     },
   };
 }
@@ -387,6 +510,8 @@ export function decodePacket(input: string | Uint8Array): ProtocolPacket {
       return decodeStateAck(packet, payload, messageId);
     case "resync_request":
       return decodeResyncRequest(packet, payload, messageId);
+    case "advisor_update":
+      return decodeAdvisorUpdate(packet, payload, messageId);
     default:
       throw new ProtocolError("UNSUPPORTED_TYPE", `Unsupported message type "${type}"`);
   }
@@ -397,6 +522,11 @@ function decodeHello(
   payload: Record<string, unknown>,
   messageId: string,
 ): HelloPacket {
+  const advisorConfig =
+    payload.advisor_config === undefined
+      ? undefined
+      : readAdvisorConfig(payload.advisor_config, "payload.advisor_config");
+
   return {
     protocol_version: PROTOCOL_VERSION,
     message_id: messageId,
@@ -404,6 +534,7 @@ function decodeHello(
     tick: readNonNegativeInteger(packet.tick, "tick"),
     payload: {
       mod_version: readNonEmptyString(payload.mod_version, "payload.mod_version"),
+      ...(advisorConfig === undefined ? {} : { advisor_config: advisorConfig }),
     },
   };
 }
@@ -620,6 +751,33 @@ function decodeResyncRequest(
         payload.expected_revision,
         "payload.expected_revision",
       ),
+    },
+  };
+}
+
+function decodeAdvisorUpdate(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): AdvisorUpdatePacket {
+  readStateSchemaVersion(packet);
+  const event = readEnum(payload.event, "payload.event", ADVISOR_EVENT_TYPES);
+  const proactive = readBoolean(payload.proactive, "payload.proactive");
+
+  if (event === "closed" && proactive) {
+    throw invalidPacket("payload.proactive must be false for a closed alert");
+  }
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "advisor_update",
+    timestamp: readNonNegativeInteger(packet.timestamp, "timestamp"),
+    payload: {
+      event,
+      proactive,
+      alert: readAdvisorAlert(payload.alert, "payload.alert"),
     },
   };
 }
@@ -884,6 +1042,158 @@ function readPowerSummary(value: unknown, path: string): PowerSummary {
       0,
       1,
     ),
+  };
+}
+
+function readAdvisorConfig(value: unknown, path: string): AdvisorConfig {
+  const record = readRecord(value, path);
+  const powerSatisfactionThreshold = readNumberInRange(
+    record.power_satisfaction_threshold,
+    `${path}.power_satisfaction_threshold`,
+    0,
+    1,
+  );
+  const criticalPowerThreshold = readNumberInRange(
+    record.critical_power_threshold,
+    `${path}.critical_power_threshold`,
+    0,
+    1,
+  );
+
+  if (criticalPowerThreshold > powerSatisfactionThreshold) {
+    throw invalidPacket(
+      `${path}.critical_power_threshold must not exceed power_satisfaction_threshold`,
+    );
+  }
+
+  const mutedRules = readArray(
+    record.muted_rules,
+    `${path}.muted_rules`,
+    (item, itemPath) => readEnum(item, itemPath, ADVISOR_RULE_IDS),
+    ADVISOR_RULE_IDS.length,
+  );
+
+  if (new Set(mutedRules).size !== mutedRules.length) {
+    throw invalidPacket(`${path}.muted_rules must not contain duplicates`);
+  }
+
+  return {
+    quiet_mode: readBoolean(record.quiet_mode, `${path}.quiet_mode`),
+    muted_rules: mutedRules,
+    notification_cooldown_ticks: readPositiveInteger(
+      record.notification_cooldown_ticks,
+      `${path}.notification_cooldown_ticks`,
+    ),
+    critical_power_bypass: readBoolean(
+      record.critical_power_bypass,
+      `${path}.critical_power_bypass`,
+    ),
+    recovery_ticks: readPositiveInteger(
+      record.recovery_ticks,
+      `${path}.recovery_ticks`,
+    ),
+    research_idle_ticks: readPositiveInteger(
+      record.research_idle_ticks,
+      `${path}.research_idle_ticks`,
+    ),
+    power_satisfaction_threshold: powerSatisfactionThreshold,
+    critical_power_threshold: criticalPowerThreshold,
+    power_low_ticks: readPositiveInteger(
+      record.power_low_ticks,
+      `${path}.power_low_ticks`,
+    ),
+    lubricant_zero_ticks: readPositiveInteger(
+      record.lubricant_zero_ticks,
+      `${path}.lubricant_zero_ticks`,
+    ),
+    oil_imbalance_ticks: readPositiveInteger(
+      record.oil_imbalance_ticks,
+      `${path}.oil_imbalance_ticks`,
+    ),
+    oil_surplus_min_per_minute: readNonNegativeNumber(
+      record.oil_surplus_min_per_minute,
+      `${path}.oil_surplus_min_per_minute`,
+    ),
+    petroleum_deficit_min_per_minute: readNonNegativeNumber(
+      record.petroleum_deficit_min_per_minute,
+      `${path}.petroleum_deficit_min_per_minute`,
+    ),
+    science_stable_ticks: readPositiveInteger(
+      record.science_stable_ticks,
+      `${path}.science_stable_ticks`,
+    ),
+    blue_science_min_per_minute: readNonNegativeNumber(
+      record.blue_science_min_per_minute,
+      `${path}.blue_science_min_per_minute`,
+    ),
+    material_deficit_ratio: readNumberInRange(
+      record.material_deficit_ratio,
+      `${path}.material_deficit_ratio`,
+      1,
+      10,
+    ),
+    material_deficit_min_per_minute: readNonNegativeNumber(
+      record.material_deficit_min_per_minute,
+      `${path}.material_deficit_min_per_minute`,
+    ),
+    material_deficit_ticks: readPositiveInteger(
+      record.material_deficit_ticks,
+      `${path}.material_deficit_ticks`,
+    ),
+    crude_decline_ratio: readNumberInRange(
+      record.crude_decline_ratio,
+      `${path}.crude_decline_ratio`,
+      0,
+      1,
+    ),
+    crude_baseline_min_per_minute: readNonNegativeNumber(
+      record.crude_baseline_min_per_minute,
+      `${path}.crude_baseline_min_per_minute`,
+    ),
+    crude_decline_ticks: readPositiveInteger(
+      record.crude_decline_ticks,
+      `${path}.crude_decline_ticks`,
+    ),
+    key_material_baseline_min_per_minute: readNonNegativeNumber(
+      record.key_material_baseline_min_per_minute,
+      `${path}.key_material_baseline_min_per_minute`,
+    ),
+    production_stop_ticks: readPositiveInteger(
+      record.production_stop_ticks,
+      `${path}.production_stop_ticks`,
+    ),
+  };
+}
+
+function readAdvisorAlert(value: unknown, path: string): AdvisorAlert {
+  const record = readRecord(value, path);
+  const id = readNonEmptyString(record.id, `${path}.id`, 512);
+  const ruleId = readEnum(record.rule_id, `${path}.rule_id`, ADVISOR_RULE_IDS);
+  const forceId = readNonEmptyString(record.force_id, `${path}.force_id`);
+  const firstSeen = readNonNegativeInteger(record.first_seen, `${path}.first_seen`);
+  const lastSeen = readNonNegativeInteger(record.last_seen, `${path}.last_seen`);
+
+  if (id !== `${ruleId}:${forceId}`) {
+    throw invalidPacket(`${path}.id must equal <rule_id>:<force_id>`);
+  }
+
+  if (lastSeen < firstSeen) {
+    throw invalidPacket(`${path}.last_seen must not precede first_seen`);
+  }
+
+  return {
+    id,
+    rule_id: ruleId,
+    force_id: forceId,
+    severity: readEnum(record.severity, `${path}.severity`, ADVISOR_SEVERITIES),
+    evidence: readNonEmptyString(record.evidence, `${path}.evidence`, 1_024),
+    recommendation: readNonEmptyString(
+      record.recommendation,
+      `${path}.recommendation`,
+      1_024,
+    ),
+    first_seen: firstSeen,
+    last_seen: lastSeen,
   };
 }
 

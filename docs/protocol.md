@@ -24,7 +24,8 @@ TypeScript 权威编解码器位于 `packages/protocol/`，Factorio Mod 在
 | `payload` | object | 类型对应负载 | 每条消息 | 见下表 |
 
 状态消息类型为 `static_snapshot`、`static_delta`、`dynamic_snapshot`、
-`state_ack`、`resync_request`。连接心跳继续使用 `hello` / `hello_ack`。
+`state_ack`、`resync_request` 和 `advisor_update`。连接心跳继续使用
+`hello` / `hello_ack`。
 
 ## 连接与静态状态同步
 
@@ -39,7 +40,32 @@ Mod 每 300 tick（约 5 秒）发送：
   "type": "hello",
   "tick": 600,
   "payload": {
-    "mod_version": "0.1.0"
+    "mod_version": "0.1.0",
+    "advisor_config": {
+      "quiet_mode": false,
+      "muted_rules": [],
+      "notification_cooldown_ticks": 18000,
+      "critical_power_bypass": true,
+      "recovery_ticks": 1800,
+      "research_idle_ticks": 36000,
+      "power_satisfaction_threshold": 0.9,
+      "critical_power_threshold": 0.5,
+      "power_low_ticks": 3600,
+      "lubricant_zero_ticks": 36000,
+      "oil_imbalance_ticks": 18000,
+      "oil_surplus_min_per_minute": 60,
+      "petroleum_deficit_min_per_minute": 30,
+      "science_stable_ticks": 36000,
+      "blue_science_min_per_minute": 15,
+      "material_deficit_ratio": 1.1,
+      "material_deficit_min_per_minute": 30,
+      "material_deficit_ticks": 18000,
+      "crude_decline_ratio": 0.5,
+      "crude_baseline_min_per_minute": 60,
+      "crude_decline_ticks": 18000,
+      "key_material_baseline_min_per_minute": 30,
+      "production_stop_ticks": 10800
+    }
   }
 }
 ```
@@ -47,6 +73,13 @@ Mod 每 300 tick（约 5 秒）发送：
 | 字段 | 来源 / 单位 | 刷新条件 | 隐私分类 |
 | --- | --- | --- | --- |
 | `payload.mod_version` | `script.active_mods["factorio-ai-assistant"]` | 心跳 | Mod 标识 |
+| `payload.advisor_config` | runtime-global Mod 设置；旧 Mod 可省略 | 心跳 / 设置变化 | 本地配置 |
+| `payload.advisor_config.muted_rules[]` | 已知规则 ID | 同上 | 本地配置 |
+| `payload.advisor_config.*_ticks` | 秒 / 分钟设置换算为 60 tick/s | 同上 | 本地配置 |
+
+`advisor_config` 还携带每条规则的数值阈值。完整字段、默认值和单位见
+[`advisor.md`](advisor.md)。Companion 对所有字段做类型、范围和规则 ID 校验；
+`critical_power_threshold` 不得高于 `power_satisfaction_threshold`。
 
 ### `hello_ack`
 
@@ -270,6 +303,49 @@ electric_network_id` 去重网络，读取每个网络已有的 `electric_networ
 Factorio 2.0 不暴露整个 force 的理论需求上限，因此
 `satisfaction_ratio` 表示已交付电量的供需平衡（含统计中的蓄电池流量），不是未供电
 机器的理论需求百分比。
+
+## `advisor_update`
+
+Companion 在告警打开、关闭或冷却后提醒时发送。活动告警的变化始终发给 Mod 以更新
+侧栏；只有 `proactive: true` 才产生主动聊天提示。消息无需确认，下一个生命周期事件
+会覆盖同一告警 ID 的状态。
+
+```json
+{
+  "protocol_version": 1,
+  "schema_version": 2,
+  "message_id": "companion-advisor-550e8400-e29b-41d4-a716-446655440000",
+  "type": "advisor_update",
+  "timestamp": 1753680000000,
+  "payload": {
+    "event": "opened",
+    "proactive": true,
+    "alert": {
+      "id": "power-low:player",
+      "rule_id": "power-low",
+      "force_id": "player",
+      "severity": "critical",
+      "evidence": "Power satisfaction is 40% (40 MW generated, 100 MW consumed).",
+      "recommendation": "Add generation or fuel, isolate nonessential loads, and inspect overloaded networks.",
+      "first_seen": 3600,
+      "last_seen": 7200
+    }
+  }
+}
+```
+
+| 字段 | 类型 / 来源 | 说明 |
+| --- | --- | --- |
+| `payload.event` | `opened` / `reminder` / `closed` | 告警生命周期事件 |
+| `payload.proactive` | boolean | 是否主动显示；`closed` 始终为 false |
+| `alert.id` | `<rule-id>:<force-id>` | 去重键 |
+| `alert.rule_id` | 已知规则 ID | 决定本地化标题和规则静音 |
+| `alert.force_id` | force ID | 只向对应 force 的玩家主动提示 |
+| `alert.severity` | `info` / `warning` / `critical` | 严重程度 |
+| `alert.evidence` | 最多 1,024 字符 | 包含实际触发数值的证据 |
+| `alert.recommendation` | 最多 1,024 字符 | 可执行建议 |
+| `alert.first_seen` | Factorio tick | 本次问题首次连续出现 |
+| `alert.last_seen` | Factorio tick | 最近一次确认问题仍存在 |
 
 ## 大小上限和可预测裁剪
 
