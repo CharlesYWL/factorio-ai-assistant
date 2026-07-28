@@ -153,10 +153,11 @@ void test(
     assert.match(answer.text, /用电 100 MW/);
     assert.match(answer.text, /满足率 40%/);
     assert.match(answer.text, /当前没有进行中的研究/);
-    assert.match(answer.text, /\[S3\] 1 分钟净缺口候选/);
+    assert.match(answer.text, /1 分钟净缺口候选/);
     assert.match(answer.text, /物品 iron-plate/);
     assert.match(answer.text, /流体 petroleum-gas/);
-    assert.match(answer.text, /当前电力满足率为 40% \[S1\]/);
+    assert.match(answer.text, /当前电力满足率为 40%。/);
+    assert.doesNotMatch(answer.text, /\[S1\]/);
   },
 );
 

@@ -13,7 +13,7 @@
       "id": "oil-diagnosis",
       "question": "为什么我的高级炼油停了？",
       "expected_tool": "read_advisor_alerts",
-      "expected_text": "采集数据是 force 级聚合流量"
+      "expected_text": "检查枯竭油井"
     },
     {
       "id": "research-next",
@@ -25,25 +25,25 @@
       "id": "top-bottlenecks",
       "question": "当前最大的三个瓶颈是什么？",
       "expected_tool": "read_advisor_alerts",
-      "expected_text": "[行动]"
+      "expected_text": "增加发电或燃料"
     },
     {
       "id": "evidence",
       "question": "这个建议依据什么数据？",
       "expected_tool": "read_advisor_alerts",
-      "expected_text": "[事实]"
+      "expected_text": "电力满足率"
     },
     {
       "id": "next-step-plan",
       "question": "接下来该做什么？",
       "expected_tool": "read_progression_guide",
-      "expected_text": "[流程指南]"
+      "expected_text": "当前阶段"
     },
     {
       "id": "expand-next",
       "question": "下一步该扩建哪条产线？",
       "expected_tool": "read_progression_guide",
-      "expected_text": "内置流程指南"
+      "expected_text": "当前阶段"
     }
   ],
   "dynamic_snapshot": {

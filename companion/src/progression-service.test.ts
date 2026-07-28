@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createLocalizationUpdatePacket,
   DEFAULT_ADVISOR_CONFIG,
   PROTOCOL_VERSION,
   STATE_SCHEMA_VERSION,
@@ -13,6 +14,7 @@ import { AdvisorEngine } from "./advisor.js";
 import { AssistantService } from "./assistant-service.js";
 import { AssistantToolbox } from "./assistant-tools.js";
 import { resolveCompanionConfig } from "./config.js";
+import { LocalizedNameStore } from "./localization.js";
 import type { CompanionLogger } from "./logger.js";
 import { ProgressionService } from "./progression-service.js";
 import type { AIProvider } from "./providers.js";
@@ -56,11 +58,11 @@ void test("answers a next-step question with ordered guide evidence", async () =
   const answer = await answerLocally("接下来该做什么？");
 
   assert.equal(answer.mode, "local");
-  assert.match(answer.text, /\[流程指南\]/u);
-  assert.match(answer.text, /第 3\/8 阶段/u);
-  assert.match(answer.text, /指南规则 guide-3-/u);
-  assert.match(answer.text, /\[行动\]/u);
-  assert.match(answer.text, /（证据：\[G\d\]）/u);
+  assert.match(answer.text, /当前阶段：3\/8/u);
+  assert.doesNotMatch(
+    answer.text,
+    /\[(?:流程指南|推断|缺失数据|假设|行动)\]/u,
+  );
   assert.ok(countActions(answer.text) > 0 && countActions(answer.text) <= 3);
 });
 
@@ -70,11 +72,7 @@ void test("puts the active bottleneck ahead of generic stage steps", async () =>
 
   assert.ok(actions.length >= 2);
   assert.match(actions[0] ?? "", /先处理当前瓶颈（material-deficit）/u);
-  assert.match(actions[0] ?? "", /（证据：\[A1\]）/u);
-  assert.ok(
-    actions.slice(1).some((line) => /（证据：\[G\d\]）/u.test(line)),
-    "a guide-backed step must follow the bottleneck",
-  );
+  assert.doesNotMatch(actions[0] ?? "", /证据|\[A1\]/u);
 });
 
 void test("keeps advisor alerts as the first tool for research questions", () => {
@@ -99,6 +97,80 @@ void test("puts the progression guide first for planning questions", () => {
   assert.equal(grounding.calls[0]?.id, "tool-1");
   assert.equal(grounding.calls[0]?.status, "ok");
   assert.equal(grounding.progression?.stage.id, "smelting-logistics-military");
+});
+
+void test("localizes progression-guide prototype IDs in compact actions", async () => {
+  const store = new CompanionStateStore();
+  assert.equal(
+    store.acceptStaticSnapshotChunk(
+      staticPacket([...MID_GAME_TECHNOLOGIES, "utility-science-pack"], false),
+    ),
+    true,
+  );
+  store.acceptDynamicSnapshot(dynamicPacket());
+  const names = new LocalizedNameStore();
+  names.apply(
+    createLocalizationUpdatePacket({
+      messageId: "factorio-guide-localization",
+      tick: 600,
+      locale: "zh-CN",
+      reset: true,
+      names: [
+        { kind: "technology", id: "rocket-silo", name: "火箭发射井" },
+        { kind: "technology", id: "concrete", name: "混凝土" },
+        { kind: "technology", id: "rocket-fuel", name: "火箭燃料" },
+        {
+          kind: "technology",
+          id: "electric-energy-accumulators",
+          name: "电能蓄电",
+        },
+        { kind: "technology", id: "solar-energy", name: "太阳能" },
+        {
+          kind: "technology",
+          id: "utility-science-pack",
+          name: "效用科技包",
+        },
+        { kind: "technology", id: "speed-module-3", name: "速度插件 3" },
+        {
+          kind: "technology",
+          id: "productivity-module-3",
+          name: "产能插件 3",
+        },
+        { kind: "technology", id: "radar", name: "雷达" },
+      ],
+    }),
+  );
+  const service = new AssistantService({
+    config: resolveCompanionConfig({}, {}),
+    stateStore: store,
+    advisor: new AdvisorEngine(DEFAULT_ADVISOR_CONFIG, "zh-CN", names),
+    logger: silentLogger,
+    localization: names,
+  });
+
+  const answer = await service.answer({
+    question: "接下来该做什么？",
+    forceId: "player",
+  });
+
+  assert.match(answer.text, /当前阶段：8\/8/u);
+  for (const expected of [
+    "火箭发射井",
+    "混凝土",
+    "火箭燃料",
+    "电能蓄电",
+    "太阳能",
+    "效用科技包",
+    "速度插件 3",
+    "产能插件 3",
+    "雷达",
+  ]) {
+    assert.match(answer.text, new RegExp(expected, "u"));
+  }
+  assert.doesNotMatch(
+    answer.text,
+    /rocket-silo|concrete|rocket-fuel|utility-science-pack|speed-module-3|productivity-module-3/u,
+  );
 });
 
 void test("routes the built-in quick questions to the progression guide", () => {
@@ -155,9 +227,8 @@ void test("reports the stage as a lower bound when the static state is truncated
     forceId: "player",
   });
 
-  assert.match(answer.text, /至少处于第 2\/8 阶段/u);
-  assert.match(answer.text, /实际进度可能更靠后/u);
-  assert.doesNotMatch(answer.text, /判定当前处于第/u);
+  assert.match(answer.text, /当前阶段：至少 2\/8/u);
+  assert.match(answer.text, /⚠ 部分状态数据已裁剪/u);
 });
 
 void test("gives a general stage clarification without synchronized state", async () => {
@@ -170,12 +241,13 @@ void test("gives a general stage clarification without synchronized state", asyn
   const answer = await service.answer({ question: "下一步该做什么？" });
 
   assert.equal(answer.mode, "local");
-  assert.match(answer.text, /\[流程指南\]/u);
-  assert.match(answer.text, /共 8 个阶段/u);
-  assert.match(answer.text, /\[缺失数据\]/u);
-  assert.match(answer.text, /尚未同步已研究科技/u);
-  assert.match(answer.text, /不代表当前工厂/u);
-  assert.doesNotMatch(answer.text, /第 3\/8 阶段/u);
+  assert.match(answer.text, /通用流程：1\/8/u);
+  assert.match(answer.text, /⚠ 当前存档状态尚未完整同步/u);
+  assert.doesNotMatch(
+    answer.text,
+    /\[(?:流程指南|推断|缺失数据|假设)\]/u,
+  );
+  assert.doesNotMatch(answer.text, /当前阶段：3\/8/u);
 });
 
 void test("reports truncated snapshots as data gaps instead of assuming zero", () => {
@@ -227,7 +299,7 @@ void test("discards a model answer that adds its own numbers or Lua commands", a
 
     assert.equal(answer.mode, "local", unsafe);
     assert.equal(answer.fallbackReason, "model_conflict", unsafe);
-    assert.match(answer.text, /\[流程指南\]/u);
+    assert.match(answer.text, /当前阶段：3\/8/u);
     assert.doesNotMatch(answer.text, /\/c\s|game\.print/u);
   }
 });
@@ -259,8 +331,9 @@ void test("keeps a grounded model inference that only cites guide evidence", asy
   });
 
   assert.equal(answer.mode, "model");
-  assert.match(answer.text, /指南规则和当前告警指向同样的产线 \[G1\]/u);
-  assert.match(answer.text, /\[流程指南\]/u);
+  assert.match(answer.text, /指南规则和当前告警指向同样的产线。/u);
+  assert.match(answer.text, /当前阶段：3\/8/u);
+  assert.doesNotMatch(answer.text, /\[G1\]|\[流程指南\]/u);
 });
 
 async function answerLocally(question: string): Promise<{

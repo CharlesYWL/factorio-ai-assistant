@@ -85,7 +85,7 @@ void test(
       assert.ok(recipe.machines.rounded_up >= 1);
 
       const answer = formatGroundedAnswer("zh-CN", grounding);
-      assert.match(answer, /\[计算结果\]/u);
+      assert.doesNotMatch(answer, /\[(?:计算结果|推断|缺失数据|假设)\]/u);
       assertNoIdentifierDemand(answer, scenario.id);
     }
   },

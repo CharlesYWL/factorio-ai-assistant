@@ -72,7 +72,6 @@ local localized_severity
 local muted_rule_set
 local format_last_response
 local panel_text_width
-local extract_highlights
 local find_element
 local localization_summary
 
@@ -686,17 +685,6 @@ render_chat_entry = function(parent, entry, player_state, name)
   add_wrapped_label(card, caption, panel_text_width(player_state))
 
   if entry.role == "assistant" and entry.text ~= nil then
-    local highlights = extract_highlights(entry.text)
-    if #highlights > 0 then
-      local label = card.add({
-        type = "label",
-        caption = {
-          "factorio-ai-assistant.numeric-highlights",
-          table.concat(highlights, "  ·  "),
-        },
-      })
-      label.style.font_color = { r = 1, g = 0.75, b = 0.25 }
-    end
     if entry.mode ~= nil then
       local mode = card.add({
         type = "label",
@@ -1122,27 +1110,6 @@ panel_text_width = function(player_state)
   local dimensions = SIZE_DIMENSIONS[player_state.size]
     or SIZE_DIMENSIONS.compact
   return dimensions.width - 80
-end
-
-extract_highlights = function(text)
-  local result = {}
-  local seen = {}
-  for value in string.gmatch(text, "[-+]?%d[%d%.%%/]*") do
-    if not seen[value] then
-      table.insert(result, value)
-      seen[value] = true
-    end
-    if #result >= 8 then
-      break
-    end
-  end
-  local assumption =
-    string.match(text, "[假假][设設][：:][^\n]+")
-    or string.match(text, "[Aa]ssumption[^\n]+")
-  if assumption ~= nil then
-    table.insert(result, assumption)
-  end
-  return result
 end
 
 find_element = function(root, name)
