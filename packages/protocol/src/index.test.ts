@@ -62,6 +62,39 @@ void test("encodes advisor configuration and lifecycle updates", () => {
   assert.deepEqual(decodePacket(encodePacket(update)), update);
 });
 
+void test("normalizes Factorio empty Lua tables in array-valued fields", () => {
+  const hello = createHelloPacket({
+    messageId: "factorio-empty-lua-array",
+    tick: 120,
+    modVersion: "0.1.0",
+    advisorConfig: DEFAULT_ADVISOR_CONFIG,
+  });
+  const factorioEncoded = JSON.stringify({
+    ...hello,
+    payload: {
+      ...hello.payload,
+      advisor_config: {
+        ...hello.payload.advisor_config,
+        muted_rules: {},
+      },
+    },
+  });
+
+  assert.deepEqual(decodePacket(factorioEncoded), hello);
+
+  const malformed = JSON.stringify({
+    ...hello,
+    payload: {
+      ...hello.payload,
+      advisor_config: {
+        ...hello.payload.advisor_config,
+        muted_rules: { unexpected: true },
+      },
+    },
+  });
+  expectProtocolError(() => decodePacket(malformed), "INVALID_PACKET");
+});
+
 void test("rejects inconsistent advisor configuration and alert lifetimes", () => {
   const hello = createHelloPacket({
     messageId: "factorio-advisor-invalid",

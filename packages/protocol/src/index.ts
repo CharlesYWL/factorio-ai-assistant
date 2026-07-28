@@ -1844,6 +1844,18 @@ function readArray<T>(
   readItem: (item: unknown, itemPath: string) => T,
   maximumLength = MAX_ARRAY_ITEMS,
 ): T[] {
+  // Factorio's helpers.table_to_json cannot distinguish an empty Lua array
+  // from an empty dictionary and serializes both as {}. Array-valued protocol
+  // fields therefore accept only that one object representation as [].
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  ) {
+    return [];
+  }
+
   if (!Array.isArray(value) || value.length > maximumLength) {
     throw invalidPacket(`${path} must be an array of at most ${maximumLength} items`);
   }
