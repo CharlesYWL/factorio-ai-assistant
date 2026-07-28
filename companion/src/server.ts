@@ -44,6 +44,7 @@ import { CompanionStateStore, StateSyncError } from "./state-store.js";
 export { DEFAULT_COMPANION_PORT, LOOPBACK_HOST, parseCompanionPort };
 export type { CompanionLogger } from "./logger.js";
 export const COMPANION_VERSION = "0.1.0";
+const COMPANION_BUILD = "production-advice-hotfix-7";
 
 const RECENT_REQUEST_TTL_MS = 60_000;
 const MAX_RECENT_REQUESTS = 1_024;
@@ -128,6 +129,7 @@ export async function startCompanionServer(
     address: address.address,
     port: address.port,
     sampling_interval_ticks: samplingIntervalTicks,
+    build: COMPANION_BUILD,
   });
 
   let closed = false;
@@ -188,6 +190,7 @@ async function handleDatagram(
       remote_address: remote.address,
       remote_port: remote.port,
       error_code: error.code,
+      error_detail: error.message,
     });
     return;
   }

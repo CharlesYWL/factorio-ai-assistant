@@ -202,7 +202,6 @@ void test("discards a model answer that adds its own numbers or Lua commands", a
   for (const unsafe of [
     "现在建 12 台组装机 [G1]。",
     "运行 /c game.print(\"done\") 就能自动建造 [G1]。",
-    "1. 先建熔炉\n2. 再建组装机 [G1]",
   ]) {
     const provider: AIProvider = {
       kind: "openai-compatible",

@@ -54,19 +54,24 @@ flowchart LR
 
 ## 游戏内面板
 
-![游戏内 Chat、Calculator、Alerts 与 Status 面板预览](docs/ui-preview.svg)
+![游戏内 Chat、Calculator、Status 面板与左上角常驻提醒卡片预览](docs/ui-preview.svg)
 
 预览使用内置 mock harness 的确定性数据绘制，对应实机布局和文案；自动化环境没有
 Factorio 图形客户端，Windows 实机截图仍列在验证清单中。
 
-- **Chat**：消息历史、快捷问题、Enter 发送、取消请求；回答区分事实、确定性计算、
-  流程指南、推断、缺失数据与假设，行动项最多 3 个并引用规则 / 计算 / 指南证据。
-  问“下一步做什么 / 该扩建什么 / 该研究什么”时会调用内置的 Factorio 2.0 原版流程指南，
-  按当前已研究科技判定阶段并给出有顺序的步骤；有活动告警时先修当前瓶颈。
+- **Chat**：消息历史、快捷问题、Enter 发送、取消请求、一键清空；回答区分事实、确定性
+  计算、流程指南、推断、缺失数据与假设，行动项最多 3 个并引用规则 / 计算 / 指南证据。
+  新消息、发送、完成和超时后自动贴回底部；向上翻看历史时，其它刷新（例如新告警到达）
+  不会把视图抢回底部。问“下一步做什么 / 该扩建什么 / 该研究什么”时会调用内置的
+  Factorio 2.0 原版流程指南，按当前已研究科技判定阶段并给出有顺序的步骤；有活动告警时
+  先修当前瓶颈。
 - **Calculator**：目标物品或流体、每分钟产量及目标配方的机器 / 插件假设；返回配方、
   精确台数、向上取整台数、外部输入和副产物。
-- **Alerts**：按严重度显示证据和建议，可静音 / 恢复规则；主动提醒使用 8 秒第三方
-  toast，不写入聊天区连续刷屏。
+- **Alerts**：按严重度显示证据和建议，可静音 / 恢复规则，也可逐条忽略 / 恢复；主动
+  提醒使用 8 秒第三方 toast，不写入聊天区连续刷屏。
+- **常驻提醒卡片**：左上角待办式列表，只在有活动告警时出现，显示严重度、规则标题和
+  证据摘要，并提供“打开顾问”和逐条忽略。忽略只影响当前告警生命周期，告警关闭后再次
+  触发会重新出现；规则静音仍是独立开关。
 - **Status**：Companion、模型模式、协议 / 状态架构、最近同步和隐私模式。
 
 `Ctrl+Shift+A` 打开面板，`Ctrl+Shift+1..4` 切页，输入框按 Enter 提交，Esc 关闭。
@@ -81,8 +86,22 @@ Calculator 保留输入，Alerts 显示带“可能过期”提示的缓存内�
 /factorio-ai-assistant-mock loading
 /factorio-ai-assistant-mock timeout
 /factorio-ai-assistant-mock incompatible
+/factorio-ai-assistant-mock chat-long
+/factorio-ai-assistant-mock chat-append
+/factorio-ai-assistant-mock chat-cleared
+/factorio-ai-assistant-mock alerts-none
+/factorio-ai-assistant-mock alerts-one
+/factorio-ai-assistant-mock alerts-many
+/factorio-ai-assistant-mock alert-close
+/factorio-ai-assistant-mock alert-reopen
 /factorio-ai-assistant-mock clear
 ```
+
+`chat-long` 铺满滚动区以便手动上翻，`chat-append` 在不重置历史的前提下追加一条新
+消息（用于验证“上翻后仍会因新消息回到底部”），`chat-cleared` 复现清空后的空状态；
+`alerts-none / alerts-one / alerts-many` 覆盖常驻卡片的 0 / 1 / 多告警布局，
+`alert-close` 关闭当前告警，`alert-reopen` 以新的生命周期重新触发，用于验证被忽略
+的提醒会重新出现。
 
 ## 本地验证
 
