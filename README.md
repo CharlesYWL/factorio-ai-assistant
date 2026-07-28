@@ -1,22 +1,24 @@
 # Factorio AI Assistant
 
-Factorio 2.0 原版的只读游戏内顾问。当前 M3 在 localhost UDP 桥接和确定性生产比例
-引擎之上提供无需模型的实时规则顾问：持续检测研究、电力、炼油、科技推进、关键材料
-缺口和产线衰减，并用证据、建议、去重、恢复与冷却控制安静提醒。系统不发送地图或
-聊天，也不会修改工厂。
+Factorio 2.0 原版的只读游戏内顾问。当前 M4 在 localhost UDP、确定性生产比例和实时
+规则顾问之上增加安全的 Companion 配置与可替换 AI provider：OpenClaw /
+OpenAI-compatible 优先，Ollama 可选；无 Key、模型离线、限流或超时时自动保留本地
+计算与规则答案。系统不发送地图，也不会修改工厂。
 
 ## 架构
 
 ```mermaid
 flowchart LR
     M["Factorio 2.0<br/>Lua Mod + sidebar UI"]
-    C["Node.js Companion<br/>rules + state + calculator<br/>127.0.0.1:34197"]
+    C["Node.js Companion<br/>rules + state + calculator + provider<br/>127.0.0.1:34197"]
     P["Versioned JSON protocol<br/>packages/protocol"]
+    A["OpenClaw / OpenAI-compatible<br/>or local Ollama"]
 
     M -- "hello + static/delta/dynamic<br/>UDP localhost" --> C
     C -- "ack/resync + advisor_update<br/>UDP localhost" --> M
     M -. "Lua schema mirror" .-> P
     C --> P
+    C -- "budgeted context<br/>timeout + fallback" --> A
 ```
 
 浏览器可视化版本见 [`docs/architecture.html`](docs/architecture.html)。
@@ -26,7 +28,7 @@ flowchart LR
 | 路径 | 作用 |
 | --- | --- |
 | `factorio-mod/` | Factorio 2.0 Mod、事件缓存、状态采样和连接面板 |
-| `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion、revision 状态缓存与本地规则顾问 |
+| `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion、状态缓存、本地规则顾问、上下文压缩和 provider 层 |
 | `packages/protocol/` | 严格的版本化消息编解码与校验 |
 | `packages/calculator/` | 精确有理数生产流求解器、Factorio 2.0 fixture 与 JSON CLI |
 | `docs/` | Windows 安装、协议、规则阈值、排错和实机验证清单 |
@@ -47,6 +49,10 @@ npm run lint
 ```bash
 npm start
 ```
+
+默认输出 `assistant_mode: local`，不需要 API Key。完整的本机 JSON / 环境变量配置、
+OpenClaw/OpenAI-compatible、Ollama、上下文边界、脱敏日志和模型故障排查见
+[`docs/companion.md`](docs/companion.md)。
 
 独立运行比例计算器（不需要游戏或 AI Key）：
 
@@ -83,8 +89,11 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 ## 安全边界
 
 - Companion 固定绑定 IPv4 loopback `127.0.0.1`，没有公网监听配置。
+- 配置远程 bind 地址会拒绝启动；相同 UDP 请求幂等重放 ack，同 ID 冲突包拒绝。
 - Factorio UDP 必须通过显式启动参数开启。
 - 状态只含游戏 / Mod / force / prototype ID 和聚合数值；无坐标、地图、聊天或存档。
 - 动态采样每 5 秒读取游戏统计和事件维护的 pole 缓存；没有 `on_tick` 全实体遍历。
-- 实时规则顾问不调用模型；无 RCON、远程遥测或自动操作。
-- 仓库不读取或存储 API key、令牌等密钥。
+- 实时规则顾问和计算器不调用模型；AI provider 只接收按问题压缩且有 byte budget 的
+  聚合上下文，无 RCON、远程遥测或自动操作。
+- API Key 只从 Companion 进程环境或显式本机配置读取，不进入 Mod、存档、UDP 或日志。
+- 模型调用有取消、每次超时和最多一次有限重试；失败后返回本地结果。

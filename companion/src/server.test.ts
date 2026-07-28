@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   ADVISOR_RULE_IDS,
   DEFAULT_ADVISOR_CONFIG,
+  MAX_PACKET_BYTES,
   PROTOCOL_VERSION,
   STATE_SCHEMA_VERSION,
   createHelloPacket,
@@ -72,6 +73,7 @@ void test(
       assert.equal(acknowledgement.payload.reply_to, hello.message_id);
       assert.equal(acknowledgement.payload.companion_version, "0.1.0");
       assert.equal(acknowledgement.payload.static_revision, 0);
+      assert.equal(acknowledgement.payload.sampling_interval_ticks, 300);
     }
   },
 );
@@ -202,6 +204,120 @@ void test("parses a configured port without allowing an external bind address", 
   assert.throws(() => parseCompanionPort("127.0.0.1:34197"), /must be an integer/);
 });
 
+void test(
+  "replays the exact cached response for duplicate requests",
+  { timeout: 3_000 },
+  async (context) => {
+    const companion = await startCompanionServer({
+      port: 0,
+      samplingIntervalTicks: 120,
+      logger: silentLogger,
+    });
+    const factorio = createSocket("udp4");
+    context.after(async () => {
+      await closeSocket(factorio);
+      await companion.close();
+    });
+    await bindSocket(factorio);
+    const encoded = encodePacket(
+      createHelloPacket({
+        messageId: "factorio-duplicate",
+        tick: 600,
+        modVersion: "0.1.0",
+      }),
+    );
+
+    const firstPromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encoded,
+      companion.address.port,
+      companion.address.address,
+    );
+    const first = (await firstPromise).datagram;
+    const secondPromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encoded,
+      companion.address.port,
+      companion.address.address,
+    );
+    const second = (await secondPromise).datagram;
+
+    assert.deepEqual(second, first);
+    const response = decodePacket(second);
+    assert.equal(response.type, "hello_ack");
+    if (response.type === "hello_ack") {
+      assert.equal(response.payload.sampling_interval_ticks, 120);
+    }
+  },
+);
+
+void test(
+  "rejects conflicting message IDs and survives malformed input",
+  { timeout: 3_000 },
+  async (context) => {
+    const warnings: string[] = [];
+    const logger: CompanionLogger = {
+      info: () => undefined,
+      warn: (event) => warnings.push(event),
+      error: () => undefined,
+    };
+    const companion = await startCompanionServer({ port: 0, logger });
+    const factorio = createSocket("udp4");
+    context.after(async () => {
+      await closeSocket(factorio);
+      await companion.close();
+    });
+    await bindSocket(factorio);
+    const first = createHelloPacket({
+      messageId: "factorio-conflict",
+      tick: 600,
+      modVersion: "0.1.0",
+    });
+    const responsePromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(first),
+      companion.address.port,
+      companion.address.address,
+    );
+    await responsePromise;
+
+    await send(
+      factorio,
+      encodePacket({ ...first, tick: 601 }),
+      companion.address.port,
+      companion.address.address,
+    );
+    assert.equal(await receiveWithin(factorio, 50), undefined);
+    assert.ok(warnings.includes("udp_message_id_conflict"));
+
+    await send(
+      factorio,
+      Buffer.alloc(Math.min(MAX_PACKET_BYTES - 1, 8_192), "x"),
+      companion.address.port,
+      companion.address.address,
+    );
+    const healthyHello = createHelloPacket({
+      messageId: "factorio-after-malicious-input",
+      tick: 602,
+      modVersion: "0.1.0",
+    });
+    const healthyResponsePromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(healthyHello),
+      companion.address.port,
+      companion.address.address,
+    );
+    assert.equal(
+      decodePacket((await healthyResponsePromise).datagram).type,
+      "hello_ack",
+    );
+  },
+);
+
 function dynamicSnapshot(tick: number, sequence: number): DynamicSnapshotPacket {
   return {
     protocol_version: PROTOCOL_VERSION,
@@ -243,7 +359,12 @@ function bindSocket(socket: Socket): Promise<AddressInfo> {
   });
 }
 
-function send(socket: Socket, data: string, port: number, address: string): Promise<void> {
+function send(
+  socket: Socket,
+  data: string | Uint8Array,
+  port: number,
+  address: string,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     socket.send(data, port, address, (error) => {
       if (error !== null) {
@@ -263,6 +384,20 @@ function receiveOne(
     socket.once("message", (datagram, remote) => {
       resolve({ datagram, remote });
     });
+  });
+}
+
+function receiveWithin(socket: Socket, milliseconds: number): Promise<Buffer | undefined> {
+  return new Promise((resolve) => {
+    const onMessage = (datagram: Buffer): void => {
+      clearTimeout(timer);
+      resolve(datagram);
+    };
+    const timer = setTimeout(() => {
+      socket.off("message", onMessage);
+      resolve(undefined);
+    }, milliseconds);
+    socket.once("message", onMessage);
   });
 }
 
