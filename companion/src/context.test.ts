@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ProductionResult } from "@factorio-ai-assistant/calculator";
 import type { DynamicForceSummary } from "@factorio-ai-assistant/protocol";
 
+import type { AssistantToolModelContext } from "./assistant-tools.js";
 import { buildCompactContext } from "./context.js";
 import type { StaticState } from "./state-store.js";
 
@@ -95,6 +96,43 @@ void test("marks deterministic calculation fields as authoritative compact conte
   assert.equal(recipes[0]?.machine_count_exact, 3.5);
   assert.equal(recipes[0]?.machine_count_rounded_up, 4);
   assert.equal("flows" in calculation, false);
+});
+
+void test("keeps deterministic tool results inside the minimum context budget", () => {
+  const toolContext: AssistantToolModelContext = {
+    contract_version: 1,
+    policy: "read-only",
+    intent: "bottlenecks",
+    calls: [
+      {
+        id: "tool-1",
+        name: "read_advisor_alerts",
+        status: "ok",
+        arguments: { force_id: "player", limit: 3 },
+        output: {
+          alerts: Array.from({ length: 3 }, (_, index) => ({
+            evidence_id: `A${index + 1}`,
+            evidence: "long deterministic evidence ".repeat(20),
+          })),
+        },
+      },
+    ],
+    evidence: Array.from({ length: 3 }, (_, index) => ({
+      id: `A${index + 1}`,
+      category: "fact",
+      text: "long deterministic evidence ".repeat(20),
+    })),
+    assumptions: ["bounded deterministic rules"],
+    missing_data: [],
+  };
+  const context = buildCompactContext(
+    "What are the top 3 bottlenecks?",
+    { dynamicForce: dynamicForce(), toolContext },
+    1_024,
+  );
+
+  assert.ok(Buffer.byteLength(JSON.stringify(context), "utf8") <= 1_024);
+  assert.ok("deterministic_tools" in context);
 });
 
 function dynamicForce(): DynamicForceSummary {

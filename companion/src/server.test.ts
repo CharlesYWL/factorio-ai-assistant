@@ -24,7 +24,9 @@ import {
   startCompanionServer,
   type CompanionLogger,
 } from "./server.js";
+import { AdvisorEngine } from "./advisor.js";
 import type { AIProvider } from "./providers.js";
+import { CompanionStateStore } from "./state-store.js";
 
 const silentLogger: CompanionLogger = {
   info: () => undefined,
@@ -91,6 +93,15 @@ void test(
   "answers and cancels in-game assistant requests",
   { timeout: 3_000 },
   async (context) => {
+    const stateStore = new CompanionStateStore();
+    const advisor = new AdvisorEngine({
+      ...DEFAULT_ADVISOR_CONFIG,
+      muted_rules: ADVISOR_RULE_IDS.filter((id) => id !== "research-idle"),
+      research_idle_ticks: 0,
+    });
+    const state = dynamicSnapshot(100, 1);
+    stateStore.acceptDynamicSnapshot(state);
+    advisor.evaluate(state);
     const provider: AIProvider = {
       kind: "ollama",
       complete(_request, signal) {
@@ -107,6 +118,8 @@ void test(
       port: 0,
       logger: silentLogger,
       provider,
+      stateStore,
+      advisor,
     });
     const factorio = createSocket("udp4");
     context.after(async () => {

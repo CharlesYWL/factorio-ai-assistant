@@ -114,3 +114,35 @@ void test("propagates caller cancellation without retrying", async () => {
   );
   assert.equal(calls, 1);
 });
+
+void test(
+  "caps a long per-attempt timeout with the total response budget",
+  { timeout: 1_000 },
+  async () => {
+    let calls = 0;
+    const provider: AIProvider = {
+      kind: "openai-compatible",
+      complete() {
+        calls += 1;
+        return new Promise(() => undefined);
+      },
+    };
+    const executor = new ProviderExecutor(provider, {
+      timeoutMs: 30_000,
+      retryCount: 1,
+      retryDelayMs: 10,
+      totalTimeoutMs: 40,
+    });
+    const started = Date.now();
+
+    await assert.rejects(
+      executor.complete(request),
+      (error: unknown) =>
+        error instanceof ProviderError &&
+        error.code === "timeout" &&
+        !error.retryable,
+    );
+    assert.ok(Date.now() - started < 500);
+    assert.equal(calls, 1);
+  },
+);

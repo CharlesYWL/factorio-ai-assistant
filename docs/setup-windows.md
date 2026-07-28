@@ -111,6 +111,33 @@ npm start
 /factorio-ai-assistant-mock clear
 ```
 
+## 6. 真实 Factorio 2.0 存档对话验收清单（待 Windows 实机）
+
+使用一个已解锁高级炼油、正在稳定生产化学科研包，且可以人为制造缺电、断料和油品堵塞
+的原版 2.0 存档。先保留一份副本；本清单只观察与提问，不要求 Mod 或 Companion 修改
+任何实体。自动化 fixture 已覆盖同样的五类问法，以下项目仍必须在 Windows + Steam
+Factorio 2.0 图形客户端完成：
+
+- [ ] **计算**：稳定同步后提问“45 蓝瓶每分钟需要多少机器？”。把 Chat 中 `[C1]`
+  的目标配方、精确台数和向上取整台数与 Calculator 页同参数结果逐项对照，必须一致。
+- [ ] **炼油诊断**：让重油 / 轻油输出堵塞或切断炼油输入，等待规则持续门槛后提问
+  “为什么我的高级炼油停了？”。回答必须引用当前油品 / 电力规则证据，并明确说明系统
+  没有单机配方、管道和库存数据，不能假装定位具体实体。
+- [ ] **科研建议**：停止当前研究，并保持化学科研包稳定产出；提问“我现在最该研究
+  什么？”。回答应引用科研空闲或建设机器人规则证据，不得推荐尚无采集依据的科技。
+- [ ] **前三瓶颈**：同时制造缺电、铁板缺口和油品失衡，等待告警生效后提问“当前最大
+  的三个瓶颈是什么？”。确认按严重度排序、行动项不超过 3 个且每项都有 `[A#]` 证据。
+- [ ] **证据追溯**：紧接着提问“这个建议依据什么数据？”。核对 `[事实]` 中的功率、
+  1 / 10 分钟聚合流量与 Alerts 页一致，且回答区分推断、假设和缺失数据。
+- [ ] **冲突保护**：连接可控 mock provider，让它返回与 Calculator 不同的机器数。
+  Chat 必须显示本地工具数字，日志出现 `assistant_model_conflict`，错误数字不进入游戏。
+- [ ] **超时降级**：让 provider 挂起或断网，计时从发送到本地答案；必须小于 10 秒，
+  Calculator / Alerts 结果仍可用且界面不冻结。
+- [ ] **只读边界**：输入要求忽略规则并输出 Lua、`/c` 或 RCON 的提示注入文本。回答
+  不得出现可执行指令；提问前后工厂实体、配方、线路与研究队列均无自动变化。
+- [ ] 保存 `factorio-current.log` 与 Companion 的脱敏日志，并记录 Factorio 版本、
+  Mod 版本、provider / model、存档副本名及每项通过 / 失败结果。
+
 ## 排错
 
 | 现象 | 检查项 |
@@ -142,6 +169,8 @@ npm start
 - [x] 配置远程 bind 拒绝、上下文 byte budget、恶意输入限制和结构化日志脱敏测试。
 - [x] Chat / cancel / Calculator UDP 协议 round-trip、严格字段校验与 mock socket 取消测试。
 - [x] Calculator 从同步静态数据生成结构化结果；缺数据时返回明确错误。
+- [x] 五类状态问答 fixture、工具数字优先、提示注入 / 超长输入 / 幻觉冲突和 9 秒
+  provider 总预算自动化测试。
 - [x] Lua UI 语法、四页状态契约、中英文 locale key 对齐和可复现 mock harness。
 - [ ] Windows Steam Factorio 2.0 实机：按钮和面板正确渲染。
 - [ ] Windows Steam Factorio 2.0 实机：Chat / Calculator、键盘、尺寸和位置记忆。
@@ -149,5 +178,6 @@ npm start
 - [ ] Windows Steam Factorio 2.0 实机：`Disconnected → Connected`、超时断开及
   Companion 重启恢复。
 - [ ] Windows 防火墙默认配置下的 loopback 行为。
+- [ ] 上述真实存档五类问答、冲突保护、超时降级和只读边界清单。
 
-最后三项需要安装了 Factorio 2.0 的 Windows 主机完成，自动化环境无法替代。
+未勾选项需要安装了 Factorio 2.0 的 Windows 主机完成，自动化环境无法替代。

@@ -9,6 +9,12 @@ import {
   buildCompactContext,
   type ContextSources,
 } from "./context.js";
+import {
+  AssistantToolbox,
+  formatGroundedAnswer,
+  toAssistantToolModelContext,
+  type AssistantGrounding,
+} from "./assistant-tools.js";
 import type { CompanionLogger } from "./logger.js";
 import { ProviderExecutor } from "./provider-executor.js";
 import {
@@ -20,6 +26,7 @@ import type { CompanionStateStore } from "./state-store.js";
 
 export const MAX_QUESTION_BYTES = 4_096;
 export const MAX_QUESTION_CHARACTERS = 2_000;
+const MAX_MODEL_INFERENCE_CHARACTERS = 1_000;
 
 export type AssistantMode = "local" | "local-model" | "remote-model";
 
@@ -61,12 +68,18 @@ export class AssistantService {
   readonly #logger: CompanionLogger;
   readonly #provider: AIProvider | undefined;
   readonly #executor: ProviderExecutor | undefined;
+  readonly #toolbox: AssistantToolbox;
 
   public constructor(options: AssistantServiceOptions) {
     this.#config = options.config;
     this.#stateStore = options.stateStore;
     this.#advisor = options.advisor;
     this.#logger = options.logger;
+    this.#toolbox = new AssistantToolbox(
+      options.stateStore,
+      options.advisor,
+      options.config.language,
+    );
     this.#provider =
       options.provider ?? createConfiguredProvider(options.config);
     this.#executor =
@@ -108,12 +121,25 @@ export class AssistantService {
   public async answer(request: AssistantRequest): Promise<AssistantAnswer> {
     const question = validateQuestion(request.question);
     const requestId = `assistant-${randomUUID()}`;
-    const sources = this.#collectContext(request);
+    const grounding = this.#toolbox.ground(
+      question,
+      request.forceId,
+      request.calculation,
+    );
+    const sources = this.#collectContext(request, grounding);
     const context = buildCompactContext(
       question,
       sources,
       this.#config.contextBudgetBytes,
     );
+
+    if (grounding.evidence.length === 0) {
+      return this.#localAnswer(
+        requestId,
+        grounding,
+        this.#provider === undefined ? "local_mode" : "insufficient_data",
+      );
+    }
 
     if (this.#executor !== undefined && this.#provider !== undefined) {
       try {
@@ -126,6 +152,18 @@ export class AssistantService {
           },
           request.signal,
         );
+        const reconciled = reconcileModelInference(
+          response.text,
+          grounding,
+        );
+        if (reconciled.kind === "conflict") {
+          this.#logger.warn("assistant_model_conflict", {
+            request_id: requestId,
+            provider: this.#provider.kind,
+            conflict_type: reconciled.type,
+          });
+          return this.#localAnswer(requestId, grounding, "model_conflict");
+        }
         this.#logger.info("assistant_request_completed", {
           request_id: requestId,
           mode: "model",
@@ -135,7 +173,11 @@ export class AssistantService {
         return {
           requestId,
           mode: "model",
-          text: response.text,
+          text: formatGroundedAnswer(
+            this.#config.language,
+            grounding,
+            reconciled.text,
+          ),
           provider: this.#provider.kind,
           model: response.model,
         };
@@ -159,16 +201,19 @@ export class AssistantService {
         });
         return this.#localAnswer(
           requestId,
-          sources,
+          grounding,
           providerError.code,
         );
       }
     }
 
-    return this.#localAnswer(requestId, sources, "local_mode");
+    return this.#localAnswer(requestId, grounding, "local_mode");
   }
 
-  #collectContext(request: AssistantRequest): ContextSources {
+  #collectContext(
+    request: AssistantRequest,
+    grounding: AssistantGrounding,
+  ): ContextSources {
     const dynamicForces = this.#stateStore.dynamicState?.payload.forces ?? [];
     const dynamicForce =
       request.forceId === undefined
@@ -188,18 +233,19 @@ export class AssistantService {
         : { staticState: this.#stateStore.staticState }),
       ...(dynamicForce === undefined ? {} : { dynamicForce }),
       alerts,
-      ...(request.calculation === undefined
+      ...(grounding.calculation === undefined
         ? {}
-        : { calculation: request.calculation }),
+        : { calculation: grounding.calculation }),
+      toolContext: toAssistantToolModelContext(grounding),
     };
   }
 
   #localAnswer(
     requestId: string,
-    sources: ContextSources,
+    grounding: AssistantGrounding,
     fallbackReason: string,
   ): AssistantAnswer {
-    const text = formatLocalAnswer(this.#config.language, sources);
+    const text = formatGroundedAnswer(this.#config.language, grounding);
     this.#logger.info("assistant_request_completed", {
       request_id: requestId,
       mode: "local",
@@ -259,71 +305,61 @@ function containsDisallowedControl(value: string): boolean {
   return false;
 }
 
-function formatLocalAnswer(
-  language: CompanionConfig["language"],
-  sources: ContextSources,
-): string {
-  const calculation = sources.calculation;
-  if (calculation !== undefined) {
-    const targets = calculation.targets
-      .slice(0, 3)
-      .map((target) => `${target.id} ${formatNumber(target.per_minute)}/min`)
-      .join(", ");
-    const recipes = calculation.recipes
-      .slice(0, 5)
-      .map(
-        (recipe) =>
-          `${recipe.recipe_id}: ${formatNumber(recipe.machines.exact)} ` +
-          `(${recipe.machines.rounded_up} rounded up) ${recipe.machine_id}`,
-      );
-    return language === "zh-CN"
-      ? [
-          `本地确定性计算结果：${targets}。`,
-          ...recipes.map((recipe) => `- ${recipe}`),
-          `假设：${calculation.assumptions.rounding}`,
-        ].join("\n")
-      : [
-          `Local deterministic calculation: ${targets}.`,
-          ...recipes.map((recipe) => `- ${recipe}`),
-          `Assumption: ${calculation.assumptions.rounding}`,
-        ].join("\n");
+type ReconciledModelInference =
+  | { kind: "ok"; text: string }
+  | {
+      kind: "conflict";
+      type: "unsafe_command" | "actions" | "citation" | "numeric" | "format";
+    };
+
+function reconcileModelInference(
+  value: string,
+  grounding: AssistantGrounding,
+): ReconciledModelInference {
+  if (containsExecutableInstruction(value)) {
+    return { kind: "conflict", type: "unsafe_command" };
+  }
+  if (containsOrderedActions(value)) {
+    return { kind: "conflict", type: "actions" };
   }
 
-  const alerts = (sources.alerts ?? []).sort(compareAlerts).slice(0, 3);
-  if (alerts.length > 0) {
-    return language === "zh-CN"
-      ? [
-          "模型不可用；以下是本地规则给出的优先建议：",
-          ...alerts.map(
-            (alert, index) =>
-              `${index + 1}. [${alert.severity}] ${alert.evidence} ${alert.recommendation}`,
-          ),
-        ].join("\n")
-      : [
-          "The model is unavailable; local rules found these priorities:",
-          ...alerts.map(
-            (alert, index) =>
-              `${index + 1}. [${alert.severity}] ${alert.evidence} ${alert.recommendation}`,
-          ),
-        ].join("\n");
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length === 0 || text.length > MAX_MODEL_INFERENCE_CHARACTERS) {
+    return { kind: "conflict", type: "format" };
   }
 
-  return language === "zh-CN"
-    ? "当前为本地模式，模型不可用。本地规则未发现活动告警；精确比例计算和规则提醒仍可使用。"
-    : "The companion is in local mode and no model is available. Local rules found no active alerts; deterministic calculations and alerts remain available.";
+  const evidenceIds = new Set(grounding.evidence.map(({ id }) => id));
+  const citations = [...text.matchAll(/\[([A-Z]\d+)\]/g)].map(
+    (match) => match[1] ?? "",
+  );
+  if (
+    evidenceIds.size > 0 &&
+    (citations.length === 0 ||
+      citations.some((citation) => !evidenceIds.has(citation)))
+  ) {
+    return { kind: "conflict", type: "citation" };
+  }
+
+  if (containsUnsupportedNumber(text)) {
+    return { kind: "conflict", type: "numeric" };
+  }
+  return { kind: "ok", text };
 }
 
-function compareAlerts(
-  left: NonNullable<ContextSources["alerts"]>[number],
-  right: NonNullable<ContextSources["alerts"]>[number],
-): number {
-  const rank = { critical: 0, warning: 1, info: 2 };
-  return (
-    rank[left.severity] - rank[right.severity] ||
-    left.first_seen - right.first_seen
+function containsExecutableInstruction(value: string): boolean {
+  return /```|(?:^|\s)\/(?:c|sc|silent-command)\b|rcon\b|remote\.call|commands\.add_command|script\.on_|game\.[a-z_]|自动(?:建造|修改|拆除)|automatically (?:build|modify|remove)/imu.test(
+    value,
   );
 }
 
-function formatNumber(value: number): string {
-  return String(Math.round(value * 1_000) / 1_000);
+function containsOrderedActions(value: string): boolean {
+  return /(?:^|\n)\s*(?:\d{1,2}[.)、]|[-*])\s+/u.test(value);
+}
+
+function containsUnsupportedNumber(value: string): boolean {
+  const withoutCitations = value.replace(/\[[A-Z]\d+\]/g, "");
+  return (
+    /[零〇一二三四五六七八九十百千万两]/u.test(withoutCitations) ||
+    /-?\d+(?:[.,]\d+)?%?/u.test(withoutCitations)
+  );
 }

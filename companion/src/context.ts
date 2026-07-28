@@ -6,6 +6,7 @@ import type {
 } from "@factorio-ai-assistant/protocol";
 
 import type { StaticState } from "./state-store.js";
+import type { AssistantToolModelContext } from "./assistant-tools.js";
 
 const MAX_TECHNOLOGIES = 64;
 const MAX_FLOWS = 16;
@@ -17,6 +18,7 @@ export interface ContextSources {
   dynamicForce?: DynamicForceSummary;
   alerts?: AdvisorAlert[];
   calculation?: ProductionResult;
+  toolContext?: AssistantToolModelContext;
 }
 
 export type CompactModelContext = Record<string, unknown>;
@@ -38,17 +40,33 @@ export function buildCompactContext(
   const omitted: Record<string, number> = {};
   const force = sources.dynamicForce;
 
+  if (sources.toolContext !== undefined) {
+    appendToolContext(context, sources.toolContext, budgetBytes, omitted);
+  }
+
   if (force !== undefined) {
-    context.force_id = force.id;
-    context.current_research =
-      force.research === null
-        ? null
-        : {
-            technology_id: force.research.technology_id,
-            progress: force.research.progress,
-          };
+    if (!trySet(context, "force_id", force.id, budgetBytes)) {
+      omitted.force_id = 1;
+    }
+    if (
+      !trySet(
+        context,
+        "current_research",
+        force.research === null
+          ? null
+          : {
+              technology_id: force.research.technology_id,
+              progress: force.research.progress,
+            },
+        budgetBytes,
+      )
+    ) {
+      omitted.current_research = 1;
+    }
     if (intent.production || intent.advice) {
-      context.power = { ...force.power };
+      if (!trySet(context, "power", { ...force.power }, budgetBytes)) {
+        omitted.power = 1;
+      }
       appendFlows(
         context,
         "production",
@@ -68,8 +86,16 @@ export function buildCompactContext(
         question,
         staticForce.researched_technologies,
       );
-      context.researched_technology_count =
-        staticForce.researched_technologies.length;
+      if (
+        !trySet(
+          context,
+          "researched_technology_count",
+          staticForce.researched_technologies.length,
+          budgetBytes,
+        )
+      ) {
+        omitted.researched_technology_count = 1;
+      }
       appendValues(
         context,
         "researched_technologies",
@@ -86,7 +112,10 @@ export function buildCompactContext(
     }
   }
 
-  if (intent.advice || sources.alerts !== undefined) {
+  if (
+    sources.toolContext === undefined &&
+    (intent.advice || sources.alerts !== undefined)
+  ) {
     const alerts = [...(sources.alerts ?? [])]
       .sort(compareAlerts)
       .slice(0, MAX_ALERTS)
@@ -105,7 +134,10 @@ export function buildCompactContext(
     }
   }
 
-  if (sources.calculation !== undefined) {
+  if (
+    sources.toolContext === undefined &&
+    sources.calculation !== undefined
+  ) {
     appendCalculation(context, sources.calculation, budgetBytes, omitted);
   }
 
@@ -122,6 +154,66 @@ export function buildCompactContext(
     );
   }
   return context;
+}
+
+function appendToolContext(
+  context: CompactModelContext,
+  toolContext: AssistantToolModelContext,
+  budgetBytes: number,
+  omitted: Record<string, number>,
+): void {
+  if (
+    trySet(
+      context,
+      "deterministic_tools",
+      {
+        contract_version: toolContext.contract_version,
+        policy: toolContext.policy,
+        intent: toolContext.intent,
+        calls: [],
+        evidence: [],
+        assumptions: [],
+        missing_data: [],
+      },
+      budgetBytes,
+    )
+  ) {
+    appendNestedValues(
+      context,
+      "deterministic_tools",
+      "calls",
+      toolContext.calls,
+      budgetBytes,
+      omitted,
+    );
+    appendNestedValues(
+      context,
+      "deterministic_tools",
+      "evidence",
+      toolContext.evidence,
+      budgetBytes,
+      omitted,
+    );
+    appendNestedValues(
+      context,
+      "deterministic_tools",
+      "assumptions",
+      toolContext.assumptions,
+      budgetBytes,
+      omitted,
+    );
+    appendNestedValues(
+      context,
+      "deterministic_tools",
+      "missing_data",
+      toolContext.missing_data,
+      budgetBytes,
+      omitted,
+    );
+    return;
+  }
+
+  omitted.deterministic_tools = 1;
 }
 
 function appendFlows(
