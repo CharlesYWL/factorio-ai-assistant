@@ -81,18 +81,35 @@ npm start
 ## 5. 验证 UI 与双向通信
 
 1. 载入或新建一个存档。
-2. 点击顶部的 **AI Assistant** 按钮打开侧边面板。
-3. Companion 未运行或未响应时，面板显示 **Disconnected**。
-4. Companion 收到 Mod 发出的 `hello` 并返回 `hello_ack` 后，面板显示
-   **Connected**，同时更新 **Last response**。
-5. 点击 **Send hello** 可立即重试。Mod 也会每 5 秒自动发送一次心跳；10 秒没有
-   有效响应会回到 **Disconnected**。
-6. 首次连接后，Companion 日志会出现 `Accepted static snapshot ...`；Factorio 的
+2. 点击顶部的 **AI Assistant** 按钮或按 `Ctrl+Shift+A` 打开顾问面板；
+   `Ctrl+Shift+1..4` 可直接切换 Chat / Calculator / Alerts / Status。
+3. Companion 未运行或未响应时，四页仍可进入，标题显示 **离线**；Calculator 保留
+   输入，Alerts 显示带过期提示的缓存内容。
+4. Companion 收到 Mod 发出的 `hello` 并返回 `hello_ack` 后，Status 显示
+   **已连接**、顾问模式、协议版本、最近同步与隐私模式。
+5. Status 的 **立即重连** 可重试。Mod 也会每 5 秒自动发送一次心跳；10 秒没有有效
+   响应会回到离线。
+6. Chat 输入问题后按 Enter 或点击发送；模型请求进行中可取消。无模型或模型故障时，
+   回答来源显示本地规则。
+7. Calculator 输入 `chemical-science-pack` 和目标 `45`，验证结构化配方、精确台数、
+   向上取整台数与外部输入。机器 / 插件留空时自动选择。
+8. 首次连接后，Companion 日志会出现 `Accepted static snapshot ...`；Factorio 的
    `factorio-current.log` 会记录首个动态样本的 interval、耗时、byte 数和裁剪计数，
    之后约每分钟记录一次。
-7. 面板底部显示当前 force 的活动告警。可在 **Settings → Mod settings → Map** 临时
-   调低某条规则的持续门槛验证打开 / 恢复；测试后恢复默认值。全局安静、规则静音和
-   全部默认阈值见 [`advisor.md`](advisor.md)。
+9. Alerts 显示当前 force 的活动告警、证据与建议。可在面板直接静音 / 恢复规则，也可
+   在 **Settings → Mod settings → Map** 临时调低持续门槛验证 8 秒 toast；测试后恢复
+   默认值。全部默认阈值见 [`advisor.md`](advisor.md)。
+
+没有可控存档数据时，可先停止 Companion，再用内置 mock harness 逐一检查关键状态：
+
+```text
+/factorio-ai-assistant-mock ready
+/factorio-ai-assistant-mock offline
+/factorio-ai-assistant-mock loading
+/factorio-ai-assistant-mock timeout
+/factorio-ai-assistant-mock incompatible
+/factorio-ai-assistant-mock clear
+```
 
 ## 排错
 
@@ -105,6 +122,8 @@ npm start
 | 模型超时 / 限流 | 本地计算与告警会继续工作；provider 只有限重试一次，详见 `companion.md` |
 | 日志提示需要 2.0.59 | 更新 Factorio；旧版 2.0 可加载 Mod，但没有 Lua UDP API |
 | UI 没有按钮 | 确认 Mod 已启用、目录名正确，并检查 `%APPDATA%\Factorio\factorio-current.log` |
+| 显示协议不兼容 | Mod 与 Companion 版本不成套；重新复制 `factorio-mod/` 并执行 `npm run build` |
+| 计算器报告多配方歧义 | 简化面板不能选择复杂上游配方；改用仓库 JSON CLI |
 | 游戏暂停时响应延迟 | `helpers.recv_udp` 随游戏更新轮询；恢复游戏后再观察 |
 | 安全软件告警 | 仅允许 `factorio.exe` 和 Node.js 的本机 loopback UDP，不要建立公网入站规则 |
 
@@ -121,8 +140,12 @@ npm start
   `advisor_update`。
 - [x] OpenClaw/OpenAI-compatible fixture、Ollama mock、超时/取消/有限重试和本地降级测试。
 - [x] 配置远程 bind 拒绝、上下文 byte budget、恶意输入限制和结构化日志脱敏测试。
+- [x] Chat / cancel / Calculator UDP 协议 round-trip、严格字段校验与 mock socket 取消测试。
+- [x] Calculator 从同步静态数据生成结构化结果；缺数据时返回明确错误。
+- [x] Lua UI 语法、四页状态契约、中英文 locale key 对齐和可复现 mock harness。
 - [ ] Windows Steam Factorio 2.0 实机：按钮和面板正确渲染。
-- [ ] Windows Steam Factorio 2.0 实机：活动告警、主动聊天提醒、安静模式和恢复关闭。
+- [ ] Windows Steam Factorio 2.0 实机：Chat / Calculator、键盘、尺寸和位置记忆。
+- [ ] Windows Steam Factorio 2.0 实机：活动告警、toast、静音和恢复关闭。
 - [ ] Windows Steam Factorio 2.0 实机：`Disconnected → Connected`、超时断开及
   Companion 重启恢复。
 - [ ] Windows 防火墙默认配置下的 loopback 行为。

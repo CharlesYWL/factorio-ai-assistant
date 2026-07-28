@@ -1,0 +1,290 @@
+local ui_state = {}
+
+local MAX_CHAT_HISTORY = 30
+local VALID_TABS = {
+  chat = true,
+  calculator = true,
+  alerts = true,
+  status = true,
+}
+local SIZES = { "compact", "normal", "large" }
+local valid_size
+local append_chat
+
+function ui_state.ensure_player(state, player_index)
+  state.ui_players = state.ui_players or {}
+  local player_state = state.ui_players[player_index]
+  if player_state == nil then
+    player_state = {
+      active_tab = "chat",
+      size = "compact",
+      location = nil,
+      chat_history = {},
+      chat_pending = nil,
+      calculator = {
+        target_kind = "item",
+        target_id = "",
+        rate_per_minute = "60",
+        machine_id = "",
+        module_ids = "",
+        pending = nil,
+        result = nil,
+        error_code = nil,
+        error_message = nil,
+      },
+    }
+    state.ui_players[player_index] = player_state
+  end
+
+  player_state.active_tab =
+    VALID_TABS[player_state.active_tab] and player_state.active_tab or "chat"
+  player_state.size = valid_size(player_state.size)
+  player_state.chat_history = player_state.chat_history or {}
+  player_state.calculator = player_state.calculator or {}
+  local calculator = player_state.calculator
+  calculator.target_kind =
+    calculator.target_kind == "fluid" and "fluid" or "item"
+  calculator.target_id = calculator.target_id or ""
+  calculator.rate_per_minute = calculator.rate_per_minute or "60"
+  calculator.machine_id = calculator.machine_id or ""
+  calculator.module_ids = calculator.module_ids or ""
+
+  return player_state
+end
+
+function ui_state.set_tab(player_state, tab)
+  if VALID_TABS[tab] then
+    player_state.active_tab = tab
+    return true
+  end
+  return false
+end
+
+function ui_state.cycle_size(player_state)
+  local index = 1
+  for candidate_index, size in ipairs(SIZES) do
+    if size == player_state.size then
+      index = candidate_index
+      break
+    end
+  end
+  player_state.size = SIZES[index % #SIZES + 1]
+  return player_state.size
+end
+
+function ui_state.set_location(player_state, location)
+  if type(location) ~= "table"
+    or type(location.x) ~= "number"
+    or type(location.y) ~= "number"
+  then
+    return false
+  end
+  player_state.location = {
+    x = math.max(0, math.floor(location.x)),
+    y = math.max(0, math.floor(location.y)),
+  }
+  return true
+end
+
+function ui_state.queue_chat(player_state, message_id, question, tick)
+  if player_state.chat_pending ~= nil then
+    return false
+  end
+  append_chat(player_state, {
+    role = "user",
+    text = question,
+    tick = tick,
+  })
+  player_state.chat_pending = {
+    message_id = message_id,
+    sent_tick = tick,
+  }
+  return true
+end
+
+function ui_state.cancel_chat(player_state, tick)
+  local pending = player_state.chat_pending
+  if pending == nil then
+    return nil
+  end
+  player_state.chat_pending = nil
+  append_chat(player_state, {
+    role = "system",
+    locale = "chat-cancelled",
+    tick = tick,
+  })
+  return pending.message_id
+end
+
+function ui_state.complete_chat(state, reply_to, payload, tick)
+  for player_index, player_state in pairs(state.ui_players or {}) do
+    local pending = player_state.chat_pending
+    if pending ~= nil and pending.message_id == reply_to then
+      player_state.chat_pending = nil
+      if payload.status == "ok" then
+        append_chat(player_state, {
+          role = "assistant",
+          text = payload.text,
+          mode = payload.mode,
+          provider = payload.provider,
+          model = payload.model,
+          fallback_reason = payload.fallback_reason,
+          tick = tick,
+        })
+      elseif payload.status == "cancelled" then
+        append_chat(player_state, {
+          role = "system",
+          locale = "chat-cancelled",
+          tick = tick,
+        })
+      else
+        append_chat(player_state, {
+          role = "system",
+          locale = "chat-error",
+          error_code = payload.error_code,
+          tick = tick,
+        })
+      end
+      return player_index
+    end
+  end
+  return nil
+end
+
+function ui_state.update_calculator_input(player_state, field, value)
+  local calculator = player_state.calculator
+  if field == "target_kind" then
+    calculator.target_kind = value == "fluid" and "fluid" or "item"
+  elseif field == "target_id"
+    or field == "rate_per_minute"
+    or field == "machine_id"
+    or field == "module_ids"
+  then
+    calculator[field] = value
+  else
+    return false
+  end
+  return true
+end
+
+function ui_state.queue_calculation(player_state, message_id, tick)
+  local calculator = player_state.calculator
+  if calculator.pending ~= nil then
+    return false
+  end
+  calculator.pending = {
+    message_id = message_id,
+    sent_tick = tick,
+  }
+  calculator.result = nil
+  calculator.error_code = nil
+  calculator.error_message = nil
+  return true
+end
+
+function ui_state.complete_calculation(state, reply_to, payload)
+  for player_index, player_state in pairs(state.ui_players or {}) do
+    local calculator = player_state.calculator
+    local pending = calculator.pending
+    if pending ~= nil and pending.message_id == reply_to then
+      calculator.pending = nil
+      if payload.status == "ok" then
+        calculator.result = payload.result
+        calculator.error_code = nil
+        calculator.error_message = nil
+      else
+        calculator.result = nil
+        calculator.error_code = payload.error_code or "UNKNOWN"
+        calculator.error_message = payload.error_message
+      end
+      return player_index
+    end
+  end
+  return nil
+end
+
+function ui_state.expire_requests(state, tick, timeout_ticks)
+  local changed = {}
+  for player_index, player_state in pairs(state.ui_players or {}) do
+    local did_change = false
+    local chat_pending = player_state.chat_pending
+    if chat_pending ~= nil
+      and tick - chat_pending.sent_tick >= timeout_ticks
+    then
+      player_state.chat_pending = nil
+      append_chat(player_state, {
+        role = "system",
+        locale = "chat-timeout",
+        tick = tick,
+      })
+      did_change = true
+    end
+
+    local calculator = player_state.calculator
+    local calculation_pending = calculator.pending
+    if calculation_pending ~= nil
+      and tick - calculation_pending.sent_tick >= timeout_ticks
+    then
+      calculator.pending = nil
+      calculator.result = nil
+      calculator.error_code = "TIMEOUT"
+      calculator.error_message = nil
+      did_change = true
+    end
+
+    if did_change then
+      table.insert(changed, player_index)
+    end
+  end
+  return changed
+end
+
+function ui_state.reset_player(state, player_index)
+  if state.ui_players ~= nil then
+    state.ui_players[player_index] = nil
+  end
+  return ui_state.ensure_player(state, player_index)
+end
+
+function ui_state.append_mock_message(player_state, role, text, tick)
+  append_chat(player_state, {
+    role = role,
+    text = text,
+    tick = tick,
+  })
+end
+
+function ui_state.append_system(player_state, locale, tick, error_code)
+  append_chat(player_state, {
+    role = "system",
+    locale = locale,
+    error_code = error_code,
+    tick = tick,
+  })
+end
+
+function ui_state.set_calculation_error(player_state, error_code, error_message)
+  local calculator = player_state.calculator
+  calculator.pending = nil
+  calculator.result = nil
+  calculator.error_code = error_code
+  calculator.error_message = error_message
+end
+
+append_chat = function(player_state, entry)
+  table.insert(player_state.chat_history, entry)
+  while #player_state.chat_history > MAX_CHAT_HISTORY do
+    table.remove(player_state.chat_history, 1)
+  end
+end
+
+valid_size = function(size)
+  for _, candidate in ipairs(SIZES) do
+    if candidate == size then
+      return size
+    end
+  end
+  return "compact"
+end
+
+return ui_state

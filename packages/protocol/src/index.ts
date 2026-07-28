@@ -15,10 +15,24 @@ export const ADVISOR_RULE_IDS = [
 ] as const;
 export const ADVISOR_SEVERITIES = ["info", "warning", "critical"] as const;
 export const ADVISOR_EVENT_TYPES = ["opened", "reminder", "closed"] as const;
+export const ASSISTANT_MODES = ["local", "local-model", "remote-model"] as const;
+export const ASSISTANT_RESPONSE_MODES = ["local", "model"] as const;
+export const ASSISTANT_RESPONSE_STATUSES = ["ok", "cancelled", "error"] as const;
+export const CALCULATION_RESPONSE_STATUSES = ["ok", "error"] as const;
+export const RESOURCE_KINDS = ["item", "fluid"] as const;
+export const PRIVACY_MODES = ["local-only", "remote-provider"] as const;
 
 export type AdvisorRuleId = (typeof ADVISOR_RULE_IDS)[number];
 export type AdvisorSeverity = (typeof ADVISOR_SEVERITIES)[number];
 export type AdvisorEventType = (typeof ADVISOR_EVENT_TYPES)[number];
+export type AssistantMode = (typeof ASSISTANT_MODES)[number];
+export type AssistantResponseMode = (typeof ASSISTANT_RESPONSE_MODES)[number];
+export type AssistantResponseStatus =
+  (typeof ASSISTANT_RESPONSE_STATUSES)[number];
+export type CalculationResponseStatus =
+  (typeof CALCULATION_RESPONSE_STATUSES)[number];
+export type ResourceKind = (typeof RESOURCE_KINDS)[number];
+export type PrivacyMode = (typeof PRIVACY_MODES)[number];
 
 export interface AdvisorConfig {
   quiet_mode: boolean;
@@ -119,7 +133,16 @@ export interface HelloAckPacket {
     companion_version: string;
     static_revision?: number;
     sampling_interval_ticks?: number;
+    assistant_status?: CompanionAssistantStatus;
   };
+}
+
+export interface CompanionAssistantStatus {
+  mode: AssistantMode;
+  provider: string;
+  model?: string;
+  reason: string;
+  privacy: PrivacyMode;
 }
 
 export interface ModDescriptor {
@@ -325,6 +348,106 @@ export interface AdvisorUpdatePacket {
   };
 }
 
+export interface AssistantRequestPacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "assistant_request";
+  tick: number;
+  payload: {
+    force_id: string;
+    question: string;
+  };
+}
+
+export interface AssistantCancelPacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "assistant_cancel";
+  tick: number;
+  payload: {
+    request_id: string;
+  };
+}
+
+export interface AssistantResponsePayload {
+  reply_to: string;
+  status: AssistantResponseStatus;
+  mode?: AssistantResponseMode;
+  text?: string;
+  provider?: string;
+  model?: string;
+  fallback_reason?: string;
+  error_code?: string;
+  error_message?: string;
+}
+
+export interface AssistantResponsePacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "assistant_response";
+  timestamp: number;
+  payload: AssistantResponsePayload;
+}
+
+export interface CalculationRequestPacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "calculation_request";
+  tick: number;
+  payload: {
+    force_id: string;
+    target_kind: ResourceKind;
+    target_id: string;
+    rate_per_minute: number;
+    machine_id?: string;
+    module_ids: string[];
+  };
+}
+
+export interface CalculationResourceRate {
+  kind: ResourceKind;
+  id: string;
+  per_minute: number;
+}
+
+export interface CalculationRecipeSummary {
+  recipe_id: string;
+  machine_id: string;
+  machines_exact: number;
+  machines_rounded_up: number;
+  module_ids: string[];
+}
+
+export interface CalculationResultSummary {
+  target: CalculationResourceRate;
+  recipes: CalculationRecipeSummary[];
+  external_inputs: CalculationResourceRate[];
+  byproducts: CalculationResourceRate[];
+  rounding: string;
+  truncated: boolean;
+}
+
+export interface CalculationResponsePayload {
+  reply_to: string;
+  status: CalculationResponseStatus;
+  result?: CalculationResultSummary;
+  error_code?: string;
+  error_message?: string;
+}
+
+export interface CalculationResponsePacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "calculation_response";
+  timestamp: number;
+  payload: CalculationResponsePayload;
+}
+
 export type ProtocolPacket =
   | HelloPacket
   | HelloAckPacket
@@ -333,7 +456,12 @@ export type ProtocolPacket =
   | DynamicSnapshotPacket
   | StateAckPacket
   | ResyncRequestPacket
-  | AdvisorUpdatePacket;
+  | AdvisorUpdatePacket
+  | AssistantRequestPacket
+  | AssistantCancelPacket
+  | AssistantResponsePacket
+  | CalculationRequestPacket
+  | CalculationResponsePacket;
 
 interface HelloPacketInput {
   messageId: string;
@@ -349,6 +477,7 @@ interface HelloAckPacketInput {
   companionVersion: string;
   staticRevision?: number;
   samplingIntervalTicks?: number;
+  assistantStatus?: CompanionAssistantStatus;
 }
 
 interface StateAckPacketInput {
@@ -370,6 +499,40 @@ interface AdvisorUpdatePacketInput {
   event: AdvisorEventType;
   proactive: boolean;
   alert: AdvisorAlert;
+}
+
+interface AssistantRequestPacketInput {
+  messageId: string;
+  tick: number;
+  forceId: string;
+  question: string;
+}
+
+interface AssistantCancelPacketInput {
+  messageId: string;
+  tick: number;
+  requestId: string;
+}
+
+interface AssistantResponsePacketInput extends AssistantResponsePayload {
+  messageId: string;
+  timestamp: number;
+}
+
+interface CalculationRequestPacketInput {
+  messageId: string;
+  tick: number;
+  forceId: string;
+  targetKind: ResourceKind;
+  targetId: string;
+  ratePerMinute: number;
+  machineId?: string;
+  moduleIds?: string[];
+}
+
+interface CalculationResponsePacketInput extends CalculationResponsePayload {
+  messageId: string;
+  timestamp: number;
 }
 
 export function createHelloPacket(input: HelloPacketInput): HelloPacket {
@@ -402,6 +565,9 @@ export function createHelloAckPacket(input: HelloAckPacketInput): HelloAckPacket
       ...(input.samplingIntervalTicks === undefined
         ? {}
         : { sampling_interval_ticks: input.samplingIntervalTicks }),
+      ...(input.assistantStatus === undefined
+        ? {}
+        : { assistant_status: input.assistantStatus }),
     },
   };
 }
@@ -448,6 +614,109 @@ export function createAdvisorUpdatePacket(
       event: input.event,
       proactive: input.proactive,
       alert: input.alert,
+    },
+  };
+}
+
+export function createAssistantRequestPacket(
+  input: AssistantRequestPacketInput,
+): AssistantRequestPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "assistant_request",
+    tick: input.tick,
+    payload: {
+      force_id: input.forceId,
+      question: input.question,
+    },
+  };
+}
+
+export function createAssistantCancelPacket(
+  input: AssistantCancelPacketInput,
+): AssistantCancelPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "assistant_cancel",
+    tick: input.tick,
+    payload: {
+      request_id: input.requestId,
+    },
+  };
+}
+
+export function createAssistantResponsePacket(
+  input: AssistantResponsePacketInput,
+): AssistantResponsePacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "assistant_response",
+    timestamp: input.timestamp,
+    payload: {
+      reply_to: input.reply_to,
+      status: input.status,
+      ...(input.mode === undefined ? {} : { mode: input.mode }),
+      ...(input.text === undefined ? {} : { text: input.text }),
+      ...(input.provider === undefined ? {} : { provider: input.provider }),
+      ...(input.model === undefined ? {} : { model: input.model }),
+      ...(input.fallback_reason === undefined
+        ? {}
+        : { fallback_reason: input.fallback_reason }),
+      ...(input.error_code === undefined
+        ? {}
+        : { error_code: input.error_code }),
+      ...(input.error_message === undefined
+        ? {}
+        : { error_message: input.error_message }),
+    },
+  };
+}
+
+export function createCalculationRequestPacket(
+  input: CalculationRequestPacketInput,
+): CalculationRequestPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "calculation_request",
+    tick: input.tick,
+    payload: {
+      force_id: input.forceId,
+      target_kind: input.targetKind,
+      target_id: input.targetId,
+      rate_per_minute: input.ratePerMinute,
+      ...(input.machineId === undefined ? {} : { machine_id: input.machineId }),
+      module_ids: [...(input.moduleIds ?? [])],
+    },
+  };
+}
+
+export function createCalculationResponsePacket(
+  input: CalculationResponsePacketInput,
+): CalculationResponsePacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "calculation_response",
+    timestamp: input.timestamp,
+    payload: {
+      reply_to: input.reply_to,
+      status: input.status,
+      ...(input.result === undefined ? {} : { result: input.result }),
+      ...(input.error_code === undefined
+        ? {}
+        : { error_code: input.error_code }),
+      ...(input.error_message === undefined
+        ? {}
+        : { error_message: input.error_message }),
     },
   };
 }
@@ -517,6 +786,16 @@ export function decodePacket(input: string | Uint8Array): ProtocolPacket {
       return decodeResyncRequest(packet, payload, messageId);
     case "advisor_update":
       return decodeAdvisorUpdate(packet, payload, messageId);
+    case "assistant_request":
+      return decodeAssistantRequest(packet, payload, messageId);
+    case "assistant_cancel":
+      return decodeAssistantCancel(packet, payload, messageId);
+    case "assistant_response":
+      return decodeAssistantResponse(packet, payload, messageId);
+    case "calculation_request":
+      return decodeCalculationRequest(packet, payload, messageId);
+    case "calculation_response":
+      return decodeCalculationResponse(packet, payload, messageId);
     default:
       throw new ProtocolError("UNSUPPORTED_TYPE", `Unsupported message type "${type}"`);
   }
@@ -560,6 +839,13 @@ function decodeHelloAck(
           payload.sampling_interval_ticks,
           "payload.sampling_interval_ticks",
         );
+  const assistantStatus =
+    payload.assistant_status === undefined
+      ? undefined
+      : readCompanionAssistantStatus(
+          payload.assistant_status,
+          "payload.assistant_status",
+        );
   if (
     samplingIntervalTicks !== undefined &&
     (samplingIntervalTicks < 60 || samplingIntervalTicks > 3_600)
@@ -584,6 +870,9 @@ function decodeHelloAck(
       ...(samplingIntervalTicks === undefined
         ? {}
         : { sampling_interval_ticks: samplingIntervalTicks }),
+      ...(assistantStatus === undefined
+        ? {}
+        : { assistant_status: assistantStatus }),
     },
   };
 }
@@ -802,6 +1091,304 @@ function decodeAdvisorUpdate(
       proactive,
       alert: readAdvisorAlert(payload.alert, "payload.alert"),
     },
+  };
+}
+
+function decodeAssistantRequest(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): AssistantRequestPacket {
+  readStateSchemaVersion(packet);
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "assistant_request",
+    tick: readNonNegativeInteger(packet.tick, "tick"),
+    payload: {
+      force_id: readNonEmptyString(payload.force_id, "payload.force_id"),
+      question: readNonEmptyString(payload.question, "payload.question", 2_000),
+    },
+  };
+}
+
+function decodeAssistantCancel(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): AssistantCancelPacket {
+  readStateSchemaVersion(packet);
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "assistant_cancel",
+    tick: readNonNegativeInteger(packet.tick, "tick"),
+    payload: {
+      request_id: readMessageId(payload.request_id, "payload.request_id"),
+    },
+  };
+}
+
+function decodeAssistantResponse(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): AssistantResponsePacket {
+  readStateSchemaVersion(packet);
+  const status = readEnum(
+    payload.status,
+    "payload.status",
+    ASSISTANT_RESPONSE_STATUSES,
+  );
+  const mode = readOptionalEnum(
+    payload.mode,
+    "payload.mode",
+    ASSISTANT_RESPONSE_MODES,
+  );
+  const text = readOptionalNonEmptyString(
+    payload.text,
+    "payload.text",
+    8_192,
+  );
+  const provider = readOptionalNonEmptyString(
+    payload.provider,
+    "payload.provider",
+  );
+  const model = readOptionalNonEmptyString(payload.model, "payload.model");
+  const fallbackReason = readOptionalNonEmptyString(
+    payload.fallback_reason,
+    "payload.fallback_reason",
+    128,
+  );
+  const errorCode = readOptionalNonEmptyString(
+    payload.error_code,
+    "payload.error_code",
+    128,
+  );
+  const errorMessage = readOptionalNonEmptyString(
+    payload.error_message,
+    "payload.error_message",
+    1_024,
+  );
+
+  if (
+    (status === "ok" && (mode === undefined || text === undefined)) ||
+    (status !== "ok" && (mode !== undefined || text !== undefined)) ||
+    (status === "error" &&
+      (errorCode === undefined || errorMessage === undefined)) ||
+    (status !== "error" &&
+      (errorCode !== undefined || errorMessage !== undefined))
+  ) {
+    throw invalidPacket(
+      "assistant response fields are inconsistent with payload.status",
+    );
+  }
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "assistant_response",
+    timestamp: readNonNegativeInteger(packet.timestamp, "timestamp"),
+    payload: {
+      reply_to: readMessageId(payload.reply_to, "payload.reply_to"),
+      status,
+      ...(mode === undefined ? {} : { mode }),
+      ...(text === undefined ? {} : { text }),
+      ...(provider === undefined ? {} : { provider }),
+      ...(model === undefined ? {} : { model }),
+      ...(fallbackReason === undefined
+        ? {}
+        : { fallback_reason: fallbackReason }),
+      ...(errorCode === undefined ? {} : { error_code: errorCode }),
+      ...(errorMessage === undefined ? {} : { error_message: errorMessage }),
+    },
+  };
+}
+
+function decodeCalculationRequest(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): CalculationRequestPacket {
+  readStateSchemaVersion(packet);
+  const machineId = readOptionalNonEmptyString(
+    payload.machine_id,
+    "payload.machine_id",
+  );
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "calculation_request",
+    tick: readNonNegativeInteger(packet.tick, "tick"),
+    payload: {
+      force_id: readNonEmptyString(payload.force_id, "payload.force_id"),
+      target_kind: readEnum(
+        payload.target_kind,
+        "payload.target_kind",
+        RESOURCE_KINDS,
+      ),
+      target_id: readNonEmptyString(payload.target_id, "payload.target_id"),
+      rate_per_minute: readPositiveNumber(
+        payload.rate_per_minute,
+        "payload.rate_per_minute",
+      ),
+      ...(machineId === undefined ? {} : { machine_id: machineId }),
+      module_ids: readArray(
+        payload.module_ids,
+        "payload.module_ids",
+        readNonEmptyString,
+        16,
+      ),
+    },
+  };
+}
+
+function decodeCalculationResponse(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): CalculationResponsePacket {
+  readStateSchemaVersion(packet);
+  const status = readEnum(
+    payload.status,
+    "payload.status",
+    CALCULATION_RESPONSE_STATUSES,
+  );
+  const result =
+    payload.result === undefined
+      ? undefined
+      : readCalculationResult(payload.result, "payload.result");
+  const errorCode = readOptionalNonEmptyString(
+    payload.error_code,
+    "payload.error_code",
+    128,
+  );
+  const errorMessage = readOptionalNonEmptyString(
+    payload.error_message,
+    "payload.error_message",
+    1_024,
+  );
+
+  if (
+    (status === "ok" && result === undefined) ||
+    (status === "error" &&
+      (result !== undefined ||
+        errorCode === undefined ||
+        errorMessage === undefined)) ||
+    (status === "ok" &&
+      (errorCode !== undefined || errorMessage !== undefined))
+  ) {
+    throw invalidPacket(
+      "calculation response fields are inconsistent with payload.status",
+    );
+  }
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "calculation_response",
+    timestamp: readNonNegativeInteger(packet.timestamp, "timestamp"),
+    payload: {
+      reply_to: readMessageId(payload.reply_to, "payload.reply_to"),
+      status,
+      ...(result === undefined ? {} : { result }),
+      ...(errorCode === undefined ? {} : { error_code: errorCode }),
+      ...(errorMessage === undefined ? {} : { error_message: errorMessage }),
+    },
+  };
+}
+
+function readCompanionAssistantStatus(
+  value: unknown,
+  path: string,
+): CompanionAssistantStatus {
+  const record = readRecord(value, path);
+  const model = readOptionalNonEmptyString(record.model, `${path}.model`);
+
+  return {
+    mode: readEnum(record.mode, `${path}.mode`, ASSISTANT_MODES),
+    provider: readNonEmptyString(record.provider, `${path}.provider`),
+    ...(model === undefined ? {} : { model }),
+    reason: readNonEmptyString(record.reason, `${path}.reason`, 512),
+    privacy: readEnum(record.privacy, `${path}.privacy`, PRIVACY_MODES),
+  };
+}
+
+function readCalculationResult(
+  value: unknown,
+  path: string,
+): CalculationResultSummary {
+  const record = readRecord(value, path);
+
+  return {
+    target: readCalculationResourceRate(record.target, `${path}.target`),
+    recipes: readArray(
+      record.recipes,
+      `${path}.recipes`,
+      readCalculationRecipeSummary,
+      16,
+    ),
+    external_inputs: readArray(
+      record.external_inputs,
+      `${path}.external_inputs`,
+      readCalculationResourceRate,
+      16,
+    ),
+    byproducts: readArray(
+      record.byproducts,
+      `${path}.byproducts`,
+      readCalculationResourceRate,
+      16,
+    ),
+    rounding: readNonEmptyString(record.rounding, `${path}.rounding`, 512),
+    truncated: readBoolean(record.truncated, `${path}.truncated`),
+  };
+}
+
+function readCalculationResourceRate(
+  value: unknown,
+  path: string,
+): CalculationResourceRate {
+  const record = readRecord(value, path);
+
+  return {
+    kind: readEnum(record.kind, `${path}.kind`, RESOURCE_KINDS),
+    id: readNonEmptyString(record.id, `${path}.id`),
+    per_minute: readNonNegativeNumber(record.per_minute, `${path}.per_minute`),
+  };
+}
+
+function readCalculationRecipeSummary(
+  value: unknown,
+  path: string,
+): CalculationRecipeSummary {
+  const record = readRecord(value, path);
+
+  return {
+    recipe_id: readNonEmptyString(record.recipe_id, `${path}.recipe_id`),
+    machine_id: readNonEmptyString(record.machine_id, `${path}.machine_id`),
+    machines_exact: readNonNegativeNumber(
+      record.machines_exact,
+      `${path}.machines_exact`,
+    ),
+    machines_rounded_up: readNonNegativeInteger(
+      record.machines_rounded_up,
+      `${path}.machines_rounded_up`,
+    ),
+    module_ids: readArray(
+      record.module_ids,
+      `${path}.module_ids`,
+      readNonEmptyString,
+      16,
+    ),
   };
 }
 
@@ -1290,6 +1877,16 @@ function readNonEmptyString(
   return value;
 }
 
+function readOptionalNonEmptyString(
+  value: unknown,
+  path: string,
+  maximumLength = 256,
+): string | undefined {
+  return value === undefined
+    ? undefined
+    : readNonEmptyString(value, path, maximumLength);
+}
+
 function readBoolean(value: unknown, path: string): boolean {
   if (typeof value !== "boolean") {
     throw invalidPacket(`${path} must be a boolean`);
@@ -1393,6 +1990,14 @@ function readEnum<const T extends readonly string[]>(
   }
 
   return value;
+}
+
+function readOptionalEnum<const T extends readonly string[]>(
+  value: unknown,
+  path: string,
+  allowed: T,
+): T[number] | undefined {
+  return value === undefined ? undefined : readEnum(value, path, allowed);
 }
 
 function invalidPacket(message: string): ProtocolError {

@@ -53,6 +53,7 @@ interface EvaluationContext {
   staticForce: AdvisorStaticState["forces"][number] | undefined;
   staticTruncated: boolean;
   config: AdvisorConfig;
+  language: "zh-CN" | "en";
 }
 
 interface RuleDefinition {
@@ -101,12 +102,17 @@ const RULES: readonly RuleDefinition[] = [
 export class AdvisorEngine {
   readonly #trackers = new Map<string, RuleTracker>();
   #config: AdvisorConfig;
+  readonly #language: "zh-CN" | "en";
   #lastGlobalNotification: number | undefined;
   #lastTick: number | undefined;
   #lastSequence: number | undefined;
 
-  public constructor(config: AdvisorConfig = DEFAULT_ADVISOR_CONFIG) {
+  public constructor(
+    config: AdvisorConfig = DEFAULT_ADVISOR_CONFIG,
+    language: "zh-CN" | "en" = "en",
+  ) {
     this.#config = copyConfig(config);
+    this.#language = language;
   }
 
   public get config(): AdvisorConfig {
@@ -164,6 +170,7 @@ export class AdvisorEngine {
           staticForce: staticForces.get(force.id),
           staticTruncated: staticState?.truncated ?? true,
           config: this.#config,
+          language: this.#language,
         });
         this.#applyObservation(key, rule.id, force.id, observation, packet.tick, events);
       }
@@ -393,8 +400,14 @@ function evaluateResearchIdle(context: EvaluationContext): RuleObservation | fal
 
   return {
     severity: "info",
-    evidence: "No technology is currently being researched.",
-    recommendation: "Queue the next technology or verify science-pack supply.",
+    evidence:
+      context.language === "zh-CN"
+        ? "当前没有正在研究的科技。"
+        : "No technology is currently being researched.",
+    recommendation:
+      context.language === "zh-CN"
+        ? "安排下一项科技，或检查科研包供应。"
+        : "Queue the next technology or verify science-pack supply.",
     durationTicks: context.config.research_idle_ticks,
   };
 }
@@ -414,11 +427,17 @@ function evaluatePowerLow(context: EvaluationContext): RuleObservation | false {
         ? "critical"
         : "warning",
     evidence:
-      `Power satisfaction is ${formatPercent(power.satisfaction_ratio)} ` +
-      `(${formatWatts(power.generated_watts)} generated, ` +
-      `${formatWatts(power.consumed_watts)} consumed).`,
+      context.language === "zh-CN"
+        ? `电力满足率为 ${formatPercent(power.satisfaction_ratio)}` +
+          `（发电 ${formatWatts(power.generated_watts)}，` +
+          `用电 ${formatWatts(power.consumed_watts)}）。`
+        : `Power satisfaction is ${formatPercent(power.satisfaction_ratio)} ` +
+          `(${formatWatts(power.generated_watts)} generated, ` +
+          `${formatWatts(power.consumed_watts)} consumed).`,
     recommendation:
-      "Add generation or fuel, isolate nonessential loads, and inspect overloaded networks.",
+      context.language === "zh-CN"
+        ? "增加发电或燃料，隔离非必要负载，并检查过载电网。"
+        : "Add generation or fuel, isolate nonessential loads, and inspect overloaded networks.",
     durationTicks: context.config.power_low_ticks,
   };
 }
@@ -447,11 +466,17 @@ function evaluateLubricantZero(
   return {
     severity: "warning",
     evidence:
-      "Advanced oil processing is researched, but lubricant production is " +
-      `${formatRate(flow.produced_per_minute_1m)} (1m) and ` +
-      `${formatRate(flow.produced_per_minute_10m)} (10m).`,
+      context.language === "zh-CN"
+        ? "已研究高级炼油，但润滑油产量为 " +
+          `${formatRate(flow.produced_per_minute_1m)}（1 分钟）和 ` +
+          `${formatRate(flow.produced_per_minute_10m)}（10 分钟）。`
+        : "Advanced oil processing is researched, but lubricant production is " +
+          `${formatRate(flow.produced_per_minute_1m)} (1m) and ` +
+          `${formatRate(flow.produced_per_minute_10m)} (10m).`,
     recommendation:
-      "Route heavy oil to a chemical plant making lubricant and verify output storage.",
+      context.language === "zh-CN"
+        ? "将重油接入生产润滑油的化工厂，并检查输出储存。"
+        : "Route heavy oil to a chemical plant making lubricant and verify output storage.",
     durationTicks: context.config.lubricant_zero_ticks,
   };
 }
@@ -477,6 +502,12 @@ function evaluateOilImbalance(
     heavySurplus >= lightSurplus
       ? { id: "heavy oil", rate: heavySurplus }
       : { id: "light oil", rate: lightSurplus };
+  const surplusName =
+    context.language === "zh-CN"
+      ? surplus.id === "heavy oil"
+        ? "重油"
+        : "轻油"
+      : surplus.id;
 
   if (
     surplus.rate < context.config.oil_surplus_min_per_minute ||
@@ -488,10 +519,15 @@ function evaluateOilImbalance(
   return {
     severity: "warning",
     evidence:
-      `${surplus.id} net surplus is ${formatRate(surplus.rate)} over 10m, ` +
-      `while petroleum gas net deficit is ${formatRate(gasDeficit)}.`,
+      context.language === "zh-CN"
+        ? `${surplusName}的 10 分钟净积压为 ${formatRate(surplus.rate)}，` +
+          `同时石油气净缺口为 ${formatRate(gasDeficit)}。`
+        : `${surplus.id} net surplus is ${formatRate(surplus.rate)} over 10m, ` +
+          `while petroleum gas net deficit is ${formatRate(gasDeficit)}.`,
     recommendation:
-      "Balance cracking: convert surplus heavy oil to light oil, then light oil to petroleum gas.",
+      context.language === "zh-CN"
+        ? "平衡裂解：先把多余重油转为轻油，再把轻油转为石油气。"
+        : "Balance cracking: convert surplus heavy oil to light oil, then light oil to petroleum gas.",
     durationTicks: context.config.oil_imbalance_ticks,
   };
 }
@@ -533,11 +569,17 @@ function evaluateRoboticsStalled(
   return {
     severity: "info",
     evidence:
-      `Chemical science is stable at ${formatRate(flow.produced_per_minute_1m)} ` +
-      `(1m) and ${formatRate(flow.produced_per_minute_10m)} (10m), ` +
-      "but construction robotics is neither researched nor in progress.",
+      context.language === "zh-CN"
+        ? `化学科研包产量稳定在 ${formatRate(flow.produced_per_minute_1m)}` +
+          `（1 分钟）和 ${formatRate(flow.produced_per_minute_10m)}` +
+          "（10 分钟），但尚未研究或开始研究建设机器人技术。"
+        : `Chemical science is stable at ${formatRate(flow.produced_per_minute_1m)} ` +
+          `(1m) and ${formatRate(flow.produced_per_minute_10m)} (10m), ` +
+          "but construction robotics is neither researched nor in progress.",
     recommendation:
-      "Consider researching robotics and construction robotics for automated expansion.",
+      context.language === "zh-CN"
+        ? "可考虑研究机器人技术和建设机器人技术，以自动化扩建。"
+        : "Consider researching robotics and construction robotics for automated expansion.",
     durationTicks: context.config.science_stable_ticks,
   };
 }
@@ -566,16 +608,24 @@ function evaluateMaterialDeficit(
   const evidence = deficits
     .map(
       (flow) =>
-        `${flow.id}: ${formatRate(flow.produced_per_minute_10m)} produced vs ` +
-        `${formatRate(flow.consumed_per_minute_10m)} consumed`,
+        context.language === "zh-CN"
+          ? `${flow.id}：生产 ${formatRate(flow.produced_per_minute_10m)}，` +
+            `消费 ${formatRate(flow.consumed_per_minute_10m)}`
+          : `${flow.id}: ${formatRate(flow.produced_per_minute_10m)} produced vs ` +
+            `${formatRate(flow.consumed_per_minute_10m)} consumed`,
     )
     .join("; ");
 
   return {
     severity: "warning",
-    evidence: `10m key-material deficits: ${evidence}.`,
+    evidence:
+      context.language === "zh-CN"
+        ? `关键材料 10 分钟缺口：${evidence}。`
+        : `10m key-material deficits: ${evidence}.`,
     recommendation:
-      "Increase upstream capacity or reduce downstream draw, starting with the largest deficit.",
+      context.language === "zh-CN"
+        ? "从最大缺口开始增加上游产能，或降低下游消耗。"
+        : "Increase upstream capacity or reduce downstream draw, starting with the largest deficit.",
     durationTicks: context.config.material_deficit_ticks,
   };
 }
@@ -610,22 +660,35 @@ function evaluateProductionDecline(
   const evidence = [
     ...(crudeDeclining && crudeOil !== undefined
       ? [
-          `crude oil fell from ${formatRate(crudeOil.produced_per_minute_10m)} ` +
-            `(10m) to ${formatRate(crudeOil.produced_per_minute_1m)} (1m)`,
+          context.language === "zh-CN"
+            ? `原油从 ${formatRate(crudeOil.produced_per_minute_10m)}` +
+              `（10 分钟）降至 ${formatRate(crudeOil.produced_per_minute_1m)}` +
+              "（1 分钟）"
+            : `crude oil fell from ${formatRate(crudeOil.produced_per_minute_10m)} ` +
+              `(10m) to ${formatRate(crudeOil.produced_per_minute_1m)} (1m)`,
         ]
       : []),
     ...stoppedMaterials.map(
       (flow) =>
-        `${flow.id} is at 0/min (1m) after ` +
-        `${formatRate(flow.produced_per_minute_10m)} over 10m`,
+        context.language === "zh-CN"
+          ? `${flow.id} 在 10 分钟产量为 ` +
+            `${formatRate(flow.produced_per_minute_10m)} 后，` +
+            "1 分钟产量降至 0/min"
+          : `${flow.id} is at 0/min (1m) after ` +
+            `${formatRate(flow.produced_per_minute_10m)} over 10m`,
     ),
   ].join("; ");
 
   return {
     severity: stoppedMaterials.length > 0 ? "critical" : "warning",
-    evidence: `Production decline detected: ${evidence}.`,
+    evidence:
+      context.language === "zh-CN"
+        ? `检测到产出衰减：${evidence}。`
+        : `Production decline detected: ${evidence}.`,
     recommendation:
-      "Inspect depleted wells, input starvation, blocked outputs, power, and disabled machines.",
+      context.language === "zh-CN"
+        ? "检查枯竭油井、输入断料、输出堵塞、电力和停用机器。"
+        : "Inspect depleted wells, input starvation, blocked outputs, power, and disabled machines.",
     durationTicks:
       stoppedMaterials.length > 0
         ? context.config.production_stop_ticks

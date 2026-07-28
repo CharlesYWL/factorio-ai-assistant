@@ -8,6 +8,11 @@ import {
   PROTOCOL_VERSION,
   ProtocolError,
   createAdvisorUpdatePacket,
+  createAssistantCancelPacket,
+  createAssistantRequestPacket,
+  createAssistantResponsePacket,
+  createCalculationRequestPacket,
+  createCalculationResponsePacket,
   createHelloAckPacket,
   createHelloPacket,
   createResyncRequestPacket,
@@ -97,9 +102,119 @@ void test("encodes state-aware hello acknowledgements", () => {
     companionVersion: "0.1.0",
     staticRevision: 4,
     samplingIntervalTicks: 120,
+    assistantStatus: {
+      mode: "local",
+      provider: "local",
+      reason: "deterministic rules and calculator only",
+      privacy: "local-only",
+    },
   });
 
   assert.deepEqual(decodePacket(new TextEncoder().encode(encodePacket(packet))), packet);
+});
+
+void test("encodes assistant and calculation UI packets", () => {
+    const assistantRequest = createAssistantRequestPacket({
+      messageId: "factorio-assistant-1",
+      tick: 600,
+      forceId: "player",
+      question: "现在最大的瓶颈是什么？",
+    });
+    const assistantCancel = createAssistantCancelPacket({
+      messageId: "factorio-cancel-1",
+      tick: 601,
+      requestId: assistantRequest.message_id,
+    });
+    const assistantResponse = createAssistantResponsePacket({
+      messageId: "companion-assistant-1",
+      timestamp: 1_753_680_000_000,
+      reply_to: assistantRequest.message_id,
+      status: "ok",
+      mode: "local",
+      text: "当前没有活动告警。",
+      fallback_reason: "local_mode",
+    });
+    const calculationRequest = createCalculationRequestPacket({
+      messageId: "factorio-calculation-1",
+      tick: 602,
+      forceId: "player",
+      targetKind: "item",
+      targetId: "chemical-science-pack",
+      ratePerMinute: 45,
+      machineId: "assembling-machine-2",
+      moduleIds: ["speed-module"],
+    });
+    const calculationResponse = createCalculationResponsePacket({
+      messageId: "companion-calculation-1",
+      timestamp: 1_753_680_000_001,
+      reply_to: calculationRequest.message_id,
+      status: "ok",
+      result: {
+        target: {
+          kind: "item",
+          id: "chemical-science-pack",
+          per_minute: 45,
+        },
+        recipes: [
+          {
+            recipe_id: "chemical-science-pack",
+            machine_id: "assembling-machine-2",
+            machines_exact: 3.5,
+            machines_rounded_up: 4,
+            module_ids: ["speed-module"],
+          },
+        ],
+        external_inputs: [],
+        byproducts: [],
+        rounding: "Exact counts are shown with a rounded-up build count.",
+        truncated: false,
+      },
+    });
+
+    for (const packet of [
+      assistantRequest,
+      assistantCancel,
+      assistantResponse,
+      calculationRequest,
+      calculationResponse,
+    ]) {
+      assert.deepEqual(decodePacket(encodePacket(packet)), packet);
+    }
+});
+
+void test("rejects inconsistent UI response states", () => {
+    const response = createAssistantResponsePacket({
+      messageId: "companion-invalid-assistant",
+      timestamp: 1_753_680_000_000,
+      reply_to: "factorio-assistant-1",
+      status: "ok",
+      mode: "local",
+    });
+
+    expectProtocolError(
+      () => decodePacket(JSON.stringify(response)),
+      "INVALID_PACKET",
+    );
+    expectProtocolError(
+      () =>
+        decodePacket(
+          JSON.stringify({
+            ...createCalculationResponsePacket({
+              messageId: "companion-invalid-calculation",
+              timestamp: 1_753_680_000_000,
+              reply_to: "factorio-calculation-1",
+              status: "error",
+              error_code: "STATE_UNAVAILABLE",
+              error_message: "No state",
+            }),
+            payload: {
+              reply_to: "factorio-calculation-1",
+              status: "error",
+            },
+          }),
+        ),
+      "INVALID_PACKET",
+    );
 });
 
 void test("validates the optional companion sampling interval", () => {

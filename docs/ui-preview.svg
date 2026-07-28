@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#15191d"/>
+      <stop offset="1" stop-color="#252b30"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity=".5"/>
+    </filter>
+    <style>
+      .text { font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; fill: #e8edf1; }
+      .muted { fill: #929ba3; }
+      .small { font-size: 14px; }
+      .body { font-size: 17px; }
+      .label { font-size: 15px; font-weight: 700; }
+      .title { font-size: 24px; font-weight: 700; }
+      .tab { font-size: 16px; font-weight: 700; }
+      .number { fill: #ffc34d; font-weight: 700; }
+    </style>
+  </defs>
+  <rect width="1280" height="760" fill="url(#background)"/>
+  <circle cx="1100" cy="80" r="250" fill="#3789b8" opacity=".08"/>
+  <circle cx="170" cy="690" r="280" fill="#58a86a" opacity=".06"/>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="55" width="760" height="650" rx="8" fill="#292f34" stroke="#495158"/>
+    <rect x="80" y="55" width="760" height="52" rx="8" fill="#202529"/>
+    <text class="text title" x="105" y="89">Factorio AI 顾问</text>
+    <circle cx="668" cy="80" r="6" fill="#55d77d"/>
+    <text class="text small" x="681" y="85" fill="#55d77d">本机已连接</text>
+    <text class="text body" x="805" y="86">×</text>
+
+    <text class="text small muted" x="105" y="133">第三方只读顾问 · 不是 Factorio 官方提示 · 不会修改工厂</text>
+
+    <g transform="translate(105 153)">
+      <rect width="112" height="38" rx="4" fill="#d48629"/>
+      <text class="text tab" x="39" y="25">聊天</text>
+      <rect x="120" width="112" height="38" rx="4" fill="#3a4248"/>
+      <text class="text tab" x="143" y="25">计算器</text>
+      <rect x="240" width="112" height="38" rx="4" fill="#3a4248"/>
+      <text class="text tab" x="271" y="25">提醒</text>
+      <rect x="360" width="112" height="38" rx="4" fill="#3a4248"/>
+      <text class="text tab" x="391" y="25">状态</text>
+    </g>
+
+    <rect x="105" y="210" width="710" height="116" rx="5" fill="#20262a" stroke="#3f484f"/>
+    <text class="text label" x="125" y="238" fill="#69df8d">你</text>
+    <text class="text body" x="125" y="270">45 蓝瓶每分钟需要多少机器？</text>
+
+    <rect x="105" y="340" width="710" height="174" rx="5" fill="#20262a" stroke="#3f484f"/>
+    <text class="text label" x="125" y="368" fill="#63bfe8">AI 顾问</text>
+    <text class="text body" x="125" y="404">目标 <tspan class="number">45/min</tspan>；需要 <tspan class="number">9 台</tspan>组装机 2。</text>
+    <text class="text body" x="125" y="435">假设：无插件，机器数向上取整。</text>
+    <text class="text small number" x="125" y="470">数字 / 假设：45/min · 9 · 假设：无插件</text>
+    <text class="text small muted" x="125" y="495">回答来源：本地规则</text>
+
+    <g transform="translate(105 535)">
+      <rect width="132" height="34" rx="4" fill="#3a4248"/>
+      <text class="text small" x="27" y="22">最大瓶颈</text>
+      <rect x="140" width="132" height="34" rx="4" fill="#3a4248"/>
+      <text class="text small" x="165" y="22">下一步扩建</text>
+      <rect x="280" width="132" height="34" rx="4" fill="#3a4248"/>
+      <text class="text small" x="303" y="22">电力与科研</text>
+    </g>
+    <rect x="105" y="590" width="585" height="52" rx="4" fill="#151a1d" stroke="#59636b"/>
+    <text class="text body muted" x="125" y="622">输入工厂问题；按 Enter 发送</text>
+    <rect x="704" y="590" width="111" height="52" rx="4" fill="#d48629"/>
+    <text class="text tab" x="742" y="622">发送</text>
+  </g>
+
+  <g transform="translate(885 75)">
+    <text class="text title" x="0" y="24">四页一体，状态明确</text>
+
+    <rect x="0" y="52" width="315" height="138" rx="7" fill="#292f34" stroke="#495158"/>
+    <text class="text label" x="20" y="82" fill="#ffc34d">计算器</text>
+    <text class="text small muted" x="20" y="108">目标  ·  每分钟产量  ·  机器 / 插件</text>
+    <text class="text body" x="20" y="140">chemical-science-pack</text>
+    <text class="text body number" x="20" y="170">9.0 台 → 建造 9 台</text>
+
+    <rect x="0" y="210" width="315" height="138" rx="7" fill="#292f34" stroke="#495158"/>
+    <text class="text label" x="20" y="240" fill="#ffb33f">提醒</text>
+    <text class="text body" x="20" y="275">[警告] 电力满足率过低</text>
+    <text class="text small muted" x="20" y="303">证据、建议、静音 / 恢复</text>
+    <rect x="20" y="315" width="112" height="24" rx="3" fill="#3a4248"/>
+    <text class="text small" x="31" y="332">静音此类提醒</text>
+
+    <rect x="0" y="368" width="315" height="138" rx="7" fill="#292f34" stroke="#495158"/>
+    <text class="text label" x="20" y="398" fill="#63bfe8">状态</text>
+    <text class="text small" x="20" y="428">Companion     已连接</text>
+    <text class="text small" x="20" y="454">顾问模式       仅本地规则</text>
+    <text class="text small" x="20" y="480">隐私模式       仅本机处理</text>
+
+    <rect x="0" y="532" width="315" height="92" rx="7" fill="#20262a" stroke="#3f484f"/>
+    <text class="text small muted" x="20" y="560">可复现 mock harness</text>
+    <text class="text small" x="20" y="590">/factorio-ai-assistant-mock ready</text>
+    <text class="text small muted" x="20" y="613">offline · loading · timeout · incompatible</text>
+  </g>
+</svg>
