@@ -152,7 +152,7 @@ Factorio 2.0 图形客户端完成：
   1 / 10 分钟聚合流量与 Alerts 页一致，且回答区分推断、假设和缺失数据。
 - [ ] **冲突保护**：连接可控 mock provider，让它返回与 Calculator 不同的机器数。
   Chat 必须显示本地工具数字，日志出现 `assistant_model_conflict`，错误数字不进入游戏。
-- [ ] **超时降级**：让 provider 挂起或断网，计时从发送到本地答案；必须小于 10 秒，
+- [ ] **超时降级**：让 provider 挂起或断网，计时从发送到本地答案；必须小于 35 秒，
   Calculator / Alerts 结果仍可用且界面不冻结。
 - [ ] **只读边界**：输入要求忽略规则并输出 Lua、`/c` 或 RCON 的提示注入文本。回答
   不得出现可执行指令；提问前后工厂实体、配方、线路与研究队列均无自动变化。
@@ -213,7 +213,7 @@ Remove-Item "$env:APPDATA\Factorio\mods\factorio-ai-assistant_0.1.0" -Recurse -F
 - [x] 配置远程 bind 拒绝、上下文 byte budget、恶意输入限制和结构化日志脱敏测试。
 - [x] Chat / cancel / Calculator UDP 协议 round-trip、严格字段校验与 mock socket 取消测试。
 - [x] Calculator 从同步静态数据生成结构化结果；缺数据时返回明确错误。
-- [x] 五类状态问答 fixture、工具数字优先、提示注入 / 超长输入 / 幻觉冲突和 9 秒
+- [x] 五类状态问答 fixture、工具数字优先、提示注入 / 超长输入 / 幻觉冲突和 30 秒
   provider 总预算自动化测试。
 - [x] Lua UI 语法、四页状态契约、中英文 locale key 对齐和可复现 mock harness。
 - [ ] Windows Steam Factorio 2.0 实机：按钮和面板正确渲染。

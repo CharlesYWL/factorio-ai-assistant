@@ -12,7 +12,7 @@ export interface ProviderExecutorOptions {
   totalTimeoutMs?: number;
 }
 
-export const MAX_PROVIDER_TOTAL_WAIT_MS = 9_000;
+export const MAX_PROVIDER_TOTAL_WAIT_MS = 30_000;
 
 export class ProviderExecutor {
   readonly #provider: AIProvider;
