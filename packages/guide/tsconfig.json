@@ -1,5 +1,5 @@
 {
-  "extends": "../tsconfig.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
     "rootDir": "src",
@@ -11,13 +11,7 @@
   ],
   "references": [
     {
-      "path": "../packages/protocol"
-    },
-    {
-      "path": "../packages/calculator"
-    },
-    {
-      "path": "../packages/guide"
+      "path": "../protocol"
     }
   ]
 }
