@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
@@ -349,11 +350,13 @@ void test("reports cycles, unreachable targets, machines, modules, and byproduct
 
 void test("runs through the JSON CLI without model dependencies", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [
-    new URL("./cli.js", import.meta.url).pathname,
+    fileURLToPath(new URL("./cli.js", import.meta.url)),
     "--catalog",
-    new URL("vanilla-2.0.72-base.json", fixtureDirectory).pathname,
+    fileURLToPath(new URL("vanilla-2.0.72-base.json", fixtureDirectory)),
     "--request",
-    new URL("chemical-science-120-per-minute.json", fixtureDirectory).pathname,
+    fileURLToPath(
+      new URL("chemical-science-120-per-minute.json", fixtureDirectory),
+    ),
   ]);
   assert.equal(stderr, "");
   const parsed = JSON.parse(stdout) as { recipes?: Array<{ recipe_id?: string }> };
