@@ -120,6 +120,69 @@ void test("passes only compact, budgeted context to a successful provider", asyn
   );
 });
 
+void test("allows model numbers copied exactly from grounded evidence", async () => {
+  const provider: AIProvider = {
+    kind: "openai-compatible",
+    complete() {
+      return Promise.resolve({
+        text: "进一步看，目标速率为 45/min [C1]。",
+        model: "grounded-number-model",
+      });
+    },
+  };
+  const service = createService(
+    resolveCompanionConfig(
+      { provider: "openclaw", model_retry_count: 0 },
+      {},
+    ),
+    provider,
+  );
+
+  const answer = await service.answer({
+    question: "45 蓝瓶每分钟需要多少机器？",
+    calculation: productionResult(),
+  });
+
+  assert.equal(answer.mode, "model");
+  assert.match(answer.text, /进一步看，目标速率为 45\/min \[C1\]/);
+});
+
+void test("normalizes model suggestion lists instead of discarding them", async () => {
+  const provider: AIProvider = {
+    kind: "openai-compatible",
+    complete() {
+      return Promise.resolve({
+        text:
+          "建议：\n" +
+          "1. 优先扩大上游供给 [C1]\n" +
+          "2. 检查输入是否连续 [C1]\n" +
+          "3. 暂缓无关扩建 [C1]\n" +
+          "4. 这条应被丢弃 [C1]",
+        model: "suggestion-list-model",
+      });
+    },
+  };
+  const service = createService(
+    resolveCompanionConfig(
+      { provider: "openclaw", model_retry_count: 0 },
+      {},
+    ),
+    provider,
+  );
+
+  const answer = await service.answer({
+    question: "下一步应该扩建什么？",
+    calculation: productionResult(),
+  });
+
+  assert.equal(answer.mode, "model");
+  assert.match(answer.text, /优先扩大上游供给 \[C1\]/);
+  assert.match(answer.text, /检查输入是否连续 \[C1\]/);
+  assert.match(answer.text, /暂缓无关扩建 \[C1\]/);
+  assert.doesNotMatch(answer.text, /这条应被丢弃/);
+  assert.doesNotMatch(answer.text, /1\. 优先扩大上游供给/);
+});
+
 void test("uses tool output and records a model number conflict", async () => {
   const warnings: Array<{ event: string; fields: Record<string, unknown> }> = [];
   const logger: CompanionLogger = {
@@ -133,7 +196,7 @@ void test("uses tool output and records a model number conflict", async () => {
     kind: "openai-compatible",
     complete() {
       return Promise.resolve({
-        text: "需要 45 台机器 [C1]。",
+        text: "需要 46 台机器 [C1]。",
         model: "hallucinating-model",
       });
     },
@@ -156,7 +219,7 @@ void test("uses tool output and records a model number conflict", async () => {
 
   assert.equal(answer.mode, "local");
   assert.equal(answer.fallbackReason, "model_conflict");
-  assert.doesNotMatch(answer.text, /需要 45 台机器/);
+  assert.doesNotMatch(answer.text, /需要 46 台机器/);
   assert.match(answer.text, /3.5 台 assembling-machine-2/);
   assert.deepEqual(
     warnings.map(({ event, fields }) => ({

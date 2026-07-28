@@ -62,6 +62,39 @@ void test("encodes advisor configuration and lifecycle updates", () => {
   assert.deepEqual(decodePacket(encodePacket(update)), update);
 });
 
+void test("normalizes Factorio empty Lua tables in array-valued fields", () => {
+  const hello = createHelloPacket({
+    messageId: "factorio-empty-lua-array",
+    tick: 120,
+    modVersion: "0.1.0",
+    advisorConfig: DEFAULT_ADVISOR_CONFIG,
+  });
+  const factorioEncoded = JSON.stringify({
+    ...hello,
+    payload: {
+      ...hello.payload,
+      advisor_config: {
+        ...hello.payload.advisor_config,
+        muted_rules: {},
+      },
+    },
+  });
+
+  assert.deepEqual(decodePacket(factorioEncoded), hello);
+
+  const malformed = JSON.stringify({
+    ...hello,
+    payload: {
+      ...hello.payload,
+      advisor_config: {
+        ...hello.payload.advisor_config,
+        muted_rules: { unexpected: true },
+      },
+    },
+  });
+  expectProtocolError(() => decodePacket(malformed), "INVALID_PACKET");
+});
+
 void test("rejects inconsistent advisor configuration and alert lifetimes", () => {
   const hello = createHelloPacket({
     messageId: "factorio-advisor-invalid",
@@ -268,6 +301,28 @@ void test("validates representative Factorio 2.0 static and dynamic fixtures", a
     assert.deepEqual(decoded, fixture);
     assert.ok(Buffer.byteLength(encodePacket(decoded), "utf8") <= MAX_PACKET_BYTES);
   }
+});
+
+void test("normalizes an omitted Factorio research field to null", async () => {
+  const encoded = await readFile(
+    new URL("vanilla-2.0-dynamic-v2.json", fixtureDirectory),
+    "utf8",
+  );
+  const fixture = JSON.parse(encoded) as Record<string, unknown>;
+  const payload = fixture.payload as Record<string, unknown>;
+  const forces = payload.forces as Array<Record<string, unknown>>;
+  const firstForce = forces[0];
+
+  assert.ok(firstForce !== undefined);
+  delete firstForce.research;
+  firstForce.items = {};
+  firstForce.fluids = {};
+
+  const decoded = decodePacket(JSON.stringify(fixture));
+  assert.equal(decoded.type, "dynamic_snapshot");
+  assert.equal(decoded.payload.forces[0]?.research, null);
+  assert.deepEqual(decoded.payload.forces[0]?.items, []);
+  assert.deepEqual(decoded.payload.forces[0]?.fluids, []);
 });
 
 void test("ignores unknown fields while retaining strict known-field validation", async () => {
