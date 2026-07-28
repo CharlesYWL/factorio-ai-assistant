@@ -1,6 +1,6 @@
 # Factorio AI Assistant
 
-Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.2 把聊天、确定性生产比例、内置原版流程指南、
+Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.3 把聊天、确定性生产比例、内置原版流程指南、
 实时提醒和连接状态整合进可移动的游戏内面板：玩家只用自然语言提问，数字与证据全部由受限的只读
 计算 / 顾问工具产生；Companion 支持 OpenClaw / OpenAI-compatible 与 Ollama，无 Key、模型
 离线、限流、超时或与工具冲突时自动保留本地计算与规则答案。系统不发送地图，也不会
@@ -9,21 +9,21 @@ Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.2 把聊天、确定性�
 > **Steam 成就警告：** Factorio 启用任何 Mod 后，该存档都不能获得 Steam 成就。
 > 安装前备份存档，并优先使用专门的测试副本。
 
-## v0.1.0-rc.2 私有候选
+## v0.1.0-rc.3 私有候选
 
 CI 生成可重复验证的 Mod ZIP、Windows Companion ZIP、示例配置、性能报告、
 `SHA256SUMS` 和总 bundle。Mod ZIP 与 Companion ZIP 使用确定性打包，同一提交重复构建
 SHA-256 不变；`performance-baseline.json` 是每次构建的实测数据，因此它和总 bundle 的
 SHA-256 每次构建各不相同，以 Release 内的 `SHA256SUMS` 为准。推荐流程：
 
-1. 从私有 GitHub Release 下载同一个 `v0.1.0-rc.2` 的全部资产并核对 SHA-256。
+1. 从私有 GitHub Release 下载同一个 `v0.1.0-rc.3` 的全部资产并核对 SHA-256。
 2. 按 [`docs/setup-windows.md`](docs/setup-windows.md) 安装 Mod、配置 Steam UDP 参数并
    运行 `start-companion.cmd`。
 3. 按 [`docs/windows-smoke-test.md`](docs/windows-smoke-test.md) 做 25–40 分钟实机冒烟；
    再按 [`docs/performance.md`](docs/performance.md) 完成三场景、30 分钟稳定性/UPS 验证。
 
 本轮变更、已知限制和实机验收清单见
-[`docs/releases/v0.1.0-rc.2.md`](docs/releases/v0.1.0-rc.2.md)。
+[`docs/releases/v0.1.0-rc.3.md`](docs/releases/v0.1.0-rc.3.md)。
 
 Mod 和 Companion 必须来自同一 bundle；混用版本时 UI 会显示双方版本并要求成对升级
 或降级。此候选不会自动发布到 Factorio Mod Portal。

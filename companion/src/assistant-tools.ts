@@ -240,14 +240,17 @@ export class AssistantToolbox {
       {
         id: "G1",
         category: "guide",
-        text: stageEvidenceText(this.#language, plan),
+        text: stageEvidenceText(this.#language, plan, this.#names),
       },
     ];
     const actions: GroundedAction[] = [];
     for (const step of plan.steps) {
       if (step.origin === "bottleneck") {
         actions.push({
-          text: step.objective[this.#language],
+          text: localizeGuideText(
+            step.objective[this.#language],
+            this.#names,
+          ),
           evidence_id:
             (step.alert_id === undefined
               ? undefined
@@ -259,10 +262,13 @@ export class AssistantToolbox {
       guideEvidence.push({
         id: evidenceId,
         category: "guide",
-        text: ruleEvidenceText(this.#language, step),
+        text: ruleEvidenceText(this.#language, step, this.#names),
       });
       actions.push({
-        text: step.objective[this.#language],
+        text: localizeGuideText(
+          step.objective[this.#language],
+          this.#names,
+        ),
         evidence_id: evidenceId,
       });
     }
@@ -297,7 +303,7 @@ export class AssistantToolbox {
       calls: orderProgressionCalls(
         intent,
         base.calls,
-        progressionCall(result, this.#language),
+        progressionCall(result, this.#language, this.#names),
       ),
       evidence: [...base.evidence, ...guideEvidence],
       actions,
@@ -703,6 +709,7 @@ function orderProgressionCalls(
 function progressionCall(
   result: ProgressionResult,
   language: AssistantLanguage,
+  names: LocalizedNameLookup,
 ): Omit<AssistantToolCall, "id"> {
   const { plan } = result;
   return {
@@ -732,14 +739,14 @@ function progressionCall(
         basis: plan.stage.basis,
         complete: plan.stage.complete,
         uncertain: plan.stage.uncertain,
-        title: plan.stage.title[language],
+        title: localizeGuideText(plan.stage.title[language], names),
       },
       next_stage_id: plan.next_stage?.id ?? null,
       steps: plan.steps.map((step) => ({
         order: step.order,
         origin: step.origin,
         rule_id: step.rule_id,
-        objective: step.objective[language],
+        objective: localizeGuideText(step.objective[language], names),
       })),
       data_gap_rule_ids: plan.data_gaps.map(({ rule_id }) => rule_id),
       sources: plan.sources.map(({ id, url, accessed }) => ({ id, url, accessed })),
@@ -750,36 +757,40 @@ function progressionCall(
 function stageEvidenceText(
   language: AssistantLanguage,
   plan: ProgressionPlan,
+  names: LocalizedNameLookup,
 ): string {
   const stage = plan.stage;
   if (stage.basis === "general") {
     return language === "zh-CN"
-      ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）共 ${stage.total} 个阶段；没有同步状态时按第 ${stage.order} 阶段“${stage.title["zh-CN"]}”给出通用说明，目标是${stage.goal["zh-CN"]}`
-      : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) has ${stage.total} stages; without synchronized state it describes stage ${stage.order}, ${stage.title.en}, whose goal is: ${stage.goal.en}`;
+      ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）共 ${stage.total} 个阶段；没有同步状态时按第 ${stage.order} 阶段“${stage.title["zh-CN"]}”给出通用说明，目标是${localizeGuideText(stage.goal["zh-CN"], names)}`
+      : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) has ${stage.total} stages; without synchronized state it describes stage ${stage.order}, ${stage.title.en}, whose goal is: ${localizeGuideText(stage.goal.en, names)}`;
   }
   const basis =
     stage.matched_technologies.length === 0
       ? language === "zh-CN"
         ? "尚无阶段门槛科技"
         : "no stage gate technology yet"
-      : stage.matched_technologies.join(", ");
+      : stage.matched_technologies
+          .map((id) => names.display("technology", id))
+          .join(", ");
   if (stage.uncertain) {
     return language === "zh-CN"
-      ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）按已同步科技（${basis}）判定至少处于第 ${stage.order}/${stage.total} 阶段“${stage.title["zh-CN"]}”；静态状态被裁剪，部分阶段门槛无法确认，实际进度可能更靠后。下一目标：${plan.next_goal["zh-CN"]}`
-      : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) places this force at stage ${stage.order}/${stage.total} or later, ${stage.title.en}, from the synchronized technologies (${basis}); the static state was truncated so some stage gates are unconfirmed and real progress may be further along. Next goal: ${plan.next_goal.en}`;
+      ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）按已同步科技（${basis}）判定至少处于第 ${stage.order}/${stage.total} 阶段“${stage.title["zh-CN"]}”；静态状态被裁剪，部分阶段门槛无法确认，实际进度可能更靠后。下一目标：${localizeGuideText(plan.next_goal["zh-CN"], names)}`
+      : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) places this force at stage ${stage.order}/${stage.total} or later, ${stage.title.en}, from the synchronized technologies (${basis}); the static state was truncated so some stage gates are unconfirmed and real progress may be further along. Next goal: ${localizeGuideText(plan.next_goal.en, names)}`;
   }
   return language === "zh-CN"
-    ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）按已研究科技（${basis}）判定当前处于第 ${stage.order}/${stage.total} 阶段“${stage.title["zh-CN"]}”；下一目标：${plan.next_goal["zh-CN"]}`
-    : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) places this force in stage ${stage.order}/${stage.total}, ${stage.title.en}, based on researched technologies (${basis}); next goal: ${plan.next_goal.en}`;
+    ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）按已研究科技（${basis}）判定当前处于第 ${stage.order}/${stage.total} 阶段“${stage.title["zh-CN"]}”；下一目标：${localizeGuideText(plan.next_goal["zh-CN"], names)}`
+    : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) places this force in stage ${stage.order}/${stage.total}, ${stage.title.en}, based on researched technologies (${basis}); next goal: ${localizeGuideText(plan.next_goal.en, names)}`;
 }
 
 function ruleEvidenceText(
   language: AssistantLanguage,
   step: ProgressionStep,
+  names: LocalizedNameLookup,
 ): string {
   return language === "zh-CN"
-    ? `指南规则 ${step.rule_id}：${step.rationale["zh-CN"]}（验证信号：${step.verification["zh-CN"]}）`
-    : `Guide rule ${step.rule_id}: ${step.rationale.en} (verification: ${step.verification.en})`;
+    ? `指南规则 ${step.rule_id}：${localizeGuideText(step.rationale["zh-CN"], names)}（验证信号：${localizeGuideText(step.verification["zh-CN"], names)}）`
+    : `Guide rule ${step.rule_id}: ${localizeGuideText(step.rationale.en, names)} (verification: ${localizeGuideText(step.verification.en, names)})`;
 }
 
 function guideAssumption(
@@ -812,6 +823,31 @@ function progressionInference(
     : "Active bottlenecks are ordered ahead of generic stage steps: repair the current line from rule evidence first, then advance the stage goal.";
 }
 
+function localizeGuideText(
+  text: string,
+  names: LocalizedNameLookup,
+): string {
+  let localized = text;
+  const entries = [...names.entries()].sort(
+    (left, right) => right.id.length - left.id.length,
+  );
+  for (const { id, name } of entries) {
+    if (id === name || !localized.includes(id)) {
+      continue;
+    }
+    const pattern = new RegExp(
+      `(?<![A-Za-z0-9-])${escapeRegExp(id)}(?![A-Za-z0-9-])`,
+      "g",
+    );
+    localized = localized.replace(pattern, () => name);
+  }
+  return localized;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function formatGroundedAnswer(
   language: AssistantLanguage,
   grounding: AssistantGrounding,
@@ -821,57 +857,119 @@ export function formatGroundedAnswer(
   const calculations = grounding.evidence.filter(
     ({ category }) => category === "calculation",
   );
-  const facts = grounding.evidence.filter(
-    ({ category }) => category === "fact",
-  );
-  const guide = grounding.evidence.filter(
-    ({ category }) => category === "guide",
+  const inference = stripEvidenceCitations(
+    modelInference ?? grounding.localInference,
   );
 
-  appendSection(
-    lines,
-    language === "zh-CN" ? "[计算结果]" : "[Calculation]",
-    calculations.map(({ id, text }) => `[${id}] ${text}`),
-  );
-  appendSection(
-    lines,
-    language === "zh-CN" ? "[事实]" : "[Facts]",
-    facts.map(({ id, text }) => `[${id}] ${text}`),
-  );
-  appendSection(
-    lines,
-    language === "zh-CN" ? "[流程指南]" : "[Progression guide]",
-    guide.map(({ id, text }) => `[${id}] ${text}`),
-  );
-  appendSection(
-    lines,
-    language === "zh-CN" ? "[推断]" : "[Inference]",
-    [modelInference ?? grounding.localInference],
-  );
-  appendSection(
-    lines,
-    language === "zh-CN" ? "[缺失数据]" : "[Missing data]",
-    grounding.missingData,
-  );
-  appendSection(
-    lines,
-    language === "zh-CN" ? "[假设]" : "[Assumptions]",
-    grounding.assumptions,
-  );
+  if (modelInference !== undefined && inference !== "") {
+    lines.push(inference);
+  }
 
-  if (grounding.actions.length > 0) {
-    lines.push(language === "zh-CN" ? "[行动]" : "[Actions]");
-    for (const [index, action] of grounding.actions.slice(0, 3).entries()) {
-      lines.push(
-        `${index + 1}. ${action.text} ` +
-          (language === "zh-CN"
-            ? `（证据：[${action.evidence_id}]）`
-            : `(evidence: [${action.evidence_id}])`),
-      );
+  if (grounding.progression !== undefined) {
+    const stage = grounding.progression.stage;
+    const position = stage.uncertain
+      ? language === "zh-CN"
+        ? `至少 ${stage.order}/${stage.total}`
+        : `at least ${stage.order}/${stage.total}`
+      : `${stage.order}/${stage.total}`;
+    lines.push(
+      language === "zh-CN"
+        ? `${stage.basis === "general" ? "通用流程" : "当前阶段"}：${position} ${stage.title["zh-CN"]}`
+        : `${stage.basis === "general" ? "General route" : "Current stage"}: ${position} ${stage.title.en}`,
+    );
+  }
+
+  for (const { text } of calculations.slice(0, 2)) {
+    lines.push(text);
+  }
+
+  if (grounding.progression === undefined && calculations.length === 0) {
+    for (const { text } of compactFacts(grounding).slice(0, 3)) {
+      lines.push(text);
     }
   }
 
+  if (
+    modelInference === undefined &&
+    grounding.progression === undefined &&
+    calculations.length === 0 &&
+    grounding.actions.length === 0 &&
+    inference !== ""
+  ) {
+    lines.push(inference);
+  }
+
+  if (grounding.actions.length > 0) {
+    for (const [index, action] of grounding.actions.slice(0, 3).entries()) {
+      lines.push(`${index + 1}. ${stripEvidenceCitations(action.text)}`);
+    }
+  }
+
+  const warning = compactWarning(language, grounding.missingData);
+  if (warning !== undefined) {
+    lines.push(warning);
+  }
+
+  if (lines.length === 0 && inference !== "") {
+    lines.push(inference);
+  }
+
   return lines.join("\n");
+}
+
+function compactFacts(grounding: AssistantGrounding): GroundingEvidence[] {
+  const facts = grounding.evidence.filter(
+    ({ category }) => category === "fact",
+  );
+  const priorities =
+    grounding.intent === "research"
+      ? ["A", "S2", "S3", "S1"]
+      : grounding.intent === "diagnosis" || grounding.intent === "bottlenecks"
+        ? ["A", "S3", "S1", "S2"]
+        : ["A", "S1", "S2", "S3"];
+  return [...facts].sort((left, right) => {
+    const leftRank = evidenceRank(left.id, priorities);
+    const rightRank = evidenceRank(right.id, priorities);
+    return leftRank - rightRank || left.id.localeCompare(right.id);
+  });
+}
+
+function evidenceRank(id: string, priorities: readonly string[]): number {
+  const exact = priorities.indexOf(id);
+  if (exact >= 0) {
+    return exact;
+  }
+  const prefix = priorities.indexOf(id.replace(/\d+$/u, ""));
+  return prefix >= 0 ? prefix : priorities.length;
+}
+
+function stripEvidenceCitations(value: string): string {
+  return value
+    .replace(/\s*\[[A-Z]\d+\]/gu, "")
+    .replace(/\s+([，。；,.!?])/gu, "$1")
+    .trim();
+}
+
+function compactWarning(
+  language: AssistantLanguage,
+  missingData: readonly string[],
+): string | undefined {
+  const joined = missingData.join(" ");
+  if (
+    /尚未同步任何|尚未收到|没有同步状态|No save state|No dynamic snapshot|No synchronized state/iu.test(
+      joined,
+    )
+  ) {
+    return language === "zh-CN"
+      ? "⚠ 当前存档状态尚未完整同步，以下为通用建议。"
+      : "⚠ Save state is not fully synchronized; this is general guidance.";
+  }
+  if (/裁剪|truncated/iu.test(joined)) {
+    return language === "zh-CN"
+      ? "⚠ 部分状态数据已裁剪，建议仅供参考。"
+      : "⚠ Some state data was truncated; treat this advice as provisional.";
+  }
+  return undefined;
 }
 
 function classifyAssistantIntent(question: string): AssistantIntent {
@@ -1172,16 +1270,6 @@ function localAdvisorInference(
     return "Research ordering comes from active deterministic rules, not a model-selected guess.";
   }
   return "Priority comes from deterministic rule severity and triggering evidence.";
-}
-
-function appendSection(lines: string[], heading: string, values: string[]): void {
-  if (values.length === 0) {
-    return;
-  }
-  lines.push(heading);
-  for (const value of values) {
-    lines.push(`- ${value}`);
-  }
 }
 
 function formatNumber(value: number): string {

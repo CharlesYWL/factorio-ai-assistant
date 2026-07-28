@@ -103,7 +103,8 @@ void test("passes only compact, budgeted context to a successful provider", asyn
   });
 
   assert.equal(answer.mode, "model");
-  assert.match(answer.text, /Model answer grounded by \[C1\]/);
+  assert.match(answer.text, /Model answer grounded by\./);
+  assert.doesNotMatch(answer.text, /\[C1\]/);
   assert.ok(captured !== undefined);
   assert.ok(
     Buffer.byteLength(JSON.stringify(captured.context), "utf8") <= 2_048,
@@ -144,7 +145,8 @@ void test("allows model numbers copied exactly from grounded evidence", async ()
   });
 
   assert.equal(answer.mode, "model");
-  assert.match(answer.text, /进一步看，目标速率为 45\/min \[C1\]/);
+  assert.match(answer.text, /进一步看，目标速率为 45\/min。/);
+  assert.doesNotMatch(answer.text, /\[C1\]/);
 });
 
 void test("normalizes model suggestion lists instead of discarding them", async () => {
@@ -176,9 +178,9 @@ void test("normalizes model suggestion lists instead of discarding them", async 
   });
 
   assert.equal(answer.mode, "model");
-  assert.match(answer.text, /优先扩大上游供给 \[C1\]/);
-  assert.match(answer.text, /检查输入是否连续 \[C1\]/);
-  assert.match(answer.text, /暂缓无关扩建 \[C1\]/);
+  assert.match(answer.text, /优先扩大上游供给/);
+  assert.match(answer.text, /检查输入是否连续/);
+  assert.match(answer.text, /暂缓无关扩建/);
   assert.doesNotMatch(answer.text, /这条应被丢弃/);
   assert.doesNotMatch(answer.text, /1\. 优先扩大上游供给/);
 });

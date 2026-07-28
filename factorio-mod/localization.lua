@@ -47,6 +47,64 @@ local SEEDED_IDS = {
   { kind = "machine", id = "assembling-machine-3" },
 }
 
+-- The built-in progression guide can recommend prototypes that are not yet
+-- present in the current flow snapshot. Queue their display names up front so
+-- guide actions never fall back to raw kebab-case IDs in a translated game.
+local GUIDE_SEEDED_IDS = {
+  { kind = "technology", id = "steam-power" },
+  { kind = "technology", id = "electronics" },
+  { kind = "technology", id = "automation-science-pack" },
+  { kind = "technology", id = "automation" },
+  { kind = "technology", id = "automation-2" },
+  { kind = "technology", id = "logistics" },
+  { kind = "technology", id = "logistics-2" },
+  { kind = "technology", id = "logistics-3" },
+  { kind = "technology", id = "logistic-science-pack" },
+  { kind = "technology", id = "steel-processing" },
+  { kind = "technology", id = "military-science-pack" },
+  { kind = "technology", id = "oil-gathering" },
+  { kind = "technology", id = "oil-processing" },
+  { kind = "technology", id = "fluid-handling" },
+  { kind = "technology", id = "plastics" },
+  { kind = "technology", id = "sulfur-processing" },
+  { kind = "technology", id = "advanced-circuit" },
+  { kind = "technology", id = "chemical-science-pack" },
+  { kind = "technology", id = "advanced-oil-processing" },
+  { kind = "technology", id = "electric-engine" },
+  { kind = "technology", id = "construction-robotics" },
+  { kind = "technology", id = "modules" },
+  { kind = "technology", id = "productivity-module" },
+  { kind = "technology", id = "processing-unit" },
+  { kind = "technology", id = "railway" },
+  { kind = "technology", id = "advanced-material-processing" },
+  { kind = "technology", id = "advanced-material-processing-2" },
+  { kind = "technology", id = "production-science-pack" },
+  { kind = "technology", id = "low-density-structure" },
+  { kind = "technology", id = "utility-science-pack" },
+  { kind = "technology", id = "concrete" },
+  { kind = "technology", id = "rocket-fuel" },
+  { kind = "technology", id = "electric-energy-accumulators" },
+  { kind = "technology", id = "solar-energy" },
+  { kind = "technology", id = "speed-module-3" },
+  { kind = "technology", id = "productivity-module-3" },
+  { kind = "technology", id = "radar" },
+  { kind = "technology", id = "rocket-silo" },
+  { kind = "technology", id = "space-science-pack" },
+  { kind = "item", id = "plastic-bar" },
+  { kind = "item", id = "low-density-structure" },
+  { kind = "item", id = "rocket-fuel" },
+  { kind = "item", id = "solid-fuel" },
+  { kind = "item", id = "concrete" },
+  { kind = "item", id = "solar-panel" },
+  { kind = "item", id = "accumulator" },
+  { kind = "item", id = "radar" },
+  { kind = "item", id = "satellite" },
+  { kind = "item", id = "speed-module-3" },
+  { kind = "item", id = "productivity-module-3" },
+  { kind = "machine", id = "rocket-silo" },
+  { kind = "machine", id = "cargo-landing-pad" },
+}
+
 local function entry_key(kind, id)
   return kind .. ":" .. id
 end
@@ -183,6 +241,9 @@ local function seed(state)
 
   loc.seeded = true
   for _, entry in ipairs(SEEDED_IDS) do
+    localization.register(state, entry.kind, entry.id)
+  end
+  for _, entry in ipairs(GUIDE_SEEDED_IDS) do
     localization.register(state, entry.kind, entry.id)
   end
 end
