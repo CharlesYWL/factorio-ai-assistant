@@ -10,6 +10,8 @@ import {
   MAX_PACKET_BYTES,
   PROTOCOL_VERSION,
   STATE_SCHEMA_VERSION,
+  createAssistantCancelPacket,
+  createAssistantRequestPacket,
   createHelloPacket,
   decodePacket,
   encodePacket,
@@ -22,6 +24,7 @@ import {
   startCompanionServer,
   type CompanionLogger,
 } from "./server.js";
+import type { AIProvider } from "./providers.js";
 
 const silentLogger: CompanionLogger = {
   info: () => undefined,
@@ -74,6 +77,76 @@ void test(
       assert.equal(acknowledgement.payload.companion_version, "0.1.0");
       assert.equal(acknowledgement.payload.static_revision, 0);
       assert.equal(acknowledgement.payload.sampling_interval_ticks, 300);
+      assert.deepEqual(acknowledgement.payload.assistant_status, {
+        mode: "local",
+        provider: "local",
+        reason: "deterministic rules and calculator only",
+        privacy: "local-only",
+      });
+    }
+  },
+);
+
+void test(
+  "answers and cancels in-game assistant requests",
+  { timeout: 3_000 },
+  async (context) => {
+    const provider: AIProvider = {
+      kind: "ollama",
+      complete(_request, signal) {
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new Error("cancelled by test")),
+            { once: true },
+          );
+        });
+      },
+    };
+    const companion = await startCompanionServer({
+      port: 0,
+      logger: silentLogger,
+      provider,
+    });
+    const factorio = createSocket("udp4");
+    context.after(async () => {
+      await closeSocket(factorio);
+      await companion.close();
+    });
+    await bindSocket(factorio);
+
+    const request = createAssistantRequestPacket({
+      messageId: "factorio-assistant-cancel",
+      tick: 600,
+      forceId: "player",
+      question: "请分析当前瓶颈",
+    });
+    const responsePromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(request),
+      companion.address.port,
+      companion.address.address,
+    );
+    await delay(10);
+    await send(
+      factorio,
+      encodePacket(
+        createAssistantCancelPacket({
+          messageId: "factorio-assistant-cancel-action",
+          tick: 601,
+          requestId: request.message_id,
+        }),
+      ),
+      companion.address.port,
+      companion.address.address,
+    );
+
+    const response = decodePacket((await responsePromise).datagram);
+    assert.equal(response.type, "assistant_response");
+    if (response.type === "assistant_response") {
+      assert.equal(response.payload.reply_to, request.message_id);
+      assert.equal(response.payload.status, "cancelled");
     }
   },
 );
@@ -405,4 +478,8 @@ function closeSocket(socket: Socket): Promise<void> {
   return new Promise<void>((resolve) => {
     socket.close(resolve);
   });
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

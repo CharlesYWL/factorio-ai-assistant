@@ -431,6 +431,20 @@ void test("truncated missing series do not falsely recover an active alert", () 
   onlyEvent(closed, "closed", "lubricant-zero");
 });
 
+void test("renders advisor evidence and recommendations in configured Chinese", () => {
+  const engine = new AdvisorEngine(configFor("research-idle"), "zh-CN");
+  const idle = force({ research: null });
+  engine.evaluate(snapshot(START, idle), completeStaticState);
+  const opened = engine.evaluate(
+    snapshot(START + DURATION, idle),
+    completeStaticState,
+  );
+  const alert = onlyEvent(opened, "opened", "research-idle").alert;
+
+  assert.match(alert.evidence, /没有正在研究/);
+  assert.match(alert.recommendation, /下一项科技/);
+});
+
 function configFor(activeRule: AdvisorRuleId): AdvisorConfig {
   return {
     ...DEFAULT_ADVISOR_CONFIG,

@@ -1,9 +1,9 @@
 # Factorio AI Assistant
 
-Factorio 2.0 原版的只读游戏内顾问。当前 M4 在 localhost UDP、确定性生产比例和实时
-规则顾问之上增加安全的 Companion 配置与可替换 AI provider：OpenClaw /
-OpenAI-compatible 优先，Ollama 可选；无 Key、模型离线、限流或超时时自动保留本地
-计算与规则答案。系统不发送地图，也不会修改工厂。
+Factorio 2.0 原版的只读游戏内顾问。当前 M5 把聊天、确定性生产比例、实时提醒和连接
+状态整合进可移动的游戏内面板；Companion 支持 OpenClaw / OpenAI-compatible 与
+Ollama，无 Key、模型离线、限流或超时时自动保留本地计算与规则答案。系统不发送地图，
+也不会修改工厂。
 
 ## 架构
 
@@ -27,11 +27,41 @@ flowchart LR
 
 | 路径 | 作用 |
 | --- | --- |
-| `factorio-mod/` | Factorio 2.0 Mod、事件缓存、状态采样和连接面板 |
+| `factorio-mod/` | Factorio 2.0 Mod、事件缓存、状态采样、四页顾问 UI 与 mock harness |
 | `companion/` | 只绑定 `127.0.0.1` 的 Node.js UDP Companion、状态缓存、本地规则顾问、上下文压缩和 provider 层 |
 | `packages/protocol/` | 严格的版本化消息编解码与校验 |
 | `packages/calculator/` | 精确有理数生产流求解器、Factorio 2.0 fixture 与 JSON CLI |
 | `docs/` | Windows 安装、协议、规则阈值、排错和实机验证清单 |
+
+## 游戏内面板
+
+![游戏内 Chat、Calculator、Alerts 与 Status 面板预览](docs/ui-preview.svg)
+
+预览使用内置 mock harness 的确定性数据绘制，对应实机布局和文案；自动化环境没有
+Factorio 图形客户端，Windows 实机截图仍列在验证清单中。
+
+- **Chat**：消息历史、快捷问题、Enter 发送、取消请求；回答标注模型 / 本地规则来源，
+  并单独突出数字与假设。
+- **Calculator**：目标物品或流体、每分钟产量及目标配方的机器 / 插件假设；返回配方、
+  精确台数、向上取整台数、外部输入和副产物。
+- **Alerts**：按严重度显示证据和建议，可静音 / 恢复规则；主动提醒使用 8 秒第三方
+  toast，不写入聊天区连续刷屏。
+- **Status**：Companion、模型模式、协议 / 状态架构、最近同步和隐私模式。
+
+`Ctrl+Shift+A` 打开面板，`Ctrl+Shift+1..4` 切页，输入框按 Enter 提交，Esc 关闭。
+窗口有三档尺寸，位置和尺寸按玩家写入存档。Companion 离线时所有页面仍可进入，
+Calculator 保留输入，Alerts 显示带“可能过期”提示的缓存内容。
+
+可在游戏控制台复现全部关键状态（建议停止 Companion，避免心跳覆盖 mock）：
+
+```text
+/factorio-ai-assistant-mock ready
+/factorio-ai-assistant-mock offline
+/factorio-ai-assistant-mock loading
+/factorio-ai-assistant-mock timeout
+/factorio-ai-assistant-mock incompatible
+/factorio-ai-assistant-mock clear
+```
 
 ## 本地验证
 
@@ -85,6 +115,14 @@ catalog 使用状态协议中的 `recipes`、`machines`、`modules` 和当前 fo
 [`docs/setup-windows.md`](docs/setup-windows.md)。线协议见
 [`docs/protocol.md`](docs/protocol.md)。规则证据、默认阈值、静音和全部玩家可配置项见
 [`docs/advisor.md`](docs/advisor.md)。
+
+### 当前限制
+
+- 简化计算器自动选择上游配方，只允许对目标配方指定机器 / 插件；遇到同一资源的多配方
+  歧义会明确报错，复杂配方选择仍使用 JSON CLI。
+- 模型调用只能取消仍在进行的请求；已经完成并进入 UDP 的响应可能先于取消到达。
+- 自动化测试覆盖协议、Companion、计算服务、Lua 语法、UI 状态契约和中英文 key
+  对齐；像素布局、键盘焦点和不同 DPI 仍需 Windows Factorio 实机确认。
 
 ## 安全边界
 

@@ -1,5 +1,6 @@
-local mod_gui = require("__core__.lualib.mod-gui")
 local state_collector = require("state_collector")
+local ui = require("ui")
+local ui_state = require("ui_state")
 
 local PROTOCOL_VERSION = 1
 local STATE_SCHEMA_VERSION = 2
@@ -14,13 +15,7 @@ local MAX_SAMPLE_INTERVAL_TICKS = 3600
 local STATIC_RETRY_INTERVAL_TICKS = 300
 local CONNECTION_TIMEOUT_TICKS = 600
 local PENDING_TIMEOUT_TICKS = 1200
-
-local BUTTON_NAME = "factorio-ai-assistant-toggle"
-local PANEL_NAME = "factorio-ai-assistant-panel"
-local STATUS_LABEL_NAME = "factorio-ai-assistant-status"
-local LAST_RESPONSE_LABEL_NAME = "factorio-ai-assistant-last-response"
-local ALERTS_LABEL_NAME = "factorio-ai-assistant-alerts"
-local PING_BUTTON_NAME = "factorio-ai-assistant-ping"
+local UI_REQUEST_TIMEOUT_TICKS = 1200
 
 local ADVISOR_RULE_IDS = {
   ["research-idle"] = true,
@@ -66,6 +61,24 @@ local ADVISOR_EVENTS = {
   reminder = true,
   closed = true,
 }
+local ASSISTANT_MODES = {
+  ["local"] = true,
+  ["local-model"] = true,
+  ["remote-model"] = true,
+}
+local ASSISTANT_RESPONSE_MODES = {
+  ["local"] = true,
+  model = true,
+}
+local PRIVACY_MODES = {
+  ["local-only"] = true,
+  ["remote-provider"] = true,
+}
+local RESPONSE_STATUSES = {
+  ok = true,
+  cancelled = true,
+  error = true,
+}
 
 local UDP_EVENT = defines.events.on_udp_packet_received
 local UDP_AVAILABLE = UDP_EVENT ~= nil
@@ -85,6 +98,8 @@ local function get_state()
     last_dynamic_tick = nil,
     receive_error_logged = false,
     unsupported_version_logged = false,
+    ui_players = {},
+    toast_expiry = {},
   }
 
   local state = storage.factorio_ai_assistant
@@ -96,6 +111,10 @@ local function get_state()
     state.sampling_interval_ticks or DEFAULT_SAMPLE_INTERVAL_TICKS
   state.receive_error_logged = state.receive_error_logged or false
   state.unsupported_version_logged = state.unsupported_version_logged or false
+  state.ui_players = state.ui_players or {}
+  state.toast_expiry = state.toast_expiry or {}
+  state.protocol_version = PROTOCOL_VERSION
+  state.schema_version = STATE_SCHEMA_VERSION
 
   return state
 end
@@ -214,30 +233,6 @@ local function get_advisor_config()
   }
 end
 
-local function ensure_button(player)
-  local button_flow = mod_gui.get_button_flow(player)
-  if not button_flow[BUTTON_NAME] then
-    button_flow.add({
-      type = "button",
-      name = BUTTON_NAME,
-      caption = { "factorio-ai-assistant.button-caption" },
-      tooltip = { "factorio-ai-assistant.button-tooltip" },
-    })
-  end
-end
-
-local function format_last_response(state)
-  if not state.last_response_tick then
-    return { "factorio-ai-assistant.never" }
-  end
-
-  local elapsed_ticks = math.max(0, game.tick - state.last_response_tick)
-  return {
-    "factorio-ai-assistant.seconds-ago",
-    math.floor(elapsed_ticks / 60),
-  }
-end
-
 local function localized_rule(rule_id)
   return { "factorio-ai-assistant.rule-" .. rule_id }
 end
@@ -246,81 +241,14 @@ local function localized_severity(severity)
   return { "factorio-ai-assistant.severity-" .. severity }
 end
 
-local function format_active_alerts(state, force_id)
-  local alerts = {}
-  for _, alert in pairs(state.advisor_alerts) do
-    if alert.force_id == force_id then
-      table.insert(alerts, alert)
-    end
-  end
-  table.sort(alerts, function(left, right)
-    return left.id < right.id
-  end)
-
-  if #alerts == 0 then
-    return { "factorio-ai-assistant.no-active-alerts" }
-  end
-
-  local caption = {
-    "",
-    { "factorio-ai-assistant.active-alert-count", #alerts },
-  }
-  for _, alert in ipairs(alerts) do
-    table.insert(caption, "\n")
-    table.insert(caption, {
-      "factorio-ai-assistant.alert-line",
-      localized_severity(alert.severity),
-      localized_rule(alert.rule_id),
-      alert.evidence,
-      alert.recommendation,
-    })
-  end
-  return caption
-end
-
 local function refresh_player_ui(player)
   if not player.valid then
     return
   end
 
-  ensure_button(player)
-
-  local frame = mod_gui.get_frame_flow(player)[PANEL_NAME]
-  if not frame then
-    return
-  end
-
   local state = get_state()
-  local status_label = frame[STATUS_LABEL_NAME]
-  local last_response_label = frame[LAST_RESPONSE_LABEL_NAME]
-  local alerts_label = frame[ALERTS_LABEL_NAME]
-
-  if status_label then
-    if state.connected then
-      status_label.caption = {
-        "factorio-ai-assistant.status",
-        { "factorio-ai-assistant.connected" },
-      }
-      status_label.style.font_color = { r = 0.22, g = 0.82, b = 0.47 }
-    else
-      status_label.caption = {
-        "factorio-ai-assistant.status",
-        { "factorio-ai-assistant.disconnected" },
-      }
-      status_label.style.font_color = { r = 1, g = 0.35, b = 0.32 }
-    end
-  end
-
-  if last_response_label then
-    last_response_label.caption = {
-      "factorio-ai-assistant.last-response",
-      format_last_response(state),
-    }
-  end
-
-  if alerts_label then
-    alerts_label.caption = format_active_alerts(state, player.force.name)
-  end
+  ui.ensure_button(player)
+  ui.render(player, state, ui_state.ensure_player(state, player.index))
 end
 
 local function refresh_all_ui()
@@ -329,40 +257,12 @@ local function refresh_all_ui()
   end
 end
 
-local function open_panel(player)
-  local frame_flow = mod_gui.get_frame_flow(player)
-  if frame_flow[PANEL_NAME] then
-    return
+local function refresh_all_status()
+  local state = get_state()
+  for _, player in pairs(game.players) do
+    ui.ensure_button(player)
+    ui.refresh_status(player, state)
   end
-
-  local frame = frame_flow.add({
-    type = "frame",
-    name = PANEL_NAME,
-    direction = "vertical",
-    caption = { "factorio-ai-assistant.panel-title" },
-  })
-
-  frame.add({
-    type = "label",
-    name = STATUS_LABEL_NAME,
-  })
-  frame.add({
-    type = "label",
-    name = LAST_RESPONSE_LABEL_NAME,
-  })
-  local alerts_label = frame.add({
-    type = "label",
-    name = ALERTS_LABEL_NAME,
-  })
-  alerts_label.style.single_line = false
-  alerts_label.style.maximal_width = 520
-  frame.add({
-    type = "button",
-    name = PING_BUTTON_NAME,
-    caption = { "factorio-ai-assistant.ping" },
-  })
-
-  refresh_player_ui(player)
 end
 
 local function cleanup_pending(state)
@@ -389,11 +289,200 @@ local function send_udp_payload(encoded, description)
         .. " failed: "
         .. tostring(error_message)
     )
-    refresh_all_ui()
+    refresh_all_status()
     return false
   end
 
   return true
+end
+
+local function next_message_id(state, kind)
+  state.sequence = state.sequence + 1
+  return "factorio-" .. kind .. "-" .. game.tick .. "-" .. state.sequence
+end
+
+local function send_ui_packet(packet, description)
+  local encoded = helpers.table_to_json(packet)
+  if #encoded > MAX_PACKET_BYTES then
+    log(
+      "[factorio-ai-assistant] "
+        .. description
+        .. " exceeds packet limit: "
+        .. #encoded
+    )
+    return false
+  end
+  return send_udp_payload(encoded, description)
+end
+
+local function trim(value)
+  return string.match(value or "", "^%s*(.-)%s*$")
+end
+
+local function utf8_length(value)
+  local _, count = string.gsub(value, "[^\128-\191]", "")
+  return count
+end
+
+local function send_chat_request(player, question)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  question = trim(question)
+  if not state.connected then
+    ui_state.append_system(player_state, "chat-offline", game.tick)
+    ui.render(player, state, player_state)
+    return
+  end
+  if state.assistant_status == nil then
+    ui_state.append_system(
+      player_state,
+      "protocol-incompatible",
+      game.tick
+    )
+    ui.render(player, state, player_state)
+    return
+  end
+  if question == ""
+    or #question > 4096
+    or utf8_length(question) > 2000
+  then
+    ui_state.append_system(player_state, "chat-invalid-input", game.tick)
+    ui.render(player, state, player_state)
+    return
+  end
+  if player_state.chat_pending ~= nil then
+    return
+  end
+
+  local message_id = next_message_id(state, "assistant")
+  local packet = {
+    protocol_version = PROTOCOL_VERSION,
+    schema_version = STATE_SCHEMA_VERSION,
+    message_id = message_id,
+    type = "assistant_request",
+    tick = game.tick,
+    payload = {
+      force_id = player.force.name,
+      question = question,
+    },
+  }
+  if not send_ui_packet(packet, "assistant request") then
+    ui_state.append_system(player_state, "chat-offline", game.tick)
+    ui.render(player, state, player_state)
+    return
+  end
+
+  ui_state.queue_chat(player_state, message_id, question, game.tick)
+  ui.render(player, state, player_state)
+end
+
+local function cancel_chat_request(player)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  local request_id = ui_state.cancel_chat(player_state, game.tick)
+  if request_id ~= nil and state.connected then
+    send_ui_packet({
+      protocol_version = PROTOCOL_VERSION,
+      schema_version = STATE_SCHEMA_VERSION,
+      message_id = next_message_id(state, "cancel"),
+      type = "assistant_cancel",
+      tick = game.tick,
+      payload = {
+        request_id = request_id,
+      },
+    }, "assistant cancellation")
+  end
+  ui.render(player, state, player_state)
+end
+
+local function parse_module_ids(value)
+  local modules = {}
+  local seen = {}
+  for module_id in string.gmatch(value, "[^,%s]+") do
+    if #module_id > 256 then
+      return nil
+    end
+    if not seen[module_id] then
+      table.insert(modules, module_id)
+      seen[module_id] = true
+    end
+    if #modules > 16 then
+      return nil
+    end
+  end
+  return modules
+end
+
+local function send_calculation_request(player)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  local values = ui.read_calculator_inputs(player)
+  for field, value in pairs(values) do
+    ui_state.update_calculator_input(player_state, field, value)
+  end
+  if not state.connected then
+    ui_state.set_calculation_error(
+      player_state,
+      "COMPANION_OFFLINE",
+      nil
+    )
+    ui.render(player, state, player_state)
+    return
+  end
+  if state.assistant_status == nil then
+    ui_state.set_calculation_error(
+      player_state,
+      "PROTOCOL_INCOMPATIBLE",
+      nil
+    )
+    ui.render(player, state, player_state)
+    return
+  end
+
+  local target_id = trim(values.target_id)
+  local machine_id = trim(values.machine_id)
+  local rate = tonumber(trim(values.rate_per_minute))
+  local modules = parse_module_ids(values.module_ids)
+  if target_id == ""
+    or #target_id > 256
+    or rate == nil
+    or rate <= 0
+    or machine_id ~= "" and #machine_id > 256
+    or modules == nil
+  then
+    ui_state.set_calculation_error(player_state, "INVALID_INPUT", nil)
+    ui.render(player, state, player_state)
+    return
+  end
+
+  local message_id = next_message_id(state, "calculation")
+  local packet = {
+    protocol_version = PROTOCOL_VERSION,
+    schema_version = STATE_SCHEMA_VERSION,
+    message_id = message_id,
+    type = "calculation_request",
+    tick = game.tick,
+    payload = {
+      force_id = player.force.name,
+      target_kind = values.target_kind,
+      target_id = target_id,
+      rate_per_minute = rate,
+      machine_id = machine_id ~= "" and machine_id or nil,
+      module_ids = modules,
+    },
+  }
+  if not send_ui_packet(packet, "calculation request") then
+    ui_state.set_calculation_error(
+      player_state,
+      "COMPANION_OFFLINE",
+      nil
+    )
+    ui.render(player, state, player_state)
+    return
+  end
+
+  ui_state.queue_calculation(player_state, message_id, game.tick)
+  ui.render(player, state, player_state)
 end
 
 local function send_hello()
@@ -405,7 +494,7 @@ local function send_hello()
       log("[factorio-ai-assistant] Lua UDP requires Factorio 2.0.59 or newer")
       state.unsupported_version_logged = true
     end
-    refresh_all_ui()
+    refresh_all_status()
     return false
   end
 
@@ -585,6 +674,18 @@ local function is_non_negative_integer(value)
   return type(value) == "number" and value >= 0 and value % 1 == 0
 end
 
+local function is_valid_assistant_status(value)
+  return type(value) == "table"
+    and ASSISTANT_MODES[value.mode]
+    and is_non_empty_string(value.provider, 256)
+    and (
+      value.model == nil
+      or is_non_empty_string(value.model, 256)
+    )
+    and is_non_empty_string(value.reason, 512)
+    and PRIVACY_MODES[value.privacy]
+end
+
 local function handle_hello_ack(packet, event)
   if not is_non_negative_integer(packet.timestamp)
     or not is_non_empty_string(packet.payload.reply_to)
@@ -601,6 +702,10 @@ local function handle_hello_ack(packet, event)
         or packet.payload.sampling_interval_ticks > MAX_SAMPLE_INTERVAL_TICKS
       )
     )
+    or (
+      packet.payload.assistant_status ~= nil
+      and not is_valid_assistant_status(packet.payload.assistant_status)
+    )
   then
     return
   end
@@ -614,6 +719,8 @@ local function handle_hello_ack(packet, event)
   state.connected = true
   state.last_response_tick = event.tick
   state.companion_version = packet.payload.companion_version
+  state.assistant_status = packet.payload.assistant_status
+  state.static_revision = packet.payload.static_revision or 0
   if packet.payload.sampling_interval_ticks ~= nil then
     state.sampling_interval_ticks = packet.payload.sampling_interval_ticks
   end
@@ -635,7 +742,7 @@ local function handle_hello_ack(packet, event)
     queue_static_snapshot()
   end
 
-  refresh_all_ui()
+  refresh_all_status()
 end
 
 local function handle_state_ack(packet, event)
@@ -658,6 +765,8 @@ local function handle_state_ack(packet, event)
   state.static_pending[packet.payload.reply_to] = nil
   state.connected = true
   state.last_response_tick = event.tick
+  state.last_sync_tick = event.tick
+  state.static_revision = packet.payload.revision
 
   if not has_static_pending(state)
     and state_collector.static_is_dirty(state)
@@ -665,7 +774,7 @@ local function handle_state_ack(packet, event)
     queue_static_snapshot()
   end
 
-  refresh_all_ui()
+  refresh_all_status()
 end
 
 local function handle_resync_request(packet, event)
@@ -685,7 +794,7 @@ local function handle_resync_request(packet, event)
     packet.payload.expected_revision
   )
   queue_static_snapshot()
-  refresh_all_ui()
+  refresh_all_status()
 end
 
 local function notify_proactive_alert(alert)
@@ -695,13 +804,7 @@ local function notify_proactive_alert(alert)
 
   for _, player in pairs(game.connected_players) do
     if player.force.name == alert.force_id then
-      player.print({
-        "factorio-ai-assistant.proactive-alert",
-        localized_severity(alert.severity),
-        localized_rule(alert.rule_id),
-        alert.evidence,
-        alert.recommendation,
-      })
+      ui.show_toast(player, get_state(), alert)
     end
   end
 end
@@ -746,6 +849,175 @@ local function handle_advisor_update(packet, event)
   refresh_all_ui()
 end
 
+local function is_optional_string(value, maximum_length)
+  return value == nil or is_non_empty_string(value, maximum_length)
+end
+
+local function handle_assistant_response(packet, event)
+  local payload = packet.payload
+  if packet.schema_version ~= STATE_SCHEMA_VERSION
+    or not is_non_negative_integer(packet.timestamp)
+    or not is_non_empty_string(payload.reply_to)
+    or not RESPONSE_STATUSES[payload.status]
+    or (
+      payload.status == "ok"
+      and (
+        not ASSISTANT_RESPONSE_MODES[payload.mode]
+        or not is_non_empty_string(payload.text, 8192)
+        or not is_optional_string(payload.provider, 256)
+        or not is_optional_string(payload.model, 256)
+        or not is_optional_string(payload.fallback_reason, 128)
+        or payload.error_code ~= nil
+        or payload.error_message ~= nil
+      )
+    )
+    or (
+      payload.status == "cancelled"
+      and (
+        payload.mode ~= nil
+        or payload.text ~= nil
+        or payload.error_code ~= nil
+        or payload.error_message ~= nil
+      )
+    )
+    or (
+      payload.status == "error"
+      and (
+        not is_non_empty_string(payload.error_code, 128)
+        or not is_non_empty_string(payload.error_message, 1024)
+        or payload.mode ~= nil
+        or payload.text ~= nil
+      )
+    )
+  then
+    return
+  end
+
+  local state = get_state()
+  state.connected = true
+  state.last_response_tick = event.tick
+  local player_index =
+    ui_state.complete_chat(state, payload.reply_to, payload, event.tick)
+  if player_index ~= nil then
+    local player = game.get_player(player_index)
+    if player ~= nil then
+      ui.render(
+        player,
+        state,
+        ui_state.ensure_player(state, player_index)
+      )
+    end
+  end
+end
+
+local function is_non_negative_number(value)
+  return type(value) == "number"
+    and value >= 0
+    and value == value
+    and value < math.huge
+end
+
+local function is_valid_resource_rate(value)
+  return type(value) == "table"
+    and (value.kind == "item" or value.kind == "fluid")
+    and is_non_empty_string(value.id, 256)
+    and is_non_negative_number(value.per_minute)
+end
+
+local function is_valid_resource_rates(values)
+  if type(values) ~= "table" or #values > 16 then
+    return false
+  end
+  for _, value in ipairs(values) do
+    if not is_valid_resource_rate(value) then
+      return false
+    end
+  end
+  return true
+end
+
+local function is_valid_recipe_summary(value)
+  if type(value) ~= "table"
+    or not is_non_empty_string(value.recipe_id, 256)
+    or not is_non_empty_string(value.machine_id, 256)
+    or not is_non_negative_number(value.machines_exact)
+    or not is_non_negative_integer(value.machines_rounded_up)
+    or type(value.module_ids) ~= "table"
+    or #value.module_ids > 16
+  then
+    return false
+  end
+  for _, module_id in ipairs(value.module_ids) do
+    if not is_non_empty_string(module_id, 256) then
+      return false
+    end
+  end
+  return true
+end
+
+local function is_valid_calculation_result(value)
+  if type(value) ~= "table"
+    or not is_valid_resource_rate(value.target)
+    or type(value.recipes) ~= "table"
+    or #value.recipes > 16
+    or not is_valid_resource_rates(value.external_inputs)
+    or not is_valid_resource_rates(value.byproducts)
+    or not is_non_empty_string(value.rounding, 512)
+    or type(value.truncated) ~= "boolean"
+  then
+    return false
+  end
+  for _, recipe in ipairs(value.recipes) do
+    if not is_valid_recipe_summary(recipe) then
+      return false
+    end
+  end
+  return true
+end
+
+local function handle_calculation_response(packet, event)
+  local payload = packet.payload
+  if packet.schema_version ~= STATE_SCHEMA_VERSION
+    or not is_non_negative_integer(packet.timestamp)
+    or not is_non_empty_string(payload.reply_to)
+    or (payload.status ~= "ok" and payload.status ~= "error")
+    or (
+      payload.status == "ok"
+      and (
+        not is_valid_calculation_result(payload.result)
+        or payload.error_code ~= nil
+        or payload.error_message ~= nil
+      )
+    )
+    or (
+      payload.status == "error"
+      and (
+        payload.result ~= nil
+        or not is_non_empty_string(payload.error_code, 128)
+        or not is_non_empty_string(payload.error_message, 1024)
+      )
+    )
+  then
+    return
+  end
+
+  local state = get_state()
+  state.connected = true
+  state.last_response_tick = event.tick
+  local player_index =
+    ui_state.complete_calculation(state, payload.reply_to, payload)
+  if player_index ~= nil then
+    local player = game.get_player(player_index)
+    if player ~= nil then
+      ui.render(
+        player,
+        state,
+        ui_state.ensure_player(state, player_index)
+      )
+    end
+  end
+end
+
 local function handle_udp_packet(event)
   if event.source_port ~= get_companion_port() then
     return
@@ -776,11 +1048,16 @@ local function handle_udp_packet(event)
     handle_resync_request(packet, event)
   elseif packet.type == "advisor_update" then
     handle_advisor_update(packet, event)
+  elseif packet.type == "assistant_response" then
+    handle_assistant_response(packet, event)
+  elseif packet.type == "calculation_response" then
+    handle_calculation_response(packet, event)
   end
 end
 
 local function update_connection_status()
   local state = get_state()
+  local connection_changed = false
   cleanup_pending(state)
 
   if state.connected
@@ -788,13 +1065,35 @@ local function update_connection_status()
     and game.tick - state.last_response_tick > CONNECTION_TIMEOUT_TICKS
   then
     state.connected = false
+    connection_changed = true
   end
 
-  refresh_all_ui()
+  local expired = ui_state.expire_requests(
+    state,
+    game.tick,
+    UI_REQUEST_TIMEOUT_TICKS
+  )
+  for _, player_index in ipairs(expired) do
+    local player = game.get_player(player_index)
+    if player ~= nil then
+      ui.render(
+        player,
+        state,
+        ui_state.ensure_player(state, player_index)
+      )
+    end
+  end
+  ui.expire_toasts(state, game.tick)
+  if connection_changed then
+    refresh_all_ui()
+  else
+    refresh_all_status()
+  end
 end
 
 local function initialize_player(player)
-  ensure_button(player)
+  ui.ensure_button(player)
+  ui_state.ensure_player(get_state(), player.index)
   refresh_player_ui(player)
 end
 
@@ -911,6 +1210,69 @@ script.on_event({
   defines.events.on_player_changed_force,
 }, handle_force_context_change)
 
+local QUICK_QUESTIONS = {
+  ["zh-CN"] = {
+    ["quick-1-question"] = "当前最大的生产瓶颈是什么？",
+    ["quick-2-question"] = "下一步应该优先扩建什么？",
+    ["quick-3-question"] = "当前电力和科研状态怎么样？",
+  },
+  en = {
+    ["quick-1-question"] = "What is the largest production bottleneck?",
+    ["quick-2-question"] = "What should I expand next?",
+    ["quick-3-question"] = "How are power and research doing?",
+  },
+}
+
+local function quick_question(player, key)
+  local language =
+    type(player.locale) == "string"
+      and string.sub(player.locale, 1, 2) == "zh"
+      and "zh-CN"
+    or "en"
+  return QUICK_QUESTIONS[language][key]
+end
+
+local function set_rule_muted(player, rule_id, muted)
+  if not ADVISOR_RULE_IDS[rule_id] then
+    return
+  end
+  local muted_rules = {}
+  local seen = {}
+  local current =
+    settings.global["factorio-ai-assistant-advisor-muted-rules"].value
+  for existing in string.gmatch(current, "[^,%s]+") do
+    if ADVISOR_RULE_IDS[existing] and not seen[existing] then
+      table.insert(muted_rules, existing)
+      seen[existing] = true
+    end
+  end
+  if muted and not seen[rule_id] then
+    table.insert(muted_rules, rule_id)
+  elseif not muted and seen[rule_id] then
+    for index = #muted_rules, 1, -1 do
+      if muted_rules[index] == rule_id then
+        table.remove(muted_rules, index)
+      end
+    end
+  end
+  table.sort(muted_rules)
+
+  local success, error_message = pcall(function()
+    settings.global[
+      "factorio-ai-assistant-advisor-muted-rules"
+    ] = { value = table.concat(muted_rules, ",") }
+  end)
+  if not success then
+    player.print({
+      "factorio-ai-assistant.setting-update-failed",
+      tostring(error_message),
+    })
+    return
+  end
+  send_hello()
+  refresh_all_ui()
+end
+
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not element.valid then
@@ -922,21 +1284,320 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
-  if element.name == BUTTON_NAME then
-    local frame = mod_gui.get_frame_flow(player)[PANEL_NAME]
-    if frame then
-      frame.destroy()
-    else
-      open_panel(player)
-    end
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  if element.name == ui.BUTTON_NAME then
+    ui.toggle(player, state, player_state)
     return
   end
 
-  if element.name == PING_BUTTON_NAME then
+  local tags = element.tags or {}
+  local action = tags.action
+  if action == "close" then
+    ui.close(player)
+  elseif action == "resize" then
+    ui.save_location(player, player_state)
+    ui_state.cycle_size(player_state)
+    ui.render(player, state, player_state)
+  elseif action == "tab" then
+    if ui_state.set_tab(player_state, tags.tab) then
+      ui.render(player, state, player_state)
+      if tags.tab == "chat" then
+        ui.focus_chat_input(player)
+      end
+    end
+  elseif action == "open-alerts" then
+    local toast = player.gui.screen["factorio-ai-assistant-toast"]
+    if toast ~= nil then
+      toast.destroy()
+    end
+    ui_state.set_tab(player_state, "alerts")
+    ui.open(player, state, player_state)
+  elseif action == "quick-question" then
+    local question = quick_question(player, tags.question_key)
+    if question ~= nil then
+      send_chat_request(player, question)
+    end
+  elseif action == "send-chat" then
+    send_chat_request(player, ui.read_chat_input(player))
+  elseif action == "cancel-chat" then
+    cancel_chat_request(player)
+  elseif action == "calculate" then
+    send_calculation_request(player)
+  elseif action == "mute-rule" then
+    set_rule_muted(player, tags.rule_id, true)
+  elseif action == "unmute-rule" then
+    set_rule_muted(player, tags.rule_id, false)
+  elseif action == "reconnect" then
     send_hello()
-    refresh_player_ui(player)
+    ui.render(player, state, player_state)
   end
 end)
+
+script.on_event(defines.events.on_gui_confirmed, function(event)
+  local element = event.element
+  if element == nil or not element.valid then
+    return
+  end
+  local player = game.get_player(event.player_index)
+  if player == nil then
+    return
+  end
+  if element.name == ui.CHAT_INPUT_NAME then
+    send_chat_request(player, element.text)
+  elseif element.name == ui.CALCULATOR_TARGET_NAME
+    or element.name == ui.CALCULATOR_RATE_NAME
+    or element.name == ui.CALCULATOR_MACHINE_NAME
+    or element.name == ui.CALCULATOR_MODULES_NAME
+  then
+    send_calculation_request(player)
+  end
+end)
+
+script.on_event(defines.events.on_gui_text_changed, function(event)
+  local element = event.element
+  if element == nil or not element.valid then
+    return
+  end
+  local fields = {
+    [ui.CALCULATOR_TARGET_NAME] = "target_id",
+    [ui.CALCULATOR_RATE_NAME] = "rate_per_minute",
+    [ui.CALCULATOR_MACHINE_NAME] = "machine_id",
+    [ui.CALCULATOR_MODULES_NAME] = "module_ids",
+  }
+  local field = fields[element.name]
+  if field ~= nil then
+    local state = get_state()
+    local player_state = ui_state.ensure_player(state, event.player_index)
+    ui_state.update_calculator_input(player_state, field, element.text)
+  end
+end)
+
+script.on_event(defines.events.on_gui_selection_state_changed, function(event)
+  local element = event.element
+  if element == nil
+    or not element.valid
+    or element.name ~= ui.CALCULATOR_KIND_NAME
+  then
+    return
+  end
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, event.player_index)
+  ui_state.update_calculator_input(
+    player_state,
+    "target_kind",
+    element.selected_index == 2 and "fluid" or "item"
+  )
+end)
+
+script.on_event(defines.events.on_gui_location_changed, function(event)
+  local element = event.element
+  if element == nil
+    or not element.valid
+    or element.name ~= ui.PANEL_NAME
+  then
+    return
+  end
+  local player = game.get_player(event.player_index)
+  if player ~= nil then
+    local state = get_state()
+    ui.save_location(
+      player,
+      ui_state.ensure_player(state, event.player_index)
+    )
+  end
+end)
+
+script.on_event(defines.events.on_gui_closed, function(event)
+  if event.element ~= nil
+    and event.element.valid
+    and event.element.name == ui.PANEL_NAME
+  then
+    local player = game.get_player(event.player_index)
+    if player ~= nil then
+      ui.close(player)
+    end
+  end
+end)
+
+script.on_event("factorio-ai-assistant-toggle-input", function(event)
+  local player = game.get_player(event.player_index)
+  if player ~= nil then
+    local state = get_state()
+    ui.toggle(
+      player,
+      state,
+      ui_state.ensure_player(state, event.player_index)
+    )
+  end
+end)
+
+for index, tab in ipairs({ "chat", "calculator", "alerts", "status" }) do
+  local tab_name = tab
+  script.on_event("factorio-ai-assistant-tab-" .. index, function(event)
+    local player = game.get_player(event.player_index)
+    if player ~= nil then
+      local state = get_state()
+      local player_state =
+        ui_state.ensure_player(state, event.player_index)
+      ui_state.set_tab(player_state, tab_name)
+      ui.open(player, state, player_state)
+      if tab_name == "chat" then
+        ui.focus_chat_input(player)
+      end
+    end
+  end)
+end
+
+local function copy_table(value)
+  if type(value) ~= "table" then
+    return value
+  end
+  local result = {}
+  for key, child in pairs(value) do
+    result[copy_table(key)] = copy_table(child)
+  end
+  return result
+end
+
+local function apply_ui_mock(player, mode)
+  local state = get_state()
+  if mode == "clear" then
+    local backup = state.ui_mock_backup
+    if backup ~= nil then
+      state.connected = backup.connected
+      state.last_response_tick = backup.last_response_tick
+      state.last_sync_tick = backup.last_sync_tick
+      state.companion_version = backup.companion_version
+      state.assistant_status = backup.assistant_status
+      state.static_revision = backup.static_revision
+      state.advisor_alerts = backup.advisor_alerts
+      state.ui_mock_backup = nil
+    end
+    local player_state = ui_state.reset_player(state, player.index)
+    ui.open(player, state, player_state)
+    send_hello()
+    return
+  end
+
+  if state.ui_mock_backup == nil then
+    state.ui_mock_backup = {
+      connected = state.connected,
+      last_response_tick = state.last_response_tick,
+      last_sync_tick = state.last_sync_tick,
+      companion_version = state.companion_version,
+      assistant_status = copy_table(state.assistant_status),
+      static_revision = state.static_revision,
+      advisor_alerts = copy_table(state.advisor_alerts),
+    }
+  end
+
+  local player_state = ui_state.reset_player(state, player.index)
+  state.companion_version = "mock-0.2.0"
+  state.static_revision = 7
+  state.last_response_tick = game.tick - 120
+  state.last_sync_tick = game.tick - 300
+  state.assistant_status = {
+    mode = "local",
+    provider = "local",
+    reason = "mock",
+    privacy = "local-only",
+  }
+  state.advisor_alerts = {}
+
+  if mode == "offline" then
+    state.connected = false
+    state.assistant_status = nil
+  elseif mode == "incompatible" then
+    state.connected = true
+    state.assistant_status = nil
+  elseif mode == "loading" then
+    state.connected = true
+    ui_state.append_mock_message(
+      player_state,
+      "user",
+      "当前最大的生产瓶颈是什么？",
+      game.tick
+    )
+    player_state.chat_pending = {
+      message_id = "mock-loading",
+      sent_tick = game.tick,
+    }
+  elseif mode == "timeout" then
+    state.connected = true
+    ui_state.append_system(player_state, "chat-timeout", game.tick)
+    ui_state.set_calculation_error(player_state, "TIMEOUT", nil)
+  elseif mode == "ready" then
+    state.connected = true
+    ui_state.append_mock_message(
+      player_state,
+      "user",
+      "45 蓝瓶每分钟需要多少机器？",
+      game.tick - 180
+    )
+    ui_state.append_mock_message(
+      player_state,
+      "assistant",
+      "目标 45/min；需要 9 台组装机 2。假设：无插件，机器数向上取整。",
+      game.tick - 120
+    )
+    player_state.calculator.result = {
+      target = {
+        kind = "item",
+        id = "chemical-science-pack",
+        per_minute = 45,
+      },
+      recipes = {
+        {
+          recipe_id = "chemical-science-pack",
+          machine_id = "assembling-machine-2",
+          machines_exact = 9,
+          machines_rounded_up = 9,
+          module_ids = {},
+        },
+      },
+      external_inputs = {
+        {
+          kind = "item",
+          id = "engine-unit",
+          per_minute = 45,
+        },
+      },
+      byproducts = {},
+      rounding = "精确数量与向上取整后的建造数量同时显示。",
+      truncated = false,
+    }
+    state.advisor_alerts["power-low:" .. player.force.name] = {
+      id = "power-low:" .. player.force.name,
+      rule_id = "power-low",
+      force_id = player.force.name,
+      severity = "warning",
+      evidence = "电力满足率为 78%（发电 62 MW，用电 80 MW）。",
+      recommendation = "增加发电或燃料，并检查过载电网。",
+      first_seen = game.tick - 3600,
+      last_seen = game.tick,
+    }
+  else
+    player.print({ "factorio-ai-assistant.mock-invalid-mode" })
+    return
+  end
+
+  ui.open(player, state, player_state)
+end
+
+commands.add_command(
+  "factorio-ai-assistant-mock",
+  { "factorio-ai-assistant.mock-command-help" },
+  function(command)
+    local player = command.player_index
+      and game.get_player(command.player_index)
+    if player == nil then
+      log("[factorio-ai-assistant] UI mock command requires a player")
+      return
+    end
+    apply_ui_mock(player, trim(command.parameter or "ready"))
+  end
+)
 
 local function run_periodic_network_tasks()
   send_hello()

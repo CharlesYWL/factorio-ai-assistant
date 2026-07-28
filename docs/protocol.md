@@ -24,7 +24,9 @@ TypeScript 权威编解码器位于 `packages/protocol/`，Factorio Mod 在
 | `payload` | object | 类型对应负载 | 每条消息 | 见下表 |
 
 状态消息类型为 `static_snapshot`、`static_delta`、`dynamic_snapshot`、
-`state_ack`、`resync_request` 和 `advisor_update`。连接心跳继续使用
+`state_ack`、`resync_request` 和 `advisor_update`。UI 使用
+`assistant_request` / `assistant_cancel` / `assistant_response` 与
+`calculation_request` / `calculation_response`。连接心跳继续使用
 `hello` / `hello_ack`。
 
 ## 连接与静态状态同步
@@ -95,7 +97,13 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
     "reply_to": "factorio-hello-600-2",
     "companion_version": "0.1.0",
     "static_revision": 3,
-    "sampling_interval_ticks": 300
+    "sampling_interval_ticks": 300,
+    "assistant_status": {
+      "mode": "local",
+      "provider": "local",
+      "reason": "deterministic rules and calculator only",
+      "privacy": "local-only"
+    }
   }
 }
 ```
@@ -106,10 +114,59 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
 | `payload.companion_version` | Companion 常量 | 每次应答 | 应用标识 |
 | `payload.static_revision` | Companion 内存状态；`0` 表示尚无完整快照 | 每次应答 | 协议元数据 |
 | `payload.sampling_interval_ticks` | Companion 本机配置，`60..3600` tick；旧 Companion 可省略 | 每次应答 | 本地配置 |
+| `payload.assistant_status.mode` | `local` / `local-model` / `remote-model` | 每次应答 | 本地配置 |
+| `payload.assistant_status.provider/model` | 当前 provider 和可选模型 ID | 每次应答 | 本地配置 |
+| `payload.assistant_status.privacy` | `local-only` / `remote-provider` | 每次应答 | 隐私声明 |
 
-旧 Companion 可以省略 `static_revision` 和 `sampling_interval_ticks`。新 Mod 会接受
-该响应；无采样字段时继续使用 300 tick，只有携带 revision 的 Companion 才能在重启后
-主动触发完整重同步。
+旧 Companion 可以省略新增字段。新 Mod 会接受心跳，但缺少 `assistant_status` 时 UI
+明确显示协议不兼容，不会发送聊天或计算请求；无采样字段时继续使用 300 tick。
+
+## 游戏内 UI 请求
+
+所有 UI 请求都携带 `schema_version: 2`，使用原请求 `message_id` 做响应关联。Companion
+按远端地址、端口和消息 ID 幂等缓存响应；同 ID 不同内容会拒绝。
+
+### Chat
+
+```json
+{
+  "protocol_version": 1,
+  "schema_version": 2,
+  "message_id": "factorio-assistant-900-4",
+  "type": "assistant_request",
+  "tick": 900,
+  "payload": {
+    "force_id": "player",
+    "question": "当前最大的生产瓶颈是什么？"
+  }
+}
+```
+
+`question` 最多 2000 字符 / 4096 UTF-8 bytes。`assistant_response.payload.status` 为
+`ok`、`cancelled` 或 `error`；成功时返回 `mode`（`model` / `local`）、`text` 和可选
+provider / model / fallback 原因。取消包只携带目标 `request_id`：
+
+```json
+{
+  "protocol_version": 1,
+  "schema_version": 2,
+  "message_id": "factorio-cancel-901-5",
+  "type": "assistant_cancel",
+  "tick": 901,
+  "payload": { "request_id": "factorio-assistant-900-4" }
+}
+```
+
+### Calculator
+
+`calculation_request` 只表达轻量面板的输入：force、目标 kind / ID、每分钟产量，以及只
+应用于目标配方的可选 machine ID 和最多 16 个 module ID。Companion 从已同步的静态
+状态补齐可用配方、机器和科技产能加成。
+
+成功的 `calculation_response` 返回目标、最多 16 条配方摘要、外部输入、副产物、取整
+假设和 `truncated` 标记；配方摘要包含 machine ID、精确机器数、向上取整机器数与插件。
+失败时返回稳定 `error_code` 和诊断文本。Mod 根据 error code 使用当前 locale 显示，
+避免把 Companion 的英文内部诊断当成中文界面文案。
 
 ## `static_snapshot`
 
