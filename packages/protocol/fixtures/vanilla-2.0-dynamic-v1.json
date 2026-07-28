@@ -1,0 +1,47 @@
+{
+  "protocol_version": 1,
+  "schema_version": 1,
+  "message_id": "factorio-dynamic-3900-1",
+  "type": "dynamic_snapshot",
+  "tick": 3900,
+  "payload": {
+    "sample_interval_ticks": 300,
+    "sample_sequence": 1,
+    "truncated": false,
+    "omitted_forces": 0,
+    "omitted_series": 0,
+    "forces": [
+      {
+        "id": "player",
+        "research": {
+          "technology_id": "automation-2",
+          "progress": 0.42
+        },
+        "items": [
+          {
+            "id": "iron-plate",
+            "produced_per_minute_1m": 900,
+            "consumed_per_minute_1m": 720,
+            "produced_per_minute_10m": 840,
+            "consumed_per_minute_10m": 690
+          }
+        ],
+        "fluids": [
+          {
+            "id": "water",
+            "produced_per_minute_1m": 7200,
+            "consumed_per_minute_1m": 6900,
+            "produced_per_minute_10m": 7000,
+            "consumed_per_minute_10m": 6800
+          }
+        ],
+        "power": {
+          "network_count": 1,
+          "generated_watts": 5400000,
+          "consumed_watts": 4860000,
+          "satisfaction_ratio": 1
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "protocol_version": 1,
+  "schema_version": 1,
+  "message_id": "factorio-static-3600-1",
+  "type": "static_snapshot",
+  "tick": 3600,
+  "payload": {
+    "snapshot_id": "static-3600-1",
+    "revision": 1,
+    "chunk_index": 0,
+    "chunk_count": 1,
+    "truncated": false,
+    "omitted_records": 0,
+    "game": {
+      "version": "2.0.72",
+      "mods": [
+        {
+          "id": "base",
+          "version": "2.0.72"
+        },
+        {
+          "id": "factorio-ai-assistant",
+          "version": "0.1.0"
+        }
+      ]
+    },
+    "forces": [
+      {
+        "id": "player",
+        "researched_technologies": [
+          "automation",
+          "logistics"
+        ],
+        "available_recipes": [
+          "copper-cable",
+          "iron-gear-wheel",
+          "iron-plate"
+        ]
+      }
+    ],
+    "recipes": [
+      {
+        "id": "copper-cable",
+        "category": "crafting",
+        "energy_seconds": 0.5,
+        "ingredients": [
+          {
+            "kind": "item",
+            "id": "copper-plate",
+            "amount": 1
+          }
+        ],
+        "products": [
+          {
+            "kind": "item",
+            "id": "copper-cable",
+            "amount": 2
+          }
+        ]
+      },
+      {
+        "id": "iron-gear-wheel",
+        "category": "crafting",
+        "energy_seconds": 0.5,
+        "ingredients": [
+          {
+            "kind": "item",
+            "id": "iron-plate",
+            "amount": 2
+          }
+        ],
+        "products": [
+          {
+            "kind": "item",
+            "id": "iron-gear-wheel",
+            "amount": 1
+          }
+        ]
+      },
+      {
+        "id": "iron-plate",
+        "category": "smelting",
+        "energy_seconds": 3.2,
+        "ingredients": [
+          {
+            "kind": "item",
+            "id": "iron-ore",
+            "amount": 1
+          }
+        ],
+        "products": [
+          {
+            "kind": "item",
+            "id": "iron-plate",
+            "amount": 1
+          }
+        ]
+      }
+    ],
+    "machines": [
+      {
+        "id": "assembling-machine-1",
+        "kind": "assembling-machine",
+        "crafting_speed": 0.5,
+        "crafting_categories": [
+          "advanced-crafting",
+          "basic-crafting",
+          "crafting"
+        ],
+        "module_slots": 0
+      },
+      {
+        "id": "stone-furnace",
+        "kind": "furnace",
+        "crafting_speed": 1,
+        "crafting_categories": [
+          "smelting"
+        ],
+        "module_slots": 0
+      }
+    ]
+  }
+}

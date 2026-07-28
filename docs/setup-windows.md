@@ -80,6 +80,9 @@ npm start
    **Connected**，同时更新 **Last response**。
 5. 点击 **Send hello** 可立即重试。Mod 也会每 5 秒自动发送一次心跳；10 秒没有
    有效响应会回到 **Disconnected**。
+6. 首次连接后，Companion 日志会出现 `Accepted static snapshot ...`；Factorio 的
+   `factorio-current.log` 会记录首个动态样本的 interval、耗时、byte 数和裁剪计数，
+   之后约每分钟记录一次。
 
 ## 排错
 
@@ -99,6 +102,8 @@ npm start
   `hello_ack`。
 - [x] Companion 监听地址断言为 `127.0.0.1`。
 - [x] 协议正常包、损坏包和未知版本单元测试。
+- [x] Vanilla 2.0 静态 / 动态 fixture、未知字段兼容和错误字段拒绝测试。
+- [x] 静态 chunk 组装、delta revision、确认和重同步单元测试。
 - [ ] Windows Steam Factorio 2.0 实机：按钮和面板正确渲染。
 - [ ] Windows Steam Factorio 2.0 实机：`Disconnected → Connected`、超时断开及
   Companion 重启恢复。

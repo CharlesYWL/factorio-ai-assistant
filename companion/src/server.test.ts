@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createSocket, type RemoteInfo, type Socket } from "node:dgram";
+import { readFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
@@ -65,6 +66,63 @@ void test(
     if (acknowledgement.type === "hello_ack") {
       assert.equal(acknowledgement.payload.reply_to, hello.message_id);
       assert.equal(acknowledgement.payload.companion_version, "0.1.0");
+      assert.equal(acknowledgement.payload.static_revision, 0);
+    }
+  },
+);
+
+void test(
+  "ingests a static snapshot, acknowledges it, and advertises its revision",
+  { timeout: 3_000 },
+  async (context) => {
+    const companion = await startCompanionServer({
+      port: 0,
+      logger: silentLogger,
+    });
+    const factorio = createSocket("udp4");
+
+    context.after(async () => {
+      await closeSocket(factorio);
+      await companion.close();
+    });
+
+    await bindSocket(factorio);
+    const staticPacket = await readFile(
+      new URL(
+        "../../packages/protocol/fixtures/vanilla-2.0-static-v1.json",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const stateAckPromise = receiveOne(factorio);
+    await send(
+      factorio,
+      staticPacket,
+      companion.address.port,
+      companion.address.address,
+    );
+
+    const stateAck = decodePacket((await stateAckPromise).datagram);
+    assert.equal(stateAck.type, "state_ack");
+    assert.equal(companion.state.staticRevision, 1);
+
+    const hello = createHelloPacket({
+      messageId: "factorio-after-static",
+      tick: 4_200,
+      modVersion: "0.1.0",
+    });
+    const helloAckPromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(hello),
+      companion.address.port,
+      companion.address.address,
+    );
+
+    const helloAck = decodePacket((await helloAckPromise).datagram);
+    assert.equal(helloAck.type, "hello_ack");
+    if (helloAck.type === "hello_ack") {
+      assert.equal(helloAck.payload.static_revision, 1);
     }
   },
 );
