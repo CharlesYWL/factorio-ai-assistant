@@ -244,7 +244,10 @@ function buildMessages(request: ProviderRequest): {
           "already-executed, read-only calculator/advisor tool results; never simulate a " +
           "missing tool call. Treat tool facts and calculation numbers as authoritative, " +
           "and clearly distinguish facts, calculations, inference, assumptions, and " +
-          "missing data. Return at most one concise inference paragraph, cite supplied " +
+          "missing data. Prototype IDs are stable protocol keys: when localized_names " +
+          "supplies a display name for a kind:id key, use that name in the answer instead " +
+          "of the raw ID, and fall back to the ID when no name is supplied. " +
+          "Return at most one concise inference paragraph, cite supplied " +
           "evidence IDs such as [C1] or [A1], do not repeat any numbers, and do not output " +
           "an ordered action list because the companion appends all authoritative numbers " +
           "and at most three grounded actions. Do not invent game state, output executable " +

@@ -21,6 +21,15 @@ export const ASSISTANT_RESPONSE_STATUSES = ["ok", "cancelled", "error"] as const
 export const CALCULATION_RESPONSE_STATUSES = ["ok", "error"] as const;
 export const RESOURCE_KINDS = ["item", "fluid"] as const;
 export const PRIVACY_MODES = ["local-only", "remote-provider"] as const;
+export const LOCALIZED_NAME_KINDS = [
+  "item",
+  "fluid",
+  "recipe",
+  "technology",
+  "machine",
+] as const;
+export const MAX_LOCALIZED_NAMES_PER_PACKET = 256;
+export const MAX_LOCALIZED_NAME_CHARACTERS = 128;
 
 export type AdvisorRuleId = (typeof ADVISOR_RULE_IDS)[number];
 export type AdvisorSeverity = (typeof ADVISOR_SEVERITIES)[number];
@@ -33,6 +42,7 @@ export type CalculationResponseStatus =
   (typeof CALCULATION_RESPONSE_STATUSES)[number];
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 export type PrivacyMode = (typeof PRIVACY_MODES)[number];
+export type LocalizedNameKind = (typeof LOCALIZED_NAME_KINDS)[number];
 
 export interface AdvisorConfig {
   quiet_mode: boolean;
@@ -134,6 +144,7 @@ export interface HelloAckPacket {
     static_revision?: number;
     sampling_interval_ticks?: number;
     assistant_status?: CompanionAssistantStatus;
+    localized_name_count?: number;
   };
 }
 
@@ -448,6 +459,27 @@ export interface CalculationResponsePacket {
   payload: CalculationResponsePayload;
 }
 
+export interface LocalizedNameEntry {
+  kind: LocalizedNameKind;
+  id: string;
+  name: string;
+}
+
+export interface LocalizationUpdatePayload {
+  locale: string;
+  reset: boolean;
+  names: LocalizedNameEntry[];
+}
+
+export interface LocalizationUpdatePacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "localization_update";
+  tick: number;
+  payload: LocalizationUpdatePayload;
+}
+
 export type ProtocolPacket =
   | HelloPacket
   | HelloAckPacket
@@ -461,7 +493,8 @@ export type ProtocolPacket =
   | AssistantCancelPacket
   | AssistantResponsePacket
   | CalculationRequestPacket
-  | CalculationResponsePacket;
+  | CalculationResponsePacket
+  | LocalizationUpdatePacket;
 
 interface HelloPacketInput {
   messageId: string;
@@ -478,6 +511,7 @@ interface HelloAckPacketInput {
   staticRevision?: number;
   samplingIntervalTicks?: number;
   assistantStatus?: CompanionAssistantStatus;
+  localizedNameCount?: number;
 }
 
 interface StateAckPacketInput {
@@ -535,6 +569,14 @@ interface CalculationResponsePacketInput extends CalculationResponsePayload {
   timestamp: number;
 }
 
+interface LocalizationUpdatePacketInput {
+  messageId: string;
+  tick: number;
+  locale: string;
+  reset: boolean;
+  names: LocalizedNameEntry[];
+}
+
 export function createHelloPacket(input: HelloPacketInput): HelloPacket {
   return {
     protocol_version: PROTOCOL_VERSION,
@@ -568,6 +610,9 @@ export function createHelloAckPacket(input: HelloAckPacketInput): HelloAckPacket
       ...(input.assistantStatus === undefined
         ? {}
         : { assistant_status: input.assistantStatus }),
+      ...(input.localizedNameCount === undefined
+        ? {}
+        : { localized_name_count: input.localizedNameCount }),
     },
   };
 }
@@ -721,6 +766,23 @@ export function createCalculationResponsePacket(
   };
 }
 
+export function createLocalizationUpdatePacket(
+  input: LocalizationUpdatePacketInput,
+): LocalizationUpdatePacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "localization_update",
+    tick: input.tick,
+    payload: {
+      locale: input.locale,
+      reset: input.reset,
+      names: input.names.map((entry) => ({ ...entry })),
+    },
+  };
+}
+
 export function encodePacket(packet: ProtocolPacket): string {
   let encoded: string;
 
@@ -796,6 +858,8 @@ export function decodePacket(input: string | Uint8Array): ProtocolPacket {
       return decodeCalculationRequest(packet, payload, messageId);
     case "calculation_response":
       return decodeCalculationResponse(packet, payload, messageId);
+    case "localization_update":
+      return decodeLocalizationUpdate(packet, payload, messageId);
     default:
       throw new ProtocolError("UNSUPPORTED_TYPE", `Unsupported message type "${type}"`);
   }
@@ -846,6 +910,10 @@ function decodeHelloAck(
           payload.assistant_status,
           "payload.assistant_status",
         );
+  const localizedNameCount = readOptionalNonNegativeInteger(
+    payload.localized_name_count,
+    "payload.localized_name_count",
+  );
   if (
     samplingIntervalTicks !== undefined &&
     (samplingIntervalTicks < 60 || samplingIntervalTicks > 3_600)
@@ -873,6 +941,9 @@ function decodeHelloAck(
       ...(assistantStatus === undefined
         ? {}
         : { assistant_status: assistantStatus }),
+      ...(localizedNameCount === undefined
+        ? {}
+        : { localized_name_count: localizedNameCount }),
     },
   };
 }
@@ -1303,6 +1374,60 @@ function decodeCalculationResponse(
       ...(errorCode === undefined ? {} : { error_code: errorCode }),
       ...(errorMessage === undefined ? {} : { error_message: errorMessage }),
     },
+  };
+}
+
+function decodeLocalizationUpdate(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): LocalizationUpdatePacket {
+  readStateSchemaVersion(packet);
+
+  const names = readArray(
+    payload.names,
+    "payload.names",
+    readLocalizedNameEntry,
+    MAX_LOCALIZED_NAMES_PER_PACKET,
+  );
+  const seen = new Set<string>();
+
+  for (const entry of names) {
+    const key = `${entry.kind}:${entry.id}`;
+    if (seen.has(key)) {
+      throw invalidPacket(`payload.names must not repeat ${key}`);
+    }
+    seen.add(key);
+  }
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "localization_update",
+    tick: readNonNegativeInteger(packet.tick, "tick"),
+    payload: {
+      locale: readNonEmptyString(payload.locale, "payload.locale", 32),
+      reset: readBoolean(payload.reset, "payload.reset"),
+      names,
+    },
+  };
+}
+
+function readLocalizedNameEntry(
+  value: unknown,
+  path: string,
+): LocalizedNameEntry {
+  const record = readRecord(value, path);
+
+  return {
+    kind: readEnum(record.kind, `${path}.kind`, LOCALIZED_NAME_KINDS),
+    id: readNonEmptyString(record.id, `${path}.id`),
+    name: readNonEmptyString(
+      record.name,
+      `${path}.name`,
+      MAX_LOCALIZED_NAME_CHARACTERS,
+    ),
   };
 }
 

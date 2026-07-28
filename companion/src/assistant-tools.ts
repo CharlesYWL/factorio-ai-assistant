@@ -10,6 +10,10 @@ import {
   CalculationServiceError,
 } from "./calculation-service.js";
 import type { AssistantLanguage } from "./config.js";
+import {
+  IDENTIFIER_NAMES,
+  type LocalizedNameLookup,
+} from "./localization.js";
 import type { CompanionStateStore } from "./state-store.js";
 
 export type AssistantIntent =
@@ -170,16 +174,19 @@ export class AssistantToolbox {
   readonly #advisor: AdvisorEngine;
   readonly #calculation: CalculationService;
   readonly #language: AssistantLanguage;
+  readonly #names: LocalizedNameLookup;
 
   public constructor(
     stateStore: CompanionStateStore,
     advisor: AdvisorEngine,
     language: AssistantLanguage,
+    names: LocalizedNameLookup = IDENTIFIER_NAMES,
   ) {
     this.#stateStore = stateStore;
     this.#advisor = advisor;
     this.#calculation = new CalculationService(stateStore);
     this.#language = language;
+    this.#names = names;
   }
 
   public ground(
@@ -368,18 +375,28 @@ export class AssistantToolbox {
       calculation.recipes.find(
         ({ recipe_id }) => recipe_id === selectedRecipeId,
       ) ?? calculation.recipes[0];
+    const targetName = this.#names.display(target.kind, target.id);
+    const recipeName =
+      recipe === undefined
+        ? undefined
+        : this.#names.display("recipe", recipe.recipe_id);
+    const machineName =
+      recipe === undefined
+        ? undefined
+        : this.#names.display("machine", recipe.machine_id);
     const evidenceText =
       recipe === undefined
         ? this.#language === "zh-CN"
-          ? `目标 ${target.id} 为 ${formatNumber(target.per_minute)}/min；确定性求解器没有返回目标配方。`
-          : `The ${target.id} target is ${formatNumber(target.per_minute)}/min; the deterministic solver returned no target recipe.`
+          ? `目标 ${targetName} 为 ${formatNumber(target.per_minute)}/min；确定性求解器没有返回目标配方。`
+          : `The ${targetName} target is ${formatNumber(target.per_minute)}/min; the deterministic solver returned no target recipe.`
         : this.#language === "zh-CN"
-          ? `${target.id} ${formatNumber(target.per_minute)}/min：${recipe.recipe_id} 需要 ${formatNumber(recipe.machines.exact)} 台 ${recipe.machine_id}，向上取整为 ${recipe.machines.rounded_up} 台。`
-          : `${target.id} at ${formatNumber(target.per_minute)}/min requires ${formatNumber(recipe.machines.exact)} ${recipe.machine_id} for ${recipe.recipe_id}, rounded up to ${recipe.machines.rounded_up}.`;
+          ? `${targetName} ${formatNumber(target.per_minute)}/min：${recipeName} 需要 ${formatNumber(recipe.machines.exact)} 台 ${machineName}，向上取整为 ${recipe.machines.rounded_up} 台。`
+          : `${targetName} at ${formatNumber(target.per_minute)}/min requires ${formatNumber(recipe.machines.exact)} ${machineName} for ${recipeName}, rounded up to ${recipe.machines.rounded_up}.`;
     const output: Record<string, unknown> = {
       target: {
         kind: target.kind,
         id: target.id,
+        ...(targetName === target.id ? {} : { name: targetName }),
         per_minute: target.per_minute,
       },
       ...(recipe === undefined
@@ -387,7 +404,13 @@ export class AssistantToolbox {
         : {
             target_recipe: {
               recipe_id: recipe.recipe_id,
+              ...(recipeName === recipe.recipe_id
+                ? {}
+                : { recipe_name: recipeName }),
               machine_id: recipe.machine_id,
+              ...(machineName === recipe.machine_id
+                ? {}
+                : { machine_name: machineName }),
               machines_exact: recipe.machines.exact,
               machines_rounded_up: recipe.machines.rounded_up,
             },
@@ -414,8 +437,8 @@ export class AssistantToolbox {
             {
               text:
                 this.#language === "zh-CN"
-                  ? `按满负载上限准备 ${recipe.machines.rounded_up} 台 ${recipe.machine_id}；若允许非满负载，精确需求为 ${formatNumber(recipe.machines.exact)} 台。`
-                  : `Plan for ${recipe.machines.rounded_up} ${recipe.machine_id} at full-load capacity; the exact fractional requirement is ${formatNumber(recipe.machines.exact)}.`,
+                  ? `按满负载上限准备 ${recipe.machines.rounded_up} 台 ${machineName}；若允许非满负载，精确需求为 ${formatNumber(recipe.machines.exact)} 台。`
+                  : `Plan for ${recipe.machines.rounded_up} ${machineName} at full-load capacity; the exact fractional requirement is ${formatNumber(recipe.machines.exact)}.`,
               evidence_id: "C1",
             },
           ];

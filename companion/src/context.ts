@@ -3,15 +3,22 @@ import type {
   AdvisorAlert,
   DynamicForceSummary,
   FlowMetric,
+  LocalizedNameKind,
 } from "@factorio-ai-assistant/protocol";
 
 import type { StaticState } from "./state-store.js";
 import type { AssistantToolModelContext } from "./assistant-tools.js";
+import {
+  IDENTIFIER_NAMES,
+  localizedNameKey,
+  type LocalizedNameLookup,
+} from "./localization.js";
 
 const MAX_TECHNOLOGIES = 64;
 const MAX_FLOWS = 16;
 const MAX_ALERTS = 3;
 const MAX_CALCULATION_RECIPES = 32;
+const MAX_LOCALIZED_CONTEXT_NAMES = 96;
 
 export interface ContextSources {
   staticState?: StaticState;
@@ -19,6 +26,7 @@ export interface ContextSources {
   alerts?: AdvisorAlert[];
   calculation?: ProductionResult;
   toolContext?: AssistantToolModelContext;
+  names?: LocalizedNameLookup;
 }
 
 export type CompactModelContext = Record<string, unknown>;
@@ -141,6 +149,8 @@ export function buildCompactContext(
     appendCalculation(context, sources.calculation, budgetBytes, omitted);
   }
 
+  appendLocalizedNames(context, sources, budgetBytes, omitted);
+
   if (Object.keys(omitted).length > 0) {
     const withOmitted = { ...context, omitted };
     if (encodedLength(withOmitted) <= budgetBytes) {
@@ -154,6 +164,96 @@ export function buildCompactContext(
     );
   }
   return context;
+}
+
+/**
+ * Append the display names for identifiers that survived into the context. The
+ * identifier stays the key the model must reason with; the name is only used so
+ * the answer can address the player in the game language.
+ */
+function appendLocalizedNames(
+  context: CompactModelContext,
+  sources: ContextSources,
+  budgetBytes: number,
+  omitted: Record<string, number>,
+): void {
+  const names = sources.names ?? IDENTIFIER_NAMES;
+  if (names.locale === undefined) {
+    return;
+  }
+
+  const serialized = JSON.stringify(context);
+  const localized: Record<string, string> = {};
+  let candidates = 0;
+
+  for (const [kind, id] of collectNameReferences(sources)) {
+    const key = localizedNameKey(kind, id);
+    if (key in localized || !serialized.includes(JSON.stringify(id))) {
+      continue;
+    }
+    const name = names.lookup(kind, id);
+    if (name === undefined || name === id) {
+      continue;
+    }
+    candidates += 1;
+    if (candidates > MAX_LOCALIZED_CONTEXT_NAMES) {
+      omitted.localized_names = (omitted.localized_names ?? 0) + 1;
+      continue;
+    }
+    localized[key] = name;
+  }
+
+  if (Object.keys(localized).length === 0) {
+    return;
+  }
+
+  context.localized_names = {};
+  const target = context.localized_names as Record<string, string>;
+  for (const [key, name] of Object.entries(localized)) {
+    target[key] = name;
+    if (encodedLength(context) > budgetBytes) {
+      delete target[key];
+      omitted.localized_names = (omitted.localized_names ?? 0) + 1;
+    }
+  }
+
+  if (Object.keys(target).length === 0) {
+    delete context.localized_names;
+  }
+}
+
+function* collectNameReferences(
+  sources: ContextSources,
+): Generator<readonly [LocalizedNameKind, string]> {
+  const force = sources.dynamicForce;
+
+  if (force?.research != null) {
+    yield ["technology", force.research.technology_id];
+  }
+  for (const flow of force?.items ?? []) {
+    yield ["item", flow.id];
+  }
+  for (const flow of force?.fluids ?? []) {
+    yield ["fluid", flow.id];
+  }
+  for (const staticForce of sources.staticState?.forces ?? []) {
+    for (const technologyId of staticForce.researched_technologies) {
+      yield ["technology", technologyId];
+    }
+  }
+  for (const target of sources.calculation?.targets ?? []) {
+    yield [target.kind, target.id];
+  }
+  for (const recipe of sources.calculation?.recipes ?? []) {
+    yield ["recipe", recipe.recipe_id];
+    yield ["machine", recipe.machine_id];
+  }
+  for (const input of sources.calculation?.external_inputs ?? []) {
+    yield [input.kind, input.id];
+  }
+  for (const byproduct of sources.calculation?.byproducts ?? []) {
+    yield [byproduct.kind, byproduct.id];
+  }
 }
 
 function appendToolContext(

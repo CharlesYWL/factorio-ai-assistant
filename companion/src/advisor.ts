@@ -12,6 +12,11 @@ import {
   type StaticForceDescriptor,
 } from "@factorio-ai-assistant/protocol";
 
+import {
+  IDENTIFIER_NAMES,
+  type LocalizedNameLookup,
+} from "./localization.js";
+
 const KEY_MATERIAL_IDS = [
   "iron-plate",
   "copper-plate",
@@ -54,6 +59,7 @@ interface EvaluationContext {
   staticTruncated: boolean;
   config: AdvisorConfig;
   language: "zh-CN" | "en";
+  names: LocalizedNameLookup;
 }
 
 interface RuleDefinition {
@@ -103,6 +109,7 @@ export class AdvisorEngine {
   readonly #trackers = new Map<string, RuleTracker>();
   #config: AdvisorConfig;
   readonly #language: "zh-CN" | "en";
+  #names: LocalizedNameLookup;
   #lastGlobalNotification: number | undefined;
   #lastTick: number | undefined;
   #lastSequence: number | undefined;
@@ -110,13 +117,23 @@ export class AdvisorEngine {
   public constructor(
     config: AdvisorConfig = DEFAULT_ADVISOR_CONFIG,
     language: "zh-CN" | "en" = "en",
+    names: LocalizedNameLookup = IDENTIFIER_NAMES,
   ) {
     this.#config = copyConfig(config);
     this.#language = language;
+    this.#names = names;
   }
 
   public get config(): AdvisorConfig {
     return copyConfig(this.#config);
+  }
+
+  /**
+   * Attach the synchronized display-name lookup. Alert identifiers are unaffected;
+   * only evidence and recommendation wording changes.
+   */
+  public useLocalizedNames(names: LocalizedNameLookup): void {
+    this.#names = names;
   }
 
   public get activeAlerts(): AdvisorAlert[] {
@@ -171,6 +188,7 @@ export class AdvisorEngine {
           staticTruncated: staticState?.truncated ?? true,
           config: this.#config,
           language: this.#language,
+          names: this.#names,
         });
         this.#applyObservation(key, rule.id, force.id, observation, packet.tick, events);
       }
@@ -463,20 +481,28 @@ function evaluateLubricantZero(
     return false;
   }
 
+  const lubricantName = fluidName(context, "lubricant", "润滑油", "lubricant");
+  const advancedOilName = technologyName(
+    context,
+    "advanced-oil-processing",
+    "高级炼油",
+    "Advanced oil processing",
+  );
+
   return {
     severity: "warning",
     evidence:
       context.language === "zh-CN"
-        ? "已研究高级炼油，但润滑油产量为 " +
+        ? `已研究${advancedOilName}，但${lubricantName}产量为 ` +
           `${formatRate(flow.produced_per_minute_1m)}（1 分钟）和 ` +
           `${formatRate(flow.produced_per_minute_10m)}（10 分钟）。`
-        : "Advanced oil processing is researched, but lubricant production is " +
+        : `${advancedOilName} is researched, but ${lubricantName} production is ` +
           `${formatRate(flow.produced_per_minute_1m)} (1m) and ` +
           `${formatRate(flow.produced_per_minute_10m)} (10m).`,
     recommendation:
       context.language === "zh-CN"
-        ? "将重油接入生产润滑油的化工厂，并检查输出储存。"
-        : "Route heavy oil to a chemical plant making lubricant and verify output storage.",
+        ? `将${fluidName(context, "heavy-oil", "重油", "heavy oil")}接入生产${lubricantName}的化工厂，并检查输出储存。`
+        : `Route ${fluidName(context, "heavy-oil", "重油", "heavy oil")} to a chemical plant making ${lubricantName} and verify output storage.`,
     durationTicks: context.config.lubricant_zero_ticks,
   };
 }
@@ -498,16 +524,18 @@ function evaluateOilImbalance(
   const heavySurplus = netSurplus(heavyOil ?? ZERO_FLOW);
   const lightSurplus = netSurplus(lightOil ?? ZERO_FLOW);
   const gasDeficit = netDeficit(petroleumGas ?? ZERO_FLOW);
+  const heavyName = fluidName(context, "heavy-oil", "重油", "heavy oil");
+  const lightName = fluidName(context, "light-oil", "轻油", "light oil");
+  const gasName = fluidName(
+    context,
+    "petroleum-gas",
+    "石油气",
+    "petroleum gas",
+  );
   const surplus =
     heavySurplus >= lightSurplus
-      ? { id: "heavy oil", rate: heavySurplus }
-      : { id: "light oil", rate: lightSurplus };
-  const surplusName =
-    context.language === "zh-CN"
-      ? surplus.id === "heavy oil"
-        ? "重油"
-        : "轻油"
-      : surplus.id;
+      ? { name: heavyName, rate: heavySurplus }
+      : { name: lightName, rate: lightSurplus };
 
   if (
     surplus.rate < context.config.oil_surplus_min_per_minute ||
@@ -520,14 +548,14 @@ function evaluateOilImbalance(
     severity: "warning",
     evidence:
       context.language === "zh-CN"
-        ? `${surplusName}的 10 分钟净积压为 ${formatRate(surplus.rate)}，` +
-          `同时石油气净缺口为 ${formatRate(gasDeficit)}。`
-        : `${surplus.id} net surplus is ${formatRate(surplus.rate)} over 10m, ` +
-          `while petroleum gas net deficit is ${formatRate(gasDeficit)}.`,
+        ? `${surplus.name}的 10 分钟净积压为 ${formatRate(surplus.rate)}，` +
+          `同时${gasName}净缺口为 ${formatRate(gasDeficit)}。`
+        : `${surplus.name} net surplus is ${formatRate(surplus.rate)} over 10m, ` +
+          `while ${gasName} net deficit is ${formatRate(gasDeficit)}.`,
     recommendation:
       context.language === "zh-CN"
-        ? "平衡裂解：先把多余重油转为轻油，再把轻油转为石油气。"
-        : "Balance cracking: convert surplus heavy oil to light oil, then light oil to petroleum gas.",
+        ? `平衡裂解：先把多余${heavyName}转为${lightName}，再把${lightName}转为${gasName}。`
+        : `Balance cracking: convert surplus ${heavyName} to ${lightName}, then ${lightName} to ${gasName}.`,
     durationTicks: context.config.oil_imbalance_ticks,
   };
 }
@@ -566,20 +594,39 @@ function evaluateRoboticsStalled(
     return false;
   }
 
+  const blueScienceName = itemName(
+    context,
+    "chemical-science-pack",
+    "化学科研包",
+    "chemical science",
+  );
+  const roboticsName = technologyName(
+    context,
+    "robotics",
+    "机器人技术",
+    "robotics",
+  );
+  const constructionRoboticsName = technologyName(
+    context,
+    "construction-robotics",
+    "建设机器人技术",
+    "construction robotics",
+  );
+
   return {
     severity: "info",
     evidence:
       context.language === "zh-CN"
-        ? `化学科研包产量稳定在 ${formatRate(flow.produced_per_minute_1m)}` +
+        ? `${blueScienceName}产量稳定在 ${formatRate(flow.produced_per_minute_1m)}` +
           `（1 分钟）和 ${formatRate(flow.produced_per_minute_10m)}` +
-          "（10 分钟），但尚未研究或开始研究建设机器人技术。"
-        : `Chemical science is stable at ${formatRate(flow.produced_per_minute_1m)} ` +
+          `（10 分钟），但尚未研究或开始研究${constructionRoboticsName}。`
+        : `${blueScienceName} is stable at ${formatRate(flow.produced_per_minute_1m)} ` +
           `(1m) and ${formatRate(flow.produced_per_minute_10m)} (10m), ` +
-          "but construction robotics is neither researched nor in progress.",
+          `but ${constructionRoboticsName} is neither researched nor in progress.`,
     recommendation:
       context.language === "zh-CN"
-        ? "可考虑研究机器人技术和建设机器人技术，以自动化扩建。"
-        : "Consider researching robotics and construction robotics for automated expansion.",
+        ? `可考虑研究${roboticsName}和${constructionRoboticsName}，以自动化扩建。`
+        : `Consider researching ${roboticsName} and ${constructionRoboticsName} for automated expansion.`,
     durationTicks: context.config.science_stable_ticks,
   };
 }
@@ -609,9 +656,9 @@ function evaluateMaterialDeficit(
     .map(
       (flow) =>
         context.language === "zh-CN"
-          ? `${flow.id}：生产 ${formatRate(flow.produced_per_minute_10m)}，` +
+          ? `${context.names.display("item", flow.id)}：生产 ${formatRate(flow.produced_per_minute_10m)}，` +
             `消费 ${formatRate(flow.consumed_per_minute_10m)}`
-          : `${flow.id}: ${formatRate(flow.produced_per_minute_10m)} produced vs ` +
+          : `${context.names.display("item", flow.id)}: ${formatRate(flow.produced_per_minute_10m)} produced vs ` +
             `${formatRate(flow.consumed_per_minute_10m)} consumed`,
     )
     .join("; ");
@@ -657,24 +704,25 @@ function evaluateProductionDecline(
     return context.dynamicTruncated ? undefined : false;
   }
 
+  const crudeName = fluidName(context, "crude-oil", "原油", "crude oil");
   const evidence = [
     ...(crudeDeclining && crudeOil !== undefined
       ? [
           context.language === "zh-CN"
-            ? `原油从 ${formatRate(crudeOil.produced_per_minute_10m)}` +
+            ? `${crudeName}从 ${formatRate(crudeOil.produced_per_minute_10m)}` +
               `（10 分钟）降至 ${formatRate(crudeOil.produced_per_minute_1m)}` +
               "（1 分钟）"
-            : `crude oil fell from ${formatRate(crudeOil.produced_per_minute_10m)} ` +
+            : `${crudeName} fell from ${formatRate(crudeOil.produced_per_minute_10m)} ` +
               `(10m) to ${formatRate(crudeOil.produced_per_minute_1m)} (1m)`,
         ]
       : []),
     ...stoppedMaterials.map(
       (flow) =>
         context.language === "zh-CN"
-          ? `${flow.id} 在 10 分钟产量为 ` +
+          ? `${context.names.display("item", flow.id)} 在 10 分钟产量为 ` +
             `${formatRate(flow.produced_per_minute_10m)} 后，` +
             "1 分钟产量降至 0/min"
-          : `${flow.id} is at 0/min (1m) after ` +
+          : `${context.names.display("item", flow.id)} is at 0/min (1m) after ` +
             `${formatRate(flow.produced_per_minute_10m)} over 10m`,
     ),
   ].join("; ");
@@ -711,6 +759,49 @@ function researchedTechnology(
 
 function findFlow(flows: FlowMetric[], id: string): FlowMetric | undefined {
   return flows.find((flow) => flow.id === id);
+}
+
+/**
+ * Prefer the name translated by the running game; when no translation has been
+ * synchronized yet keep the rule's own wording for the configured language.
+ */
+function fluidName(
+  context: EvaluationContext,
+  id: string,
+  chinese: string,
+  english: string,
+): string {
+  return context.names.display(
+    "fluid",
+    id,
+    context.language === "zh-CN" ? chinese : english,
+  );
+}
+
+function itemName(
+  context: EvaluationContext,
+  id: string,
+  chinese: string,
+  english: string,
+): string {
+  return context.names.display(
+    "item",
+    id,
+    context.language === "zh-CN" ? chinese : english,
+  );
+}
+
+function technologyName(
+  context: EvaluationContext,
+  id: string,
+  chinese: string,
+  english: string,
+): string {
+  return context.names.display(
+    "technology",
+    id,
+    context.language === "zh-CN" ? chinese : english,
+  );
 }
 
 function netSurplus(flow: FlowMetric): number {

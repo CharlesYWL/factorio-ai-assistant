@@ -17,6 +17,7 @@ const [
   serverSource,
   controlSource,
   collectorSource,
+  localizationSource,
   releaseNotes,
 ] = await Promise.all([
   readJson("release.config.json"),
@@ -30,6 +31,7 @@ const [
   readText("companion/src/server.ts"),
   readText("factorio-mod/control.lua"),
   readText("factorio-mod/state_collector.lua"),
+  readText("factorio-mod/localization.lua"),
   readText("docs/releases/v0.1.0-rc.1.md"),
 ]);
 
@@ -84,6 +86,46 @@ assert.equal(
     "Companion version",
   ),
   release.version,
+);
+assert.equal(
+  readNumericConstant(
+    localizationSource,
+    /local PROTOCOL_VERSION = (\d+)/u,
+    "localization protocol",
+  ),
+  release.protocol_version,
+);
+assert.equal(
+  readNumericConstant(
+    localizationSource,
+    /local STATE_SCHEMA_VERSION = (\d+)/u,
+    "localization schema",
+  ),
+  release.state_schema_version,
+);
+assert.equal(
+  readNumericConstant(
+    localizationSource,
+    /local MAX_ENTRIES_PER_PACKET = (\d+)/u,
+    "Mod localization batch size",
+  ),
+  readNumericConstant(
+    protocolSource,
+    /MAX_LOCALIZED_NAMES_PER_PACKET = (\d+)/u,
+    "protocol localization batch size",
+  ),
+);
+assert.equal(
+  readNumericConstant(
+    localizationSource,
+    /local MAX_NAME_CHARACTERS = (\d+)/u,
+    "Mod localized name length",
+  ),
+  readNumericConstant(
+    protocolSource,
+    /MAX_LOCALIZED_NAME_CHARACTERS = (\d+)/u,
+    "protocol localized name length",
+  ),
 );
 assert.equal(modInfo.name, "factorio-ai-assistant");
 assert.equal(modInfo.factorio_version, "2.0");

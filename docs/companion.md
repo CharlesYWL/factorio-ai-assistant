@@ -120,10 +120,24 @@ Assistant 在调用模型前先按问题执行受限的本地工具，模型不�
 - 严重度最高的最多 3 条活动告警；
 - 确定性计算的目标、机器数、机器 / 插件 / 科技假设和外部原料摘要。
 - 已执行只读工具的名称、受限参数、结果、证据 ID、假设与缺失数据。
+- 当前语言下的显示名称映射 `localized_names`（键为 `kind:id`），只包含本次上下文里
+  真正出现且已翻译的 ID，最多 96 条，超出 budget 时逐条丢弃。
 
 地图、坐标、玩家名称、聊天历史、存档、完整 prototype 表和 API Key 都不进入模型
 上下文。system prompt 把问题和 JSON context 标记为不可信数据，明确工具结果优先，
+要求用 `localized_names` 的名称而不是原始 ID 作答（没有名称时回退 ID），
 并禁止 Lua/RCON 或自动修改工厂；返回文本还会经过同样的本地安全与冲突检查。
+
+## 显示名称同步
+
+Mod 用官方 `request_translation` / `on_string_translated` 机制把当前游戏语言的
+prototype 名称通过可选的 `localization_update` 推给 Companion。Companion 缓存最多
+4,096 条，`payload.reset` 时整体重置，语言变化时同样重置，未翻译的 ID 原样显示。
+
+Chat 的事实 / 计算 / 行动正文和 Alerts 证据都优先使用这些名称；ID 保留在结构化工具
+输出（`target_id`、`recipe_id`、`machine_id`）和 Mod 面板的 tooltip 里，便于调试和
+消歧。Companion 语言（`FACTORIO_ASSISTANT_LANGUAGE`）决定句式，游戏 locale 决定
+名称，两者独立。
 
 ## UDP 与日志安全
 

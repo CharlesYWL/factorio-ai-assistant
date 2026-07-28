@@ -16,6 +16,10 @@ import {
   type AssistantGrounding,
 } from "./assistant-tools.js";
 import type { CompanionLogger } from "./logger.js";
+import {
+  IDENTIFIER_NAMES,
+  type LocalizedNameLookup,
+} from "./localization.js";
 import { ProviderExecutor } from "./provider-executor.js";
 import {
   createConfiguredProvider,
@@ -59,6 +63,7 @@ export interface AssistantServiceOptions {
   advisor: AdvisorEngine;
   logger: CompanionLogger;
   provider?: AIProvider;
+  localization?: LocalizedNameLookup;
 }
 
 export class AssistantService {
@@ -69,16 +74,19 @@ export class AssistantService {
   readonly #provider: AIProvider | undefined;
   readonly #executor: ProviderExecutor | undefined;
   readonly #toolbox: AssistantToolbox;
+  readonly #names: LocalizedNameLookup;
 
   public constructor(options: AssistantServiceOptions) {
     this.#config = options.config;
     this.#stateStore = options.stateStore;
     this.#advisor = options.advisor;
     this.#logger = options.logger;
+    this.#names = options.localization ?? IDENTIFIER_NAMES;
     this.#toolbox = new AssistantToolbox(
       options.stateStore,
       options.advisor,
       options.config.language,
+      this.#names,
     );
     this.#provider =
       options.provider ?? createConfiguredProvider(options.config);
@@ -237,6 +245,7 @@ export class AssistantService {
         ? {}
         : { calculation: grounding.calculation }),
       toolContext: toAssistantToolModelContext(grounding),
+      names: this.#names,
     };
   }
 

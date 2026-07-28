@@ -13,6 +13,7 @@ import {
   createAssistantCancelPacket,
   createAssistantRequestPacket,
   createHelloPacket,
+  createLocalizationUpdatePacket,
   decodePacket,
   encodePacket,
   type DynamicSnapshotPacket,
@@ -444,6 +445,73 @@ void test(
       decodePacket((await healthyResponsePromise).datagram).type,
       "hello_ack",
     );
+  },
+);
+
+void test(
+  "accepts localization updates and answers with localized names",
+  { timeout: 3_000 },
+  async (context) => {
+    const companion = await startCompanionServer({
+      port: 0,
+      logger: silentLogger,
+    });
+    const factorio = createSocket("udp4");
+    context.after(async () => {
+      await closeSocket(factorio);
+      await companion.close();
+    });
+    await bindSocket(factorio);
+
+    assert.equal(companion.localization.locale, undefined);
+
+    const update = createLocalizationUpdatePacket({
+      messageId: "factorio-locale-integration",
+      tick: 900,
+      locale: "zh-CN",
+      reset: true,
+      names: [
+        { kind: "item", id: "iron-plate", name: "铁板" },
+        { kind: "fluid", id: "petroleum-gas", name: "石油气" },
+      ],
+    });
+
+    await send(
+      factorio,
+      encodePacket(update),
+      companion.address.port,
+      companion.address.address,
+    );
+
+    // A localization update is fire-and-forget: the Companion must not reply.
+    assert.equal(await receiveWithin(factorio, 100), undefined);
+    assert.equal(companion.localization.locale, "zh-CN");
+    assert.equal(companion.localization.display("item", "iron-plate"), "铁板");
+    assert.equal(
+      companion.localization.display("item", "uranium-ore"),
+      "uranium-ore",
+    );
+
+    const healthyHello = createHelloPacket({
+      messageId: "factorio-after-localization",
+      tick: 960,
+      modVersion: "0.1.0",
+    });
+    const responsePromise = receiveOne(factorio);
+    await send(
+      factorio,
+      encodePacket(healthyHello),
+      companion.address.port,
+      companion.address.address,
+    );
+    const acknowledgement = decodePacket((await responsePromise).datagram);
+    assert.equal(acknowledgement.type, "hello_ack");
+    if (acknowledgement.type === "hello_ack") {
+      // The Mod reconciles its own delivered count against this value, so a
+      // restarted Companion re-receives every name instead of silently
+      // falling back to prototype IDs.
+      assert.equal(acknowledgement.payload.localized_name_count, 2);
+    }
   },
 );
 

@@ -15,6 +15,7 @@ import {
   createCalculationResponsePacket,
   createHelloAckPacket,
   createHelloPacket,
+  createLocalizationUpdatePacket,
   createResyncRequestPacket,
   createStateAckPacket,
   decodePacket,
@@ -108,9 +109,21 @@ void test("encodes state-aware hello acknowledgements", () => {
       reason: "deterministic rules and calculator only",
       privacy: "local-only",
     },
+    localizedNameCount: 42,
   });
 
   assert.deepEqual(decodePacket(new TextEncoder().encode(encodePacket(packet))), packet);
+  assert.equal(packet.payload.localized_name_count, 42);
+
+  const withoutNames = createHelloAckPacket({
+    messageId: "companion-2",
+    replyTo: "factorio-120-1",
+    timestamp: 1_753_680_000_000,
+    companionVersion: "0.1.0",
+  });
+
+  assert.equal(withoutNames.payload.localized_name_count, undefined);
+  assert.deepEqual(decodePacket(encodePacket(withoutNames)), withoutNames);
 });
 
 void test("encodes assistant and calculation UI packets", () => {
@@ -446,8 +459,110 @@ void test("rejects invalid static chunk and delta ordering", async () => {
   expectProtocolError(() => decodePacket(JSON.stringify(fixture)), "INVALID_PACKET");
 });
 
-function expectProtocolError(action: () => void, code: ProtocolErrorCode): void {
-  try {
+void test("encodes and decodes localization updates in both locales", async () => {
+  for (const [locale, fileName] of [
+    ["zh-CN", "vanilla-2.0-localization-zh-CN.json"],
+    ["en", "vanilla-2.0-localization-en.json"],
+  ] as const) {
+    const encoded = await readFile(
+      new URL(fileName, fixtureDirectory),
+      "utf8",
+    );
+    const packet = decodePacket(encoded);
+
+    assert.equal(packet.type, "localization_update");
+    if (packet.type !== "localization_update") {
+      return;
+    }
+    assert.equal(packet.payload.locale, locale);
+    assert.equal(packet.payload.reset, true);
+    assert.ok(
+      Buffer.byteLength(encodePacket(packet), "utf8") <= MAX_PACKET_BYTES,
+    );
+    assert.deepEqual(decodePacket(encodePacket(packet)), packet);
+
+    const ids = new Set(
+      packet.payload.names.map((entry) => `${entry.kind}:${entry.id}`),
+    );
+    for (const key of [
+      "item:iron-plate",
+      "item:copper-plate",
+      "item:steel-plate",
+      "item:electronic-circuit",
+      "item:advanced-circuit",
+      "item:processing-unit",
+      "item:automation-science-pack",
+      "item:logistic-science-pack",
+      "item:military-science-pack",
+      "item:chemical-science-pack",
+      "item:production-science-pack",
+      "item:utility-science-pack",
+      "item:space-science-pack",
+      "fluid:heavy-oil",
+      "fluid:light-oil",
+      "fluid:petroleum-gas",
+      "machine:assembling-machine-2",
+    ]) {
+      assert.ok(ids.has(key), `${fileName} must cover ${key}`);
+    }
+  }
+});
+
+void test("rejects malformed localization updates", () => {
+  const packet = createLocalizationUpdatePacket({
+    messageId: "factorio-locale-1",
+    tick: 60,
+    locale: "zh-CN",
+    reset: false,
+    names: [{ kind: "item", id: "iron-plate", name: "铁板" }],
+  });
+
+  assert.deepEqual(decodePacket(encodePacket(packet)), packet);
+
+  expectProtocolError(
+    () =>
+      decodePacket(
+        JSON.stringify({
+          ...packet,
+          payload: {
+            ...packet.payload,
+            names: [
+              { kind: "item", id: "iron-plate", name: "铁板" },
+              { kind: "item", id: "iron-plate", name: "Iron plate" },
+            ],
+          },
+        }),
+      ),
+    "INVALID_PACKET",
+  );
+
+  expectProtocolError(
+    () =>
+      decodePacket(
+        JSON.stringify({
+          ...packet,
+          payload: {
+            ...packet.payload,
+            names: [{ kind: "surface", id: "nauvis", name: "纳维斯" }],
+          },
+        }),
+      ),
+    "INVALID_PACKET",
+  );
+
+  expectProtocolError(
+    () =>
+      decodePacket(
+        JSON.stringify({
+          ...packet,
+          payload: { ...packet.payload, locale: "" },
+        }),
+      ),
+    "INVALID_PACKET",
+  );
+});
+
+function expectProtocolError(action: () => void, code: ProtocolErrorCode): void {  try {
     action();
     assert.fail(`Expected ProtocolError with code ${code}`);
   } catch (error: unknown) {
