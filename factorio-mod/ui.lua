@@ -103,6 +103,18 @@ local panel_text_width
 local format_number
 local extract_highlights
 local find_element
+local prototype_caption
+local localised_concat
+local localization_summary
+
+local MAX_LOCALISED_PARAMETERS = 19
+local PROTOTYPE_TABLES = {
+  item = "item",
+  fluid = "fluid",
+  recipe = "recipe",
+  technology = "technology",
+  machine = "entity",
+}
 
 function ui.ensure_button(player)
   local button_flow = mod_gui.get_button_flow(player)
@@ -841,9 +853,10 @@ render_calculation_result = function(parent, result, player_state)
     type = "label",
     caption = {
       "factorio-ai-assistant.calculator-result-title",
-      result.target.id,
+      prototype_caption(result.target.kind, result.target.id),
       format_number(result.target.per_minute),
     },
+    tooltip = result.target.id,
   })
   summary.style.font_color = { r = 1, g = 0.75, b = 0.25 }
 
@@ -871,8 +884,16 @@ render_calculation_result = function(parent, result, player_state)
     label.style.font = "default-bold"
   end
   for _, recipe in ipairs(result.recipes) do
-    table_element.add({ type = "label", caption = recipe.recipe_id })
-    table_element.add({ type = "label", caption = recipe.machine_id })
+    table_element.add({
+      type = "label",
+      caption = prototype_caption("recipe", recipe.recipe_id),
+      tooltip = recipe.recipe_id,
+    })
+    table_element.add({
+      type = "label",
+      caption = prototype_caption("machine", recipe.machine_id),
+      tooltip = recipe.machine_id,
+    })
     local exact = table_element.add({
       type = "label",
       caption = format_number(recipe.machines_exact),
@@ -883,12 +904,22 @@ render_calculation_result = function(parent, result, player_state)
       caption = tostring(recipe.machines_rounded_up),
     })
     rounded.style.font_color = { r = 0.4, g = 0.9, b = 0.5 }
-    table_element.add({
+    local module_parts = {}
+    for index, module_id in ipairs(recipe.module_ids) do
+      if index > 1 then
+        table.insert(module_parts, ", ")
+      end
+      table.insert(module_parts, prototype_caption("item", module_id))
+    end
+    local modules = table_element.add({
       type = "label",
-      caption = #recipe.module_ids == 0
+      caption = #module_parts == 0
         and { "factorio-ai-assistant.none" }
-        or table.concat(recipe.module_ids, ", "),
+        or localised_concat(module_parts),
     })
+    if #recipe.module_ids > 0 then
+      modules.tooltip = table.concat(recipe.module_ids, ", ")
+    end
   end
 
   render_resource_rates(
@@ -919,21 +950,76 @@ render_calculation_result = function(parent, result, player_state)
 end
 
 render_resource_rates = function(parent, locale, resources, player_state)
-  local lines = {}
-  for _, resource in ipairs(resources) do
+  local parts = {}
+  for index, resource in ipairs(resources) do
+    if index > 1 then
+      table.insert(parts, "\n")
+    end
+    table.insert(parts, prototype_caption(resource.kind, resource.id))
     table.insert(
-      lines,
-      resource.id .. "  " .. format_number(resource.per_minute) .. "/min"
+      parts,
+      "  " .. format_number(resource.per_minute) .. "/min"
     )
   end
   add_wrapped_label(
     parent,
     {
       "factorio-ai-assistant." .. locale,
-      #lines == 0 and "-" or table.concat(lines, "\n"),
+      #parts == 0 and "-" or localised_concat(parts),
     },
     panel_text_width(player_state)
   )
+end
+
+--- LocalisedString for a prototype so the panel follows the player's game language;
+--- the identifier stays available as the tooltip and as the fallback caption.
+prototype_caption = function(kind, id)
+  local collection = PROTOTYPE_TABLES[kind]
+  if collection == nil then
+    return id
+  end
+
+  local prototype = prototypes[collection][id]
+  if prototype == nil then
+    return id
+  end
+
+  return prototype.localised_name
+end
+
+--- Concatenate LocalisedString fragments, respecting the 20-element limit by
+--- nesting groups instead of dropping entries.
+localised_concat = function(parts)
+  if #parts == 0 then
+    return ""
+  end
+
+  local current = parts
+  while #current > MAX_LOCALISED_PARAMETERS do
+    local grouped = {}
+    local index = 1
+
+    while index <= #current do
+      local chunk = { "" }
+      for offset = 0, MAX_LOCALISED_PARAMETERS - 1 do
+        local part = current[index + offset]
+        if part == nil then
+          break
+        end
+        table.insert(chunk, part)
+      end
+      index = index + MAX_LOCALISED_PARAMETERS
+      table.insert(grouped, chunk)
+    end
+
+    current = grouped
+  end
+
+  local result = { "" }
+  for _, part in ipairs(current) do
+    table.insert(result, part)
+  end
+  return result
 end
 
 add_calculation_error = function(parent, error_code)
@@ -1179,6 +1265,11 @@ render_status = function(parent, state)
     "status-static-revision",
     tostring(state.static_revision or 0)
   )
+  add_status_value(
+    table_element,
+    "status-name-locale",
+    localization_summary(state)
+  )
 
   local assistant = state.assistant_status
   if assistant ~= nil then
@@ -1341,6 +1432,17 @@ muted_rule_set = function()
     result[rule_id] = true
   end
   return result
+end
+
+--- Debug summary of the display-name sync: which locale the Companion is being
+--- told about and how many prototype names have been translated so far.
+localization_summary = function(state)
+  local loc = state.localization
+  if loc == nil or loc.locale == nil then
+    return "-"
+  end
+
+  return loc.locale .. " / " .. tostring(loc.name_count or 0)
 end
 
 format_last_response = function(tick)

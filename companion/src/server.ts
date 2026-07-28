@@ -39,6 +39,7 @@ import {
 } from "./logger.js";
 import type { AIProvider } from "./providers.js";
 import { ProviderError } from "./providers.js";
+import { LocalizedNameStore } from "./localization.js";
 import { CompanionStateStore, StateSyncError } from "./state-store.js";
 
 export { DEFAULT_COMPANION_PORT, LOOPBACK_HOST, parseCompanionPort };
@@ -58,6 +59,7 @@ export interface CompanionServerOptions {
   advisor?: AdvisorEngine;
   config?: CompanionConfig;
   provider?: AIProvider;
+  localization?: LocalizedNameStore;
 }
 
 export interface CompanionServer {
@@ -65,6 +67,7 @@ export interface CompanionServer {
   readonly state: CompanionStateStore;
   readonly advisor: AdvisorEngine;
   readonly assistant: AssistantService;
+  readonly localization: LocalizedNameStore;
   close(): Promise<void>;
 }
 
@@ -80,13 +83,16 @@ export async function startCompanionServer(
 
   const logger = options.logger ?? new JsonLogger();
   const stateStore = options.stateStore ?? new CompanionStateStore();
+  const localization = options.localization ?? new LocalizedNameStore();
   const advisor =
     options.advisor ?? new AdvisorEngine(undefined, config.language);
+  advisor.useLocalizedNames(localization);
   const assistant = new AssistantService({
     config,
     stateStore,
     advisor,
     logger,
+    localization,
     ...(options.provider === undefined ? {} : { provider: options.provider }),
   });
   const calculation = new CalculationService(stateStore);
@@ -107,6 +113,7 @@ export async function startCompanionServer(
       samplingIntervalTicks,
       recentRequests,
       inFlightAssistantRequests,
+      localization,
     ).catch((error: unknown) => {
       logger.error("udp_handler_error", {
         remote_address: remote.address,
@@ -139,6 +146,7 @@ export async function startCompanionServer(
     state: stateStore,
     advisor,
     assistant,
+    localization,
     async close(): Promise<void> {
       if (closed) {
         return;
@@ -168,6 +176,7 @@ async function handleDatagram(
   samplingIntervalTicks: number,
   recentRequests: RecentRequestCache,
   inFlightAssistantRequests: Map<string, AbortController>,
+  localization: LocalizedNameStore,
 ): Promise<void> {
   if (remote.address !== LOOPBACK_HOST) {
     logger.warn("udp_non_loopback_packet_rejected", {
@@ -238,6 +247,7 @@ async function handleDatagram(
           staticRevision: stateStore.staticRevision,
           samplingIntervalTicks,
           assistantStatus: companionAssistantStatus(assistant),
+          localizedNameCount: localization.size,
         }),
         remote,
         logger,
@@ -369,6 +379,16 @@ async function handleDatagram(
         recentRequests,
         digest,
       );
+      return;
+    case "localization_update":
+      localization.apply(packet);
+      logger.info("localization_update_accepted", {
+        locale: packet.payload.locale,
+        reset: packet.payload.reset,
+        names: packet.payload.names.length,
+        known_names: localization.size,
+      });
+      recentRequests.remember(remote, packet.message_id, digest, null);
       return;
     case "hello_ack":
     case "state_ack":

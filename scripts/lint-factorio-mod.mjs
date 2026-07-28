@@ -40,6 +40,10 @@ const uiStateSource = await readFile(
   new URL("../factorio-mod/ui_state.lua", import.meta.url),
   "utf8",
 );
+const localizationSource = await readFile(
+  new URL("../factorio-mod/localization.lua", import.meta.url),
+  "utf8",
+);
 const dataSource = await readFile(
   new URL("../factorio-mod/data.lua", import.meta.url),
   "utf8",
@@ -101,10 +105,54 @@ for (const packetType of [
   "assistant_response",
   "calculation_request",
   "calculation_response",
+  "localization_update",
 ]) {
   assert.ok(
-    controlSource.includes(packetType),
-    `control.lua must handle ${packetType}`,
+    controlSource.includes(packetType) || localizationSource.includes(packetType),
+    `The Mod must handle ${packetType}`,
+  );
+}
+for (const requiredApi of [
+  "request_translation",
+  "defines.events.on_string_translated",
+]) {
+  assert.ok(
+    controlSource.includes(requiredApi) || localizationSource.includes(requiredApi),
+    `Display names must use the official ${requiredApi} translation path`,
+  );
+}
+assert.ok(
+  localizationSource.includes("#encoded > MAX_PACKET_BYTES"),
+  "Localization packets must enforce the byte hard limit",
+);
+assert.ok(
+  /localised_name/u.test(localizationSource) && /localised_name/u.test(uiSource),
+  "Prototype display names must come from the prototype localised_name",
+);
+for (const seededId of [
+  "iron-plate",
+  "copper-plate",
+  "steel-plate",
+  "electronic-circuit",
+  "advanced-circuit",
+  "processing-unit",
+  "automation-science-pack",
+  "logistic-science-pack",
+  "military-science-pack",
+  "chemical-science-pack",
+  "production-science-pack",
+  "utility-science-pack",
+  "space-science-pack",
+  "crude-oil",
+  "heavy-oil",
+  "light-oil",
+  "petroleum-gas",
+  "lubricant",
+  "assembling-machine-2",
+]) {
+  assert.ok(
+    localizationSource.includes(`id = "${seededId}"`),
+    `localization.lua must seed a display name request for ${seededId}`,
   );
 }
 for (const transition of [

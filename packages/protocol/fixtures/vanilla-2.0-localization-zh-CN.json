@@ -1,0 +1,138 @@
+{
+  "protocol_version": 1,
+  "schema_version": 2,
+  "message_id": "factorio-locale-3600-zh-CN",
+  "type": "localization_update",
+  "tick": 3600,
+  "payload": {
+    "locale": "zh-CN",
+    "reset": true,
+    "names": [
+      {
+        "kind": "item",
+        "id": "iron-plate",
+        "name": "铁板"
+      },
+      {
+        "kind": "item",
+        "id": "copper-plate",
+        "name": "铜板"
+      },
+      {
+        "kind": "item",
+        "id": "steel-plate",
+        "name": "钢材"
+      },
+      {
+        "kind": "item",
+        "id": "electronic-circuit",
+        "name": "电子电路"
+      },
+      {
+        "kind": "item",
+        "id": "advanced-circuit",
+        "name": "高级电路"
+      },
+      {
+        "kind": "item",
+        "id": "processing-unit",
+        "name": "处理器"
+      },
+      {
+        "kind": "item",
+        "id": "automation-science-pack",
+        "name": "自动化科技包"
+      },
+      {
+        "kind": "item",
+        "id": "logistic-science-pack",
+        "name": "物流科技包"
+      },
+      {
+        "kind": "item",
+        "id": "military-science-pack",
+        "name": "军事科技包"
+      },
+      {
+        "kind": "item",
+        "id": "chemical-science-pack",
+        "name": "化学科技包"
+      },
+      {
+        "kind": "item",
+        "id": "production-science-pack",
+        "name": "生产科技包"
+      },
+      {
+        "kind": "item",
+        "id": "utility-science-pack",
+        "name": "通用科技包"
+      },
+      {
+        "kind": "item",
+        "id": "space-science-pack",
+        "name": "太空科技包"
+      },
+      {
+        "kind": "fluid",
+        "id": "crude-oil",
+        "name": "原油"
+      },
+      {
+        "kind": "fluid",
+        "id": "heavy-oil",
+        "name": "重油"
+      },
+      {
+        "kind": "fluid",
+        "id": "light-oil",
+        "name": "轻油"
+      },
+      {
+        "kind": "fluid",
+        "id": "petroleum-gas",
+        "name": "石油气"
+      },
+      {
+        "kind": "fluid",
+        "id": "lubricant",
+        "name": "润滑油"
+      },
+      {
+        "kind": "recipe",
+        "id": "chemical-science-pack",
+        "name": "化学科技包"
+      },
+      {
+        "kind": "technology",
+        "id": "advanced-oil-processing",
+        "name": "高级石油处理"
+      },
+      {
+        "kind": "technology",
+        "id": "robotics",
+        "name": "机器人技术"
+      },
+      {
+        "kind": "technology",
+        "id": "construction-robotics",
+        "name": "建设机器人技术"
+      },
+      {
+        "kind": "machine",
+        "id": "assembling-machine-1",
+        "name": "组装机 1 型"
+      },
+      {
+        "kind": "machine",
+        "id": "assembling-machine-2",
+        "name": "组装机 2 型"
+      },
+      {
+        "kind": "machine",
+        "id": "assembling-machine-3",
+        "name": "组装机 3 型"
+      }
+    ]
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "protocol_version": 1,
+  "schema_version": 2,
+  "message_id": "factorio-locale-3600-en",
+  "type": "localization_update",
+  "tick": 3600,
+  "payload": {
+    "locale": "en",
+    "reset": true,
+    "names": [
+      {
+        "kind": "item",
+        "id": "iron-plate",
+        "name": "Iron plate"
+      },
+      {
+        "kind": "item",
+        "id": "copper-plate",
+        "name": "Copper plate"
+      },
+      {
+        "kind": "item",
+        "id": "steel-plate",
+        "name": "Steel plate"
+      },
+      {
+        "kind": "item",
+        "id": "electronic-circuit",
+        "name": "Electronic circuit"
+      },
+      {
+        "kind": "item",
+        "id": "advanced-circuit",
+        "name": "Advanced circuit"
+      },
+      {
+        "kind": "item",
+        "id": "processing-unit",
+        "name": "Processing unit"
+      },
+      {
+        "kind": "item",
+        "id": "automation-science-pack",
+        "name": "Automation science pack"
+      },
+      {
+        "kind": "item",
+        "id": "logistic-science-pack",
+        "name": "Logistic science pack"
+      },
+      {
+        "kind": "item",
+        "id": "military-science-pack",
+        "name": "Military science pack"
+      },
+      {
+        "kind": "item",
+        "id": "chemical-science-pack",
+        "name": "Chemical science pack"
+      },
+      {
+        "kind": "item",
+        "id": "production-science-pack",
+        "name": "Production science pack"
+      },
+      {
+        "kind": "item",
+        "id": "utility-science-pack",
+        "name": "Utility science pack"
+      },
+      {
+        "kind": "item",
+        "id": "space-science-pack",
+        "name": "Space science pack"
+      },
+      {
+        "kind": "fluid",
+        "id": "crude-oil",
+        "name": "Crude oil"
+      },
+      {
+        "kind": "fluid",
+        "id": "heavy-oil",
+        "name": "Heavy oil"
+      },
+      {
+        "kind": "fluid",
+        "id": "light-oil",
+        "name": "Light oil"
+      },
+      {
+        "kind": "fluid",
+        "id": "petroleum-gas",
+        "name": "Petroleum gas"
+      },
+      {
+        "kind": "fluid",
+        "id": "lubricant",
+        "name": "Lubricant"
+      },
+      {
+        "kind": "recipe",
+        "id": "chemical-science-pack",
+        "name": "Chemical science pack"
+      },
+      {
+        "kind": "technology",
+        "id": "advanced-oil-processing",
+        "name": "Advanced oil processing"
+      },
+      {
+        "kind": "technology",
+        "id": "robotics",
+        "name": "Robotics"
+      },
+      {
+        "kind": "technology",
+        "id": "construction-robotics",
+        "name": "Construction robotics"
+      },
+      {
+        "kind": "machine",
+        "id": "assembling-machine-1",
+        "name": "Assembling machine 1"
+      },
+      {
+        "kind": "machine",
+        "id": "assembling-machine-2",
+        "name": "Assembling machine 2"
+      },
+      {
+        "kind": "machine",
+        "id": "assembling-machine-3",
+        "name": "Assembling machine 3"
+      }
+    ]
+  }
+}

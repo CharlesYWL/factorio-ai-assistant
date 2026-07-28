@@ -1,4 +1,5 @@
 local state_collector = require("state_collector")
+local localization = require("localization")
 local ui = require("ui")
 local ui_state = require("ui_state")
 
@@ -643,6 +644,10 @@ local function send_dynamic_snapshot()
     return
   end
 
+  for _, force_summary in ipairs(result.packet.payload.forces) do
+    localization.register_force_summary(state, force_summary)
+  end
+
   send_udp_payload(result.encoded, "dynamic snapshot send")
 
   if state_collector.should_log_sample(state, result.packet) then
@@ -733,6 +738,10 @@ local function handle_hello_ack(packet, event)
       packet.payload.assistant_status ~= nil
       and not is_valid_assistant_status(packet.payload.assistant_status)
     )
+    or (
+      packet.payload.localized_name_count ~= nil
+      and not is_non_negative_integer(packet.payload.localized_name_count)
+    )
   then
     return
   end
@@ -742,6 +751,7 @@ local function handle_hello_ack(packet, event)
     return
   end
 
+  local was_connected = state.connected
   state.pending[packet.payload.reply_to] = nil
   state.connected = true
   state.last_response_tick = event.tick
@@ -764,6 +774,17 @@ local function handle_hello_ack(packet, event)
   state.assistant_status = packet.payload.assistant_status
   if packet.payload.sampling_interval_ticks ~= nil then
     state.sampling_interval_ticks = packet.payload.sampling_interval_ticks
+  end
+
+  local companion_name_count = packet.payload.localized_name_count
+  if companion_name_count ~= nil then
+    -- Idempotent reconciliation: a restarted Companion reports an empty cache and
+    -- a lost datagram shows up as a count gap, so both self-heal on the next hello.
+    if localization.needs_resend(state, companion_name_count) then
+      localization.resend_all(state)
+    end
+  elseif not was_connected then
+    localization.resend_all(state)
   end
 
   if not has_static_pending(state)
@@ -1050,6 +1071,10 @@ local function handle_calculation_response(packet, event)
   local state = get_state()
   state.connected = true
   state.last_response_tick = event.tick
+  if payload.status == "ok" then
+    localization.register_calculation_result(state, payload.result)
+    localization.refresh(state)
+  end
   local player_index =
     ui_state.complete_calculation(state, payload.reply_to, payload)
   if player_index ~= nil then
@@ -1159,6 +1184,7 @@ script.on_init(function()
   state.static_pending = {}
   state_collector.initialize(state)
   state_collector.invalidate_static(state)
+  localization.invalidate(state)
 
   for _, player in pairs(game.players) do
     initialize_player(player)
@@ -1172,6 +1198,7 @@ script.on_configuration_changed(function()
   state.static_pending = {}
   state_collector.initialize(state)
   state_collector.invalidate_static(state)
+  localization.invalidate(state)
 
   for _, player in pairs(game.players) do
     initialize_player(player)
@@ -1270,6 +1297,16 @@ script.on_event({
   defines.events.on_forces_merged,
   defines.events.on_player_changed_force,
 }, handle_force_context_change)
+
+script.on_event(defines.events.on_string_translated, function(event)
+  localization.handle_translation(get_state(), event)
+end)
+
+if defines.events.on_player_locale_changed ~= nil then
+  script.on_event(defines.events.on_player_locale_changed, function()
+    localization.refresh(get_state())
+  end)
+end
 
 local QUICK_QUESTIONS = {
   ["zh-CN"] = {
@@ -1827,9 +1864,31 @@ commands.add_command(
   end
 )
 
+local function send_localization_updates()
+  if not UDP_AVAILABLE then
+    return
+  end
+
+  local state = get_state()
+  if not state.connected then
+    return
+  end
+
+  localization.refresh(state)
+
+  local packets = localization.build_packets(state, function()
+    return next_message_id(state, "locale")
+  end)
+
+  for _, packet in ipairs(packets) do
+    send_udp_payload(packet.encoded, "localization send")
+  end
+end
+
 local function run_periodic_network_tasks()
   send_hello()
   retry_static_packets()
+  send_localization_updates()
 end
 
 local function run_every_second_tasks()

@@ -14,6 +14,8 @@ TypeScript 权威编解码器位于 `packages/protocol/`，Factorio Mod 在
 
 - `packages/protocol/fixtures/vanilla-2.0-static-v2.json`
 - `packages/protocol/fixtures/vanilla-2.0-dynamic-v2.json`
+- `packages/protocol/fixtures/vanilla-2.0-localization-zh-CN.json`
+- `packages/protocol/fixtures/vanilla-2.0-localization-en.json`
 
 ## 公共信封
 
@@ -30,8 +32,8 @@ TypeScript 权威编解码器位于 `packages/protocol/`，Factorio Mod 在
 状态消息类型为 `static_snapshot`、`static_delta`、`dynamic_snapshot`、
 `state_ack`、`resync_request` 和 `advisor_update`。UI 使用
 `assistant_request` / `assistant_cancel` / `assistant_response` 与
-`calculation_request` / `calculation_response`。连接心跳继续使用
-`hello` / `hello_ack`。
+`calculation_request` / `calculation_response`。显示名称使用可选的
+`localization_update`。连接心跳继续使用 `hello` / `hello_ack`。
 
 ## 连接与静态状态同步
 
@@ -107,7 +109,8 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
       "provider": "local",
       "reason": "deterministic rules and calculator only",
       "privacy": "local-only"
-    }
+    },
+    "localized_name_count": 42
   }
 }
 ```
@@ -121,9 +124,15 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
 | `payload.assistant_status.mode` | `local` / `local-model` / `remote-model` | 每次应答 | 本地配置 |
 | `payload.assistant_status.provider/model` | 当前 provider 和可选模型 ID | 每次应答 | 本地配置 |
 | `payload.assistant_status.privacy` | `local-only` / `remote-provider` | 每次应答 | 隐私声明 |
+| `payload.localized_name_count` | Companion 显示名称缓存条数；旧 Companion 可省略 | 每次应答 | 协议元数据 |
 
 旧 Companion 可以省略新增字段。新 Mod 会接受心跳，但缺少 `assistant_status` 时 UI
 明确显示协议不兼容，不会发送聊天或计算请求；无采样字段时继续使用 300 tick。
+
+`localized_name_count` 让显示名称同步具备与静态 revision 相同的幂等对账能力：Mod 把
+它与自己已投递的名称数比较，不一致且当前没有待发批次时，重新以 `reset: true` 全量
+推送。因此 Companion 重启、UDP 丢包和存档重载都能自愈，而不会退回英文 ID 或中英混排。
+字段缺失时（旧 Companion）退回“断线后重连才全量重发”的旧行为。
 
 ## 游戏内 UI 请求
 
@@ -410,6 +419,54 @@ Companion 在告警打开、关闭或冷却后提醒时发送。活动告警的�
 | `alert.recommendation` | 最多 1,024 字符 | 可执行建议 |
 | `alert.first_seen` | Factorio tick | 本次问题首次连续出现 |
 | `alert.last_seen` | Factorio tick | 最近一次确认问题仍存在 |
+
+## `localization_update`
+
+Mod 在 hello 周期（每 300 tick）发送，把当前游戏语言下的 prototype 显示名称同步给
+Companion。消息是可选且单向的，不需要确认；旧 Companion 会把未知 `type` 记为
+`udp_invalid_packet_rejected` 并继续运行，旧 Mod 则从不发送，Companion 全程回退到
+prototype ID。
+
+名称来自 Factorio 官方翻译机制：Mod 用 `LuaPlayer::request_translation` 请求
+`prototype.localised_name`，在 `on_string_translated` 中缓存结果。只翻译实际出现或
+即将展示的 ID——动态快照里的物品 / 流体、当前研究科技、计算结果里的配方 / 机器 /
+外部输入 / 副产物，加上确定性规则固定引用的少量种子 ID——而不是启动时全量翻译。
+
+```json
+{
+  "protocol_version": 1,
+  "schema_version": 2,
+  "message_id": "factorio-locale-3600-4",
+  "type": "localization_update",
+  "tick": 3600,
+  "payload": {
+    "locale": "zh-CN",
+    "reset": true,
+    "names": [
+      { "kind": "item", "id": "iron-plate", "name": "铁板" },
+      { "kind": "fluid", "id": "petroleum-gas", "name": "石油气" },
+      { "kind": "machine", "id": "assembling-machine-2", "name": "组装机 2 型" }
+    ]
+  }
+}
+```
+
+| 字段 | 类型 / 来源 | 说明 |
+| --- | --- | --- |
+| `payload.locale` | 最多 32 字符，`LuaPlayer::locale` | 名称对应的游戏语言，例如 `zh-CN` / `en` |
+| `payload.reset` | boolean | `true` 表示先清空 Companion 缓存再写入本批；语言切换、Companion 重连、Mod 配置变更时置位 |
+| `payload.names` | 最多 256 条 | 增量批次；同一 packet 内 `kind:id` 不得重复 |
+| `names[].kind` | `item` / `fluid` / `recipe` / `technology` / `machine` | 决定查哪张 prototype 表 |
+| `names[].id` | 最多 256 字符 | prototype ID，仍是唯一稳定主键 |
+| `names[].name` | 最多 128 字符 | 当前语言下的显示名称，仅用于展示和模型上下文 |
+
+约束与回退：
+
+- ID 永远是协议主键。Companion 的规则判定、计算和去重只用 ID，名称只影响文本渲染。
+- 缺失、未翻译或未知的 ID 一律回退显示 ID；Companion 最多缓存 4,096 条名称。
+- Companion 收到 `locale` 与缓存不同的包时同样整体重置，避免中英文混排。
+- Mod 侧最多跟踪 2,048 个 ID，每个 hello 周期最多发起 32 个翻译请求；packet 按
+  15,872-byte 目标贪心分批，装不下的条目留到下一周期，永不丢弃。
 
 ## 大小上限和可预测裁剪
 
