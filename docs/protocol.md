@@ -107,7 +107,7 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
     "assistant_status": {
       "mode": "local",
       "provider": "local",
-      "reason": "deterministic rules and calculator only",
+      "reason": "deterministic rules and deterministic calculations only",
       "privacy": "local-only"
     },
     "localized_name_count": 42
@@ -170,16 +170,24 @@ provider / model / fallback 原因。取消包只携带目标 `request_id`：
 }
 ```
 
-### Calculator
+### Calculation（保留兼容，Mod 不再主动发起）
 
-`calculation_request` 只表达轻量面板的输入：force、目标 kind / ID、每分钟产量，以及只
-应用于目标配方的可选 machine ID 和最多 16 个 module ID。Companion 从已同步的静态
-状态补齐可用配方、机器和科技产能加成。
+自 RC2 起面向玩家的计算器表单已经移除：确定性计算只由 Chat 触发，Companion 在
+`assistant_request` 内部调用同一个求解器，结果作为 `[计算结果]` 证据写进
+`assistant_response`。玩家不再需要知道 prototype ID。
+
+`calculation_request` / `calculation_response` 仍是协议的一部分并保持原有形状，
+这样新旧 Mod 与 Companion 混装时不会因未知包类型而崩溃。当前 Mod 不发送
+`calculation_request`；收到 `calculation_response` 时仍会严格校验并安全消费，
+让任何遗留的在途请求可以正常收尾。
+
+`calculation_request` 表达 force、目标 kind / ID、每分钟产量，以及只应用于目标配方的
+可选 machine ID 和最多 16 个 module ID。Companion 从已同步的静态状态补齐可用配方、
+机器和科技产能加成。
 
 成功的 `calculation_response` 返回目标、最多 16 条配方摘要、外部输入、副产物、取整
 假设和 `truncated` 标记；配方摘要包含 machine ID、精确机器数、向上取整机器数与插件。
-失败时返回稳定 `error_code` 和诊断文本。Mod 根据 error code 使用当前 locale 显示，
-避免把 Companion 的英文内部诊断当成中文界面文案。
+失败时返回稳定 `error_code` 和诊断文本。
 
 ## `static_snapshot`
 

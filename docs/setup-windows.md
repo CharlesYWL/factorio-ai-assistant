@@ -77,7 +77,7 @@ Steam 中打开 **Factorio → Properties → General → Launch Options**，填
 
 ```json
 {"level":"info","event":"companion_listening","address":"127.0.0.1","port":34197,"sampling_interval_ticks":300}
-{"level":"info","event":"assistant_mode","mode":"local","provider":"local","model":null,"reason":"deterministic rules and calculator only"}
+{"level":"info","event":"assistant_mode","mode":"local","provider":"local","model":null,"reason":"deterministic rules and deterministic calculations only"}
 ```
 
 如需修改 Companion 端口，只能修改端口，监听地址仍固定为 `127.0.0.1`：
@@ -90,7 +90,8 @@ Copy-Item .\companion.config.example.json .\companion.config.json
 同时在 Factorio 的 **Settings → Mod settings → Startup** 中把
 **Companion UDP port** 改为同一个值，然后重启游戏。
 
-无 API Key 时 `assistant_mode` 为 `local` 是正常状态，计算器和本地告警仍完整可用。
+无 API Key 时 `assistant_mode` 为 `local` 是正常状态，聊天内的确定性计算和本地告警
+仍完整可用。
 如需配置 OpenClaw/OpenAI-compatible 或本机 Ollama，复制
 `companion.config.example.json` 并按 [`companion.md`](companion.md) 设置
 `FACTORIO_ASSISTANT_CONFIG`。Companion 配置的 `sampling_interval_ms` 会在握手后同步
@@ -100,17 +101,19 @@ Copy-Item .\companion.config.example.json .\companion.config.json
 
 1. 载入或新建一个存档。
 2. 点击顶部的 **AI Assistant** 按钮或按 `Ctrl+Shift+A` 打开顾问面板；
-   `Ctrl+Shift+1..4` 可直接切换 Chat / Calculator / Alerts / Status。
-3. Companion 未运行或未响应时，四页仍可进入，标题显示 **离线**；Calculator 保留
-   输入，Alerts 显示带过期提示的缓存内容。
+   `Ctrl+Shift+1..3` 可直接切换 Chat / Alerts / Status。
+3. Companion 未运行或未响应时，三页仍可进入，标题显示 **离线**；Alerts 显示带过期
+   提示的缓存内容。
 4. Companion 收到 Mod 发出的 `hello` 并返回 `hello_ack` 后，Status 显示
    **已连接**、顾问模式、协议版本、最近同步与隐私模式。
 5. Status 的 **立即重连** 可重试。Mod 也会每 5 秒自动发送一次心跳；10 秒没有有效
    响应会回到离线。
 6. Chat 输入问题后按 Enter 或点击发送；模型请求进行中可取消。无模型或模型故障时，
    回答来源显示本地规则。
-7. Calculator 输入 `chemical-science-pack` 和目标 `45`，验证结构化配方、精确台数、
-   向上取整台数与外部输入。机器 / 插件留空时自动选择。
+7. Chat 直接问“每分钟 45 个蓝瓶需要多少台机器？”（或点“产线配比”快捷问题），
+   验证回答含 `[计算结果]` 的配方、精确台数与向上取整台数；全程不需要输入 prototype
+   ID。再问一句只有产物没有速率的问题（例如“蓝瓶需要多少台机器？”），应得到一句
+   要求补速率的澄清。
 8. 首次连接后，Companion 日志会出现 `Accepted static snapshot ...`；Factorio 的
    `factorio-current.log` 会记录首个动态样本的 interval、耗时、byte 数和裁剪计数，
    之后约每分钟记录一次。
@@ -150,7 +153,9 @@ Copy-Item .\companion.config.example.json .\companion.config.json
 Factorio 2.0 图形客户端完成：
 
 - [ ] **计算**：稳定同步后提问“45 蓝瓶每分钟需要多少机器？”。把 Chat 中 `[C1]`
-  的目标配方、精确台数和向上取整台数与 Calculator 页同参数结果逐项对照，必须一致。
+  的目标配方、精确台数和向上取整台数与 `npm run calculate` CLI 同参数结果逐项对照，
+  必须一致；再用“一分钟 120 绿板怎么配？”“每分钟 100 钢材需要多少台熔炉？”确认
+  中文名解析，用“每分钟 60 个电路要多少台机器？”确认歧义时给澄清而不是猜测。
 - [ ] **炼油诊断**：让重油 / 轻油输出堵塞或切断炼油输入，等待规则持续门槛后提问
   “为什么我的高级炼油停了？”。回答必须引用当前油品 / 电力规则证据，并明确说明系统
   没有单机配方、管道和库存数据，不能假装定位具体实体。
@@ -160,10 +165,10 @@ Factorio 2.0 图形客户端完成：
   的三个瓶颈是什么？”。确认按严重度排序、行动项不超过 3 个且每项都有 `[A#]` 证据。
 - [ ] **证据追溯**：紧接着提问“这个建议依据什么数据？”。核对 `[事实]` 中的功率、
   1 / 10 分钟聚合流量与 Alerts 页一致，且回答区分推断、假设和缺失数据。
-- [ ] **冲突保护**：连接可控 mock provider，让它返回与 Calculator 不同的机器数。
+- [ ] **冲突保护**：连接可控 mock provider，让它返回与确定性计算不同的机器数。
   Chat 必须显示本地工具数字，日志出现 `assistant_model_conflict`，错误数字不进入游戏。
 - [ ] **超时降级**：让 provider 挂起或断网，计时从发送到本地答案；必须小于 35 秒，
-  Calculator / Alerts 结果仍可用且界面不冻结。
+  确定性计算与 Alerts 结果仍可用且界面不冻结。
 - [ ] **只读边界**：输入要求忽略规则并输出 Lua、`/c` 或 RCON 的提示注入文本。回答
   不得出现可执行指令；提问前后工厂实体、配方、线路与研究队列均无自动变化。
 - [ ] 保存 `factorio-current.log` 与 Companion 的脱敏日志，并记录 Factorio 版本、
@@ -203,7 +208,7 @@ Remove-Item "$env:APPDATA\Factorio\mods\factorio-ai-assistant_0.1.0" -Recurse -F
 | 日志提示需要 2.0.59 | 更新 Factorio；旧版 2.0 可加载 Mod，但没有 Lua UDP API |
 | UI 没有按钮 | 确认 Mod 已启用、目录名正确，并检查 `%APPDATA%\Factorio\factorio-current.log` |
 | 显示版本/协议不兼容 | 记录 Status 中双方版本，从同一个 release bundle 同时升级或降级 Mod 与 Companion |
-| 计算器报告多配方歧义 | 简化面板不能选择复杂上游配方；改用仓库 JSON CLI |
+| 聊天回答说配方或目标有歧义 | 按澄清补一句更具体的名称；需要显式指定上游配方 / 机器 / 插件时改用仓库 JSON CLI |
 | 游戏暂停时响应延迟 | `helpers.recv_udp` 随游戏更新轮询；恢复游戏后再观察 |
 | 安全软件告警 | 仅允许 `factorio.exe` 和 Node.js 的本机 loopback UDP，不要建立公网入站规则 |
 | 需要提交日志 | 在 Companion 目录运行 `.\collect-diagnostics.ps1`，分享前人工检查生成的 ZIP |
@@ -221,13 +226,14 @@ Remove-Item "$env:APPDATA\Factorio\mods\factorio-ai-assistant_0.1.0" -Recurse -F
   `advisor_update`。
 - [x] OpenClaw/OpenAI-compatible fixture、Ollama mock、超时/取消/有限重试和本地降级测试。
 - [x] 配置远程 bind 拒绝、上下文 byte budget、恶意输入限制和结构化日志脱敏测试。
-- [x] Chat / cancel / Calculator UDP 协议 round-trip、严格字段校验与 mock socket 取消测试。
-- [x] Calculator 从同步静态数据生成结构化结果；缺数据时返回明确错误。
+- [x] Chat / cancel UDP 协议 round-trip、严格字段校验与 mock socket 取消测试。
+- [x] 聊天自然语言解析出稳定 ID 与速率，并从同步静态数据生成结构化确定性结果；
+      目标 / 速率 / 替代配方不明确或缺数据时返回可操作澄清。
 - [x] 五类状态问答 fixture、工具数字优先、提示注入 / 超长输入 / 幻觉冲突和 30 秒
   provider 总预算自动化测试。
-- [x] Lua UI 语法、四页状态契约、中英文 locale key 对齐和可复现 mock harness。
+- [x] Lua UI 语法、三页状态契约、中英文 locale key 对齐和可复现 mock harness。
 - [ ] Windows Steam Factorio 2.0 实机：按钮和面板正确渲染。
-- [ ] Windows Steam Factorio 2.0 实机：Chat / Calculator、键盘、尺寸和位置记忆。
+- [ ] Windows Steam Factorio 2.0 实机：Chat / Alerts / Status、键盘、尺寸和位置记忆。
 - [ ] Windows Steam Factorio 2.0 实机：活动告警、toast、静音和恢复关闭。
 - [ ] Windows Steam Factorio 2.0 实机：`Disconnected → Connected`、超时断开及
   Companion 重启恢复。

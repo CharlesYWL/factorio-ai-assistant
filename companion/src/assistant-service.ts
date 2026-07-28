@@ -110,7 +110,7 @@ export class AssistantService {
           this.#config.apiKey === undefined &&
           !isLoopbackUrl(this.#config.providerUrl)
             ? "remote provider credentials are not configured"
-            : "deterministic rules and calculator only",
+            : "deterministic rules and deterministic calculations only",
       };
     }
 

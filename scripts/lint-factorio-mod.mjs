@@ -103,7 +103,6 @@ for (const packetType of [
   "assistant_request",
   "assistant_cancel",
   "assistant_response",
-  "calculation_request",
   "calculation_response",
   "localization_update",
 ]) {
@@ -126,8 +125,18 @@ assert.ok(
   "Localization packets must enforce the byte hard limit",
 );
 assert.ok(
-  /localised_name/u.test(localizationSource) && /localised_name/u.test(uiSource),
+  /localised_name/u.test(localizationSource),
   "Prototype display names must come from the prototype localised_name",
+);
+assert.doesNotMatch(
+  uiSource,
+  /CALCULATOR_|render_calculator\b/u,
+  "The player-facing calculator form must stay removed; chat drives calculations",
+);
+assert.doesNotMatch(
+  controlSource,
+  /calculation_request/u,
+  "The Mod must not send calculation requests now that chat owns calculations",
 );
 for (const seededId of [
   "iron-plate",
@@ -215,7 +224,6 @@ for (const input of [
   "factorio-ai-assistant-tab-1",
   "factorio-ai-assistant-tab-2",
   "factorio-ai-assistant-tab-3",
-  "factorio-ai-assistant-tab-4",
 ]) {
   assert.ok(dataSource.includes(input), `data.lua must declare ${input}`);
 }

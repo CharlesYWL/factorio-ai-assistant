@@ -139,7 +139,7 @@ void test("encodes state-aware hello acknowledgements", () => {
     assistantStatus: {
       mode: "local",
       provider: "local",
-      reason: "deterministic rules and calculator only",
+      reason: "deterministic rules and deterministic calculations only",
       privacy: "local-only",
     },
     localizedNameCount: 42,

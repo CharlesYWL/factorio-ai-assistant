@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "factorio_version": "2.0.72",
+  "force_id": "player",
+  "comment": "Natural-language production questions the chat must answer without any prototype ID. Every rate is stated in the question itself; machine counts always come from the deterministic calculator. Targets are limited to the vanilla-2.0.72-base catalog fixture.",
+  "resolved": [
+    {
+      "id": "automation-science-zh",
+      "question": "每分钟 30 个红瓶需要多少台机器？",
+      "target_kind": "item",
+      "target_id": "automation-science-pack",
+      "rate_per_minute": 30
+    },
+    {
+      "id": "logistic-science-zh",
+      "question": "一分钟 45 绿瓶怎么配？",
+      "target_kind": "item",
+      "target_id": "logistic-science-pack",
+      "rate_per_minute": 45
+    },
+    {
+      "id": "chemical-science-zh",
+      "question": "每分钟 45 蓝瓶需要多少机器？",
+      "target_kind": "item",
+      "target_id": "chemical-science-pack",
+      "rate_per_minute": 45
+    },
+    {
+      "id": "production-science-zh",
+      "question": "紫瓶每分钟 30 要多少台机器？",
+      "target_kind": "item",
+      "target_id": "production-science-pack",
+      "rate_per_minute": 30
+    },
+    {
+      "id": "utility-science-zh",
+      "question": "每分钟 30 黄瓶需要多少台组装机？",
+      "target_kind": "item",
+      "target_id": "utility-science-pack",
+      "rate_per_minute": 30
+    },
+    {
+      "id": "electronic-circuit-zh",
+      "question": "一分钟 120 绿板怎么配？",
+      "target_kind": "item",
+      "target_id": "electronic-circuit",
+      "rate_per_minute": 120
+    },
+    {
+      "id": "advanced-circuit-zh",
+      "question": "每分钟 60 红电路需要多少台机器？",
+      "target_kind": "item",
+      "target_id": "advanced-circuit",
+      "rate_per_minute": 60
+    },
+    {
+      "id": "processing-unit-zh",
+      "question": "每分钟 20 蓝板要多少台机器？",
+      "target_kind": "item",
+      "target_id": "processing-unit",
+      "rate_per_minute": 20
+    },
+    {
+      "id": "steel-plate-zh",
+      "question": "每分钟 100 钢材需要多少台熔炉？",
+      "target_kind": "item",
+      "target_id": "steel-plate",
+      "rate_per_minute": 100
+    },
+    {
+      "id": "plastic-bar-zh",
+      "question": "每分钟 90 塑料需要多少台化工厂？",
+      "target_kind": "item",
+      "target_id": "plastic-bar",
+      "rate_per_minute": 90
+    },
+    {
+      "id": "sulfur-zh",
+      "question": "每分钟 60 硫磺需要多少台机器？",
+      "target_kind": "item",
+      "target_id": "sulfur",
+      "rate_per_minute": 60
+    },
+    {
+      "id": "battery-zh",
+      "question": "每分钟 30 电池需要多少台机器？",
+      "target_kind": "item",
+      "target_id": "battery",
+      "rate_per_minute": 30
+    },
+    {
+      "id": "electronic-circuit-per-second-zh",
+      "question": "每秒 2 个绿板需要多少台机器？",
+      "target_kind": "item",
+      "target_id": "electronic-circuit",
+      "rate_per_minute": 120
+    },
+    {
+      "id": "electronic-circuit-slash-min-zh",
+      "question": "60/min 的绿电路需要多少台机器？",
+      "target_kind": "item",
+      "target_id": "electronic-circuit",
+      "rate_per_minute": 60
+    },
+    {
+      "id": "lubricant-zh",
+      "question": "每分钟 50 润滑油需要多少台化工厂？",
+      "target_kind": "fluid",
+      "target_id": "lubricant",
+      "rate_per_minute": 50
+    },
+    {
+      "id": "chemical-science-en",
+      "question": "How many machines do I need for 45 chemical science per minute?",
+      "target_kind": "item",
+      "target_id": "chemical-science-pack",
+      "rate_per_minute": 45
+    },
+    {
+      "id": "steel-plate-en",
+      "question": "how many furnaces for 200 steel per minute?",
+      "target_kind": "item",
+      "target_id": "steel-plate",
+      "rate_per_minute": 200
+    }
+  ],
+  "clarifications": [
+    {
+      "id": "ambiguous-circuit",
+      "question": "每分钟 60 个电路要多少台机器？",
+      "expect_all": [
+        "electronic-circuit",
+        "advanced-circuit",
+        "processing-unit"
+      ]
+    },
+    {
+      "id": "ambiguous-science-pack",
+      "question": "每分钟 45 科学包需要多少台机器？",
+      "expect_all": [
+        "chemical-science-pack",
+        "production-science-pack"
+      ]
+    },
+    {
+      "id": "missing-rate",
+      "question": "蓝瓶需要多少台机器？",
+      "expect_all": [
+        "速率"
+      ]
+    },
+    {
+      "id": "unknown-target",
+      "question": "每分钟 40 个 zzz 要多少台机器？",
+      "expect_all": [
+        "蓝瓶"
+      ]
+    },
+    {
+      "id": "unavailable-target",
+      "question": "每分钟 20 黑瓶需要多少台机器？",
+      "expect_all": [
+        "military-science-pack"
+      ]
+    }
+  ]
+}

@@ -36,48 +36,48 @@
       <rect width="112" height="38" rx="4" fill="#d48629"/>
       <text class="text tab" x="39" y="25">聊天</text>
       <rect x="120" width="112" height="38" rx="4" fill="#3a4248"/>
-      <text class="text tab" x="143" y="25">计算器</text>
+      <text class="text tab" x="151" y="25">提醒</text>
       <rect x="240" width="112" height="38" rx="4" fill="#3a4248"/>
-      <text class="text tab" x="271" y="25">提醒</text>
-      <rect x="360" width="112" height="38" rx="4" fill="#3a4248"/>
-      <text class="text tab" x="391" y="25">状态</text>
+      <text class="text tab" x="271" y="25">状态</text>
     </g>
 
     <rect x="105" y="210" width="710" height="116" rx="5" fill="#20262a" stroke="#3f484f"/>
     <text class="text label" x="125" y="238" fill="#69df8d">你</text>
-    <text class="text body" x="125" y="270">45 蓝瓶每分钟需要多少机器？</text>
+    <text class="text body" x="125" y="270">每分钟 45 个蓝瓶需要多少台机器？</text>
 
-    <rect x="105" y="340" width="710" height="174" rx="5" fill="#20262a" stroke="#3f484f"/>
+    <rect x="105" y="340" width="710" height="162" rx="5" fill="#20262a" stroke="#3f484f"/>
     <text class="text label" x="125" y="368" fill="#63bfe8">AI 顾问</text>
-    <text class="text body" x="125" y="404">目标 <tspan class="number">45/min</tspan>；需要 <tspan class="number">9 台</tspan>组装机 2。</text>
-    <text class="text body" x="125" y="435">假设：无插件，机器数向上取整。</text>
-    <text class="text small number" x="125" y="470">数字 / 假设：45/min · 9 · 假设：无插件</text>
-    <text class="text small muted" x="125" y="495">回答来源：本地规则</text>
+    <text class="text body" x="125" y="400">[C1] 化学科技包 <tspan class="number">45/min</tspan>：组装机 3 精确 <tspan class="number">7.2 台</tspan>。</text>
+    <text class="text body" x="125" y="428">向上取整建造 <tspan class="number">8 台</tspan>；假设：无插件。</text>
+    <text class="text small number" x="125" y="458">数字 / 假设：45/min · 7.2 · 8 · 假设：无插件</text>
+    <text class="text small muted" x="125" y="482">回答来源：本地规则</text>
 
-    <g transform="translate(105 535)">
+    <g transform="translate(105 516)">
       <rect width="132" height="34" rx="4" fill="#3a4248"/>
       <text class="text small" x="27" y="22">最大瓶颈</text>
       <rect x="140" width="132" height="34" rx="4" fill="#3a4248"/>
       <text class="text small" x="165" y="22">下一步扩建</text>
-      <rect x="280" width="132" height="34" rx="4" fill="#3a4248"/>
-      <text class="text small" x="303" y="22">电力与科研</text>
-      <rect x="598" width="112" height="34" rx="4" fill="#3a4248" stroke="#59636b"/>
-      <text class="text small" x="632" y="22">清空</text>
+      <rect y="40" width="132" height="34" rx="4" fill="#3a4248"/>
+      <text class="text small" x="23" y="62">电力与科研</text>
+      <rect x="140" y="40" width="132" height="34" rx="4" fill="#3a4248"/>
+      <text class="text small" x="167" y="62">产线配比</text>
+      <rect x="598" y="20" width="112" height="34" rx="4" fill="#3a4248" stroke="#59636b"/>
+      <text class="text small" x="632" y="42">清空</text>
     </g>
-    <rect x="105" y="590" width="585" height="52" rx="4" fill="#151a1d" stroke="#59636b"/>
-    <text class="text body muted" x="125" y="622">输入工厂问题；按 Enter 发送</text>
-    <rect x="704" y="590" width="111" height="52" rx="4" fill="#d48629"/>
-    <text class="text tab" x="742" y="622">发送</text>
+    <rect x="105" y="608" width="585" height="52" rx="4" fill="#151a1d" stroke="#59636b"/>
+    <text class="text body muted" x="125" y="640">输入工厂问题；按 Enter 发送</text>
+    <rect x="704" y="608" width="111" height="52" rx="4" fill="#d48629"/>
+    <text class="text tab" x="742" y="640">发送</text>
   </g>
 
   <g transform="translate(885 75)">
-    <text class="text title" x="0" y="24">四页一体，状态明确</text>
+    <text class="text title" x="0" y="24">三页一体，状态明确</text>
 
     <rect x="0" y="52" width="315" height="138" rx="7" fill="#292f34" stroke="#495158"/>
-    <text class="text label" x="20" y="82" fill="#ffc34d">计算器</text>
-    <text class="text small muted" x="20" y="108">目标  ·  每分钟产量  ·  机器 / 插件</text>
-    <text class="text body" x="20" y="140">chemical-science-pack</text>
-    <text class="text body number" x="20" y="170">9.0 台 → 建造 9 台</text>
+    <text class="text label" x="20" y="82" fill="#ffc34d">聊天内确定性计算</text>
+    <text class="text small muted" x="20" y="108">自然语言  ·  无需 prototype ID</text>
+    <text class="text body" x="20" y="140">“每分钟 100 钢材要几台熔炉？”</text>
+    <text class="text body number" x="20" y="170">13.33 台 → 建造 14 台</text>
 
     <rect x="0" y="210" width="315" height="150" rx="7" fill="#292f34" stroke="#495158"/>
     <text class="text label" x="20" y="238" fill="#ffb33f">顾问提醒（2）· 左上角常驻</text>

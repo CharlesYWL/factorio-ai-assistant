@@ -119,9 +119,14 @@ Lua / RCON 输出仍会被丢弃并回落到本地答案，加入指南不会削
 | “下一步做什么 / 该扩建什么 / 路线 / 阶段” | `planning` | `read_progression_guide` |
 | “最该研究什么 / 科技” | `research` | `read_advisor_alerts`（随后追加 `read_progression_guide`） |
 | “最大的三个瓶颈” | `bottlenecks` | `read_advisor_alerts` |
-| “每分钟 N 个 X 要多少机器” | `calculation` | `calculate_production_ratio` |
+| “每分钟 N 个 X 要多少机器 / 怎么配” | `calculation` | `calculate_production_ratio` |
 
-游戏内 Chat 页的第二个快捷按钮（“下一步扩建” / “What to expand”）直接命中 `planning`。
+`calculation` 的目标和速率由 Companion 从自然语言解析：常见中文别名（蓝瓶、绿板、
+钢材……）、当前游戏语言的同步显示名和静态 catalog 中的 prototype ID 都能命中，玩家
+不需要输入内部 ID。解析不出唯一目标或缺速率时返回澄清问题，而不是猜测。
+
+游戏内 Chat 页的第二个快捷按钮（“下一步扩建” / “What to expand”）直接命中 `planning`，
+第四个（“产线配比” / “Machine ratio”）直接命中 `calculation`。
 
 ## 更新流程
 

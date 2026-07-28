@@ -421,98 +421,6 @@ local function clear_chat_history(player)
   ui.render(player, state, player_state)
 end
 
-local function parse_module_ids(value)
-  local modules = {}
-  local seen = {}
-  for module_id in string.gmatch(value, "[^,%s]+") do
-    if #module_id > 256 then
-      return nil
-    end
-    if not seen[module_id] then
-      table.insert(modules, module_id)
-      seen[module_id] = true
-    end
-    if #modules > 16 then
-      return nil
-    end
-  end
-  return modules
-end
-
-local function send_calculation_request(player)
-  local state = get_state()
-  local player_state = ui_state.ensure_player(state, player.index)
-  local values = ui.read_calculator_inputs(player)
-  for field, value in pairs(values) do
-    ui_state.update_calculator_input(player_state, field, value)
-  end
-  if state.protocol_mismatch ~= nil
-    or state.component_version_mismatch ~= nil
-    or (state.connected and state.assistant_status == nil)
-  then
-    ui_state.set_calculation_error(
-      player_state,
-      "PROTOCOL_INCOMPATIBLE",
-      nil
-    )
-    ui.render(player, state, player_state)
-    return
-  end
-  if not state.connected then
-    ui_state.set_calculation_error(
-      player_state,
-      "COMPANION_OFFLINE",
-      nil
-    )
-    ui.render(player, state, player_state)
-    return
-  end
-  local target_id = trim(values.target_id)
-  local machine_id = trim(values.machine_id)
-  local rate = tonumber(trim(values.rate_per_minute))
-  local modules = parse_module_ids(values.module_ids)
-  if target_id == ""
-    or #target_id > 256
-    or rate == nil
-    or rate <= 0
-    or machine_id ~= "" and #machine_id > 256
-    or modules == nil
-  then
-    ui_state.set_calculation_error(player_state, "INVALID_INPUT", nil)
-    ui.render(player, state, player_state)
-    return
-  end
-
-  local message_id = next_message_id(state, "calculation")
-  local packet = {
-    protocol_version = PROTOCOL_VERSION,
-    schema_version = STATE_SCHEMA_VERSION,
-    message_id = message_id,
-    type = "calculation_request",
-    tick = game.tick,
-    payload = {
-      force_id = player.force.name,
-      target_kind = values.target_kind,
-      target_id = target_id,
-      rate_per_minute = rate,
-      machine_id = machine_id ~= "" and machine_id or nil,
-      module_ids = modules,
-    },
-  }
-  if not send_ui_packet(packet, "calculation request") then
-    ui_state.set_calculation_error(
-      player_state,
-      "COMPANION_OFFLINE",
-      nil
-    )
-    ui.render(player, state, player_state)
-    return
-  end
-
-  ui_state.queue_calculation(player_state, message_id, game.tick)
-  ui.render(player, state, player_state)
-end
-
 local function send_hello()
   local state = get_state()
 
@@ -1075,18 +983,10 @@ local function handle_calculation_response(packet, event)
     localization.register_calculation_result(state, payload.result)
     localization.refresh(state)
   end
-  local player_index =
-    ui_state.complete_calculation(state, payload.reply_to, payload)
-  if player_index ~= nil then
-    local player = game.get_player(player_index)
-    if player ~= nil then
-      ui.render(
-        player,
-        state,
-        ui_state.ensure_player(state, player_index)
-      )
-    end
-  end
+  -- The player-facing calculator form is gone; chat now drives every
+  -- calculation through the Companion. A response is still validated and
+  -- consumed so a mixed Mod/Companion install cannot leave a request pending.
+  ui_state.complete_calculation(state, payload.reply_to, payload)
 end
 
 local function handle_udp_packet(event)
@@ -1313,11 +1213,14 @@ local QUICK_QUESTIONS = {
     ["quick-1-question"] = "当前最大的生产瓶颈是什么？",
     ["quick-2-question"] = "下一步应该优先扩建什么？",
     ["quick-3-question"] = "当前电力和科研状态怎么样？",
+    ["quick-4-question"] = "每分钟 45 个蓝瓶需要多少台机器？",
   },
   en = {
     ["quick-1-question"] = "What is the largest production bottleneck?",
     ["quick-2-question"] = "What should I expand next?",
     ["quick-3-question"] = "How are power and research doing?",
+    ["quick-4-question"] =
+      "How many machines do I need for 45 chemical science per minute?",
   },
 }
 
@@ -1441,8 +1344,6 @@ script.on_event(defines.events.on_gui_click, function(event)
     cancel_chat_request(player)
   elseif action == "clear-chat" then
     clear_chat_history(player)
-  elseif action == "calculate" then
-    send_calculation_request(player)
   elseif action == "dismiss-alert" then
     set_alert_dismissed(player, tags.alert_id, true)
   elseif action == "restore-alert" then
@@ -1468,49 +1369,7 @@ script.on_event(defines.events.on_gui_confirmed, function(event)
   end
   if element.name == ui.CHAT_INPUT_NAME then
     send_chat_request(player, element.text)
-  elseif element.name == ui.CALCULATOR_TARGET_NAME
-    or element.name == ui.CALCULATOR_RATE_NAME
-    or element.name == ui.CALCULATOR_MACHINE_NAME
-    or element.name == ui.CALCULATOR_MODULES_NAME
-  then
-    send_calculation_request(player)
   end
-end)
-
-script.on_event(defines.events.on_gui_text_changed, function(event)
-  local element = event.element
-  if element == nil or not element.valid then
-    return
-  end
-  local fields = {
-    [ui.CALCULATOR_TARGET_NAME] = "target_id",
-    [ui.CALCULATOR_RATE_NAME] = "rate_per_minute",
-    [ui.CALCULATOR_MACHINE_NAME] = "machine_id",
-    [ui.CALCULATOR_MODULES_NAME] = "module_ids",
-  }
-  local field = fields[element.name]
-  if field ~= nil then
-    local state = get_state()
-    local player_state = ui_state.ensure_player(state, event.player_index)
-    ui_state.update_calculator_input(player_state, field, element.text)
-  end
-end)
-
-script.on_event(defines.events.on_gui_selection_state_changed, function(event)
-  local element = event.element
-  if element == nil
-    or not element.valid
-    or element.name ~= ui.CALCULATOR_KIND_NAME
-  then
-    return
-  end
-  local state = get_state()
-  local player_state = ui_state.ensure_player(state, event.player_index)
-  ui_state.update_calculator_input(
-    player_state,
-    "target_kind",
-    element.selected_index == 2 and "fluid" or "item"
-  )
 end)
 
 script.on_event(defines.events.on_gui_location_changed, function(event)
@@ -1555,7 +1414,7 @@ script.on_event("factorio-ai-assistant-toggle-input", function(event)
   end
 end)
 
-for index, tab in ipairs({ "chat", "calculator", "alerts", "status" }) do
+for index, tab in ipairs({ "chat", "alerts", "status" }) do
   local tab_name = tab
   script.on_event("factorio-ai-assistant-tab-" .. index, function(event)
     local player = game.get_player(event.player_index)
@@ -1769,7 +1628,6 @@ local function apply_ui_mock(player, mode)
   elseif mode == "timeout" then
     state.connected = true
     ui_state.append_system(player_state, "chat-timeout", game.tick)
-    ui_state.set_calculation_error(player_state, "TIMEOUT", nil)
   elseif mode == "chat-long" then
     state.connected = true
     for index = 1, 8 do
@@ -1805,41 +1663,18 @@ local function apply_ui_mock(player, mode)
     ui_state.append_mock_message(
       player_state,
       "user",
-      "45 蓝瓶每分钟需要多少机器？",
+      "每分钟 45 蓝瓶需要多少机器？",
       game.tick - 180
     )
     ui_state.append_mock_message(
       player_state,
       "assistant",
-      "目标 45/min；需要 9 台组装机 2。假设：无插件，机器数向上取整。",
+      "[计算结果]\n"
+        .. "[C1] 化学科技包 45/min：组装机 3 精确 7.2 台，向上取整 8 台。\n"
+        .. "[推断]\n机器数量直接采用确定性计算结果，不由模型估算。\n"
+        .. "[假设]\n无插件，机器数向上取整。",
       game.tick - 120
     )
-    player_state.calculator.result = {
-      target = {
-        kind = "item",
-        id = "chemical-science-pack",
-        per_minute = 45,
-      },
-      recipes = {
-        {
-          recipe_id = "chemical-science-pack",
-          machine_id = "assembling-machine-2",
-          machines_exact = 9,
-          machines_rounded_up = 9,
-          module_ids = {},
-        },
-      },
-      external_inputs = {
-        {
-          kind = "item",
-          id = "engine-unit",
-          per_minute = 45,
-        },
-      },
-      byproducts = {},
-      rounding = "精确数量与向上取整后的建造数量同时显示。",
-      truncated = false,
-    }
     state.advisor_alerts = mock_alert_set(player, "one")
   else
     player.print({ "factorio-ai-assistant.mock-invalid-mode" })
