@@ -1,6 +1,11 @@
 import type { ProductionResult } from "@factorio-ai-assistant/calculator";
 import type {
+  ProgressionPlan,
+  ProgressionStep,
+} from "@factorio-ai-assistant/guide";
+import type {
   AdvisorAlert,
+  DynamicForceSummary,
   ResourceKind,
 } from "@factorio-ai-assistant/protocol";
 
@@ -14,19 +19,26 @@ import {
   IDENTIFIER_NAMES,
   type LocalizedNameLookup,
 } from "./localization.js";
+import {
+  MAX_PROGRESSION_STEPS,
+  ProgressionService,
+  type ProgressionResult,
+} from "./progression-service.js";
 import type { CompanionStateStore } from "./state-store.js";
 
 export type AssistantIntent =
   | "calculation"
   | "diagnosis"
   | "research"
+  | "planning"
   | "bottlenecks"
   | "evidence"
   | "general";
 
 export type AssistantToolName =
   | "calculate_production_ratio"
-  | "read_advisor_alerts";
+  | "read_advisor_alerts"
+  | "read_progression_guide";
 
 export interface AssistantToolDefinition {
   name: AssistantToolName;
@@ -65,6 +77,20 @@ export const ASSISTANT_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
       },
     },
   },
+  {
+    name: "read_progression_guide",
+    description:
+      "Read-only stage inference against the built-in, versioned Factorio 2.0 base-game progression guide; returns the current stage, ordered next steps, and data gaps.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["force_id", "max_steps"],
+      properties: {
+        force_id: { type: "string", minLength: 1, maxLength: 256 },
+        max_steps: { type: "integer", minimum: 1, maximum: 3 },
+      },
+    },
+  },
 ];
 
 export interface AssistantToolCall {
@@ -79,7 +105,7 @@ export interface AssistantToolCall {
 
 export interface GroundingEvidence {
   id: string;
-  category: "fact" | "calculation";
+  category: "fact" | "calculation" | "guide";
   text: string;
 }
 
@@ -98,6 +124,7 @@ export interface AssistantGrounding {
   localInference: string;
   alerts: AdvisorAlert[];
   calculation?: ProductionResult;
+  progression?: ProgressionPlan;
 }
 
 export interface AssistantToolModelContext {
@@ -173,6 +200,7 @@ export class AssistantToolbox {
   readonly #stateStore: CompanionStateStore;
   readonly #advisor: AdvisorEngine;
   readonly #calculation: CalculationService;
+  readonly #progression: ProgressionService;
   readonly #language: AssistantLanguage;
   readonly #names: LocalizedNameLookup;
 
@@ -185,6 +213,7 @@ export class AssistantToolbox {
     this.#stateStore = stateStore;
     this.#advisor = advisor;
     this.#calculation = new CalculationService(stateStore);
+    this.#progression = new ProgressionService(stateStore, advisor);
     this.#language = language;
     this.#names = names;
   }
@@ -205,7 +234,114 @@ export class AssistantToolbox {
     if (intent === "calculation") {
       return this.#runCalculation(question, requestedForceId);
     }
+    if (intent === "planning" || intent === "research") {
+      return this.#withProgression(
+        this.#runAdvisor(intent, question, requestedForceId),
+        question,
+        requestedForceId,
+      );
+    }
     return this.#runAdvisor(intent, question, requestedForceId);
+  }
+
+  #withProgression(
+    base: AssistantGrounding,
+    question: string,
+    requestedForceId: string | undefined,
+  ): AssistantGrounding {
+    const intent = base.intent;
+    if (intent === "calculation") {
+      return base;
+    }
+    const forceId =
+      requestedForceId ??
+      base.alerts[0]?.force_id ??
+      this.#stateStore.dynamicState?.payload.forces[0]?.id;
+    const result = this.#progression.plan({
+      ...(forceId === undefined ? {} : { forceId }),
+      maxSteps: MAX_PROGRESSION_STEPS,
+      alerts: base.alerts,
+    });
+    const { plan } = result;
+
+    const alertEvidenceIds = new Map<string, string>();
+    for (const [index, alert] of base.alerts.entries()) {
+      const evidenceId = base.evidence[index]?.id;
+      if (evidenceId !== undefined) {
+        alertEvidenceIds.set(alert.id, evidenceId);
+      }
+    }
+
+    const guideEvidence: GroundingEvidence[] = [
+      {
+        id: "G1",
+        category: "guide",
+        text: stageEvidenceText(this.#language, plan),
+      },
+    ];
+    const actions: GroundedAction[] = [];
+    for (const step of plan.steps) {
+      if (step.origin === "bottleneck") {
+        actions.push({
+          text: step.objective[this.#language],
+          evidence_id:
+            (step.alert_id === undefined
+              ? undefined
+              : alertEvidenceIds.get(step.alert_id)) ?? "G1",
+        });
+        continue;
+      }
+      const evidenceId = `G${guideEvidence.length + 1}`;
+      guideEvidence.push({
+        id: evidenceId,
+        category: "guide",
+        text: ruleEvidenceText(this.#language, step),
+      });
+      actions.push({
+        text: step.objective[this.#language],
+        evidence_id: evidenceId,
+      });
+    }
+
+    const noAdvisorEvidence = missingAdvisorEvidence(
+      this.#language,
+      intent,
+      question,
+      this.#stateStore.dynamicState?.payload.forces.some(
+        (force) => force.id === forceId,
+      ) ?? false,
+    );
+    const missingData = base.missingData.filter(
+      (entry) => actions.length === 0 || entry !== noAdvisorEvidence,
+    );
+    for (const gap of plan.data_gaps) {
+      const reason = gap.reason[this.#language];
+      if (!missingData.includes(reason)) {
+        missingData.push(reason);
+      }
+    }
+    if (!result.stateAvailable) {
+      missingData.push(
+        this.#language === "zh-CN"
+          ? "尚未同步任何存档状态，以下只是通用流程阶段说明，不代表当前工厂。"
+          : "No save state has been synchronized, so the following is a general stage overview rather than a statement about the current factory.",
+      );
+    }
+
+    return {
+      ...base,
+      calls: orderProgressionCalls(
+        intent,
+        base.calls,
+        progressionCall(result, this.#language),
+      ),
+      evidence: [...base.evidence, ...guideEvidence],
+      actions,
+      assumptions: [...base.assumptions, guideAssumption(this.#language, plan)],
+      missingData,
+      localInference: progressionInference(this.#language, plan, base.alerts.length),
+      progression: plan,
+    };
   }
 
   #runCalculation(
@@ -493,11 +629,14 @@ export class AssistantToolbox {
       (alert) => forceId === undefined || alert.force_id === forceId,
     );
     const alerts = selectAlerts(intent, question, availableAlerts).slice(0, 3);
-    const evidence = alerts.map((alert, index) => ({
+    const evidence: GroundingEvidence[] = alerts.map((alert, index) => ({
       id: `A${index + 1}`,
       category: "fact" as const,
       text: alert.evidence,
     }));
+    if (dynamicForce !== undefined) {
+      evidence.push(...synchronizedStateEvidence(this.#language, dynamicForce));
+    }
     const actions = alerts.map((alert, index) => ({
       text: alert.recommendation,
       evidence_id: `A${index + 1}`,
@@ -519,7 +658,14 @@ export class AssistantToolbox {
     }
 
     if (alerts.length === 0) {
-      missingData.push(missingAdvisorEvidence(this.#language, intent, question));
+      missingData.push(
+        missingAdvisorEvidence(
+          this.#language,
+          intent,
+          question,
+          dynamicForce !== undefined,
+        ),
+      );
     } else if (intent === "diagnosis") {
       missingData.push(diagnosisLimitation(this.#language, question));
     }
@@ -549,6 +695,11 @@ export class AssistantToolbox {
                     evidence: alert.evidence,
                     recommendation: alert.recommendation,
                   })),
+                  synchronized_snapshot: {
+                    evidence_ids: ["S1", "S2", "S3"],
+                    truncated:
+                      this.#stateStore.dynamicState?.payload.truncated === true,
+                  },
                 },
               }),
         },
@@ -561,7 +712,12 @@ export class AssistantToolbox {
           : "Bottlenecks are ordered by severity, first-seen time, and rule ID, with a maximum of three.",
       ],
       missingData,
-      localInference: localAdvisorInference(this.#language, intent, alerts.length),
+      localInference: localAdvisorInference(
+        this.#language,
+        intent,
+        alerts.length,
+        dynamicForce !== undefined,
+      ),
       alerts,
     };
   }
@@ -581,6 +737,130 @@ export function toAssistantToolModelContext(
   };
 }
 
+function orderProgressionCalls(
+  intent: AssistantIntent,
+  baseCalls: AssistantToolCall[],
+  guideCall: Omit<AssistantToolCall, "id">,
+): AssistantToolCall[] {
+  const ordered =
+    intent === "planning"
+      ? [guideCall, ...baseCalls]
+      : [...baseCalls, guideCall];
+  return ordered.map((call, index) => ({ ...call, id: `tool-${index + 1}` }));
+}
+
+function progressionCall(
+  result: ProgressionResult,
+  language: AssistantLanguage,
+): Omit<AssistantToolCall, "id"> {
+  const { plan } = result;
+  return {
+    name: "read_progression_guide",
+    status: result.stateAvailable ? "ok" : "error",
+    arguments: {
+      ...(result.forceId === undefined ? {} : { force_id: result.forceId }),
+      max_steps: MAX_PROGRESSION_STEPS,
+    },
+    ...(result.stateAvailable
+      ? {}
+      : {
+          error_code: "STATE_UNAVAILABLE",
+          error_message:
+            language === "zh-CN"
+              ? "没有同步状态，只能给出通用阶段说明。"
+              : "No synchronized state is available; only a general stage overview can be given.",
+        }),
+    output: {
+      guide_version: plan.guide_version,
+      guide_revision: plan.guide_revision,
+      guide_factorio_version: plan.factorio_version,
+      stage: {
+        id: plan.stage.id,
+        order: plan.stage.order,
+        total: plan.stage.total,
+        basis: plan.stage.basis,
+        complete: plan.stage.complete,
+        uncertain: plan.stage.uncertain,
+        title: plan.stage.title[language],
+      },
+      next_stage_id: plan.next_stage?.id ?? null,
+      steps: plan.steps.map((step) => ({
+        order: step.order,
+        origin: step.origin,
+        rule_id: step.rule_id,
+        objective: step.objective[language],
+      })),
+      data_gap_rule_ids: plan.data_gaps.map(({ rule_id }) => rule_id),
+      sources: plan.sources.map(({ id, url, accessed }) => ({ id, url, accessed })),
+    },
+  };
+}
+
+function stageEvidenceText(
+  language: AssistantLanguage,
+  plan: ProgressionPlan,
+): string {
+  const stage = plan.stage;
+  if (stage.basis === "general") {
+    return language === "zh-CN"
+      ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）共 ${stage.total} 个阶段；没有同步状态时按第 ${stage.order} 阶段“${stage.title["zh-CN"]}”给出通用说明，目标是${stage.goal["zh-CN"]}`
+      : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) has ${stage.total} stages; without synchronized state it describes stage ${stage.order}, ${stage.title.en}, whose goal is: ${stage.goal.en}`;
+  }
+  const basis =
+    stage.matched_technologies.length === 0
+      ? language === "zh-CN"
+        ? "尚无阶段门槛科技"
+        : "no stage gate technology yet"
+      : stage.matched_technologies.join(", ");
+  if (stage.uncertain) {
+    return language === "zh-CN"
+      ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）按已同步科技（${basis}）判定至少处于第 ${stage.order}/${stage.total} 阶段“${stage.title["zh-CN"]}”；静态状态被裁剪，部分阶段门槛无法确认，实际进度可能更靠后。下一目标：${plan.next_goal["zh-CN"]}`
+      : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) places this force at stage ${stage.order}/${stage.total} or later, ${stage.title.en}, from the synchronized technologies (${basis}); the static state was truncated so some stage gates are unconfirmed and real progress may be further along. Next goal: ${plan.next_goal.en}`;
+  }
+  return language === "zh-CN"
+    ? `内置流程指南 ${plan.guide_version}（Factorio ${plan.factorio_version} 原版）按已研究科技（${basis}）判定当前处于第 ${stage.order}/${stage.total} 阶段“${stage.title["zh-CN"]}”；下一目标：${plan.next_goal["zh-CN"]}`
+    : `Built-in progression guide ${plan.guide_version} (Factorio ${plan.factorio_version} base game) places this force in stage ${stage.order}/${stage.total}, ${stage.title.en}, based on researched technologies (${basis}); next goal: ${plan.next_goal.en}`;
+}
+
+function ruleEvidenceText(
+  language: AssistantLanguage,
+  step: ProgressionStep,
+): string {
+  return language === "zh-CN"
+    ? `指南规则 ${step.rule_id}：${step.rationale["zh-CN"]}（验证信号：${step.verification["zh-CN"]}）`
+    : `Guide rule ${step.rule_id}: ${step.rationale.en} (verification: ${step.verification.en})`;
+}
+
+function guideAssumption(
+  language: AssistantLanguage,
+  plan: ProgressionPlan,
+): string {
+  return language === "zh-CN"
+    ? `流程建议来自仓库内置的 Factorio 2.0 原版指南 ${plan.guide_version}（修订 ${plan.guide_revision}，对应 ${plan.factorio_version}），运行时不联网；它描述的是通用原版流程，不包含本存档的地图布局、库存、皮带或单机状态。`
+    : `Progression advice comes from the repository's built-in Factorio 2.0 base-game guide ${plan.guide_version} (revision ${plan.guide_revision}, targeting ${plan.factorio_version}) with no runtime network access; it describes the generic vanilla route and knows nothing about this save's map layout, inventory, belts, or individual machines.`;
+}
+
+function progressionInference(
+  language: AssistantLanguage,
+  plan: ProgressionPlan,
+  alertCount: number,
+): string {
+  if (language === "zh-CN") {
+    if (plan.stage.basis === "general") {
+      return "没有同步状态，只能按内置指南给出通用阶段顺序，不能声称了解当前工厂。";
+    }
+    return alertCount === 0
+      ? "阶段判定来自已研究科技与指南规则匹配，步骤顺序由规则顺序决定，不是模型自行排序。"
+      : "活动瓶颈排在通用流程步骤之前：先按规则证据修复当前产线，再推进阶段目标。";
+  }
+  if (plan.stage.basis === "general") {
+    return "Without synchronized state only the generic stage order from the built-in guide can be given; the current factory is unknown.";
+  }
+  return alertCount === 0
+    ? "The stage comes from researched technologies matched against guide rules, and the step order follows the rule order rather than a model ranking."
+    : "Active bottlenecks are ordered ahead of generic stage steps: repair the current line from rule evidence first, then advance the stage goal.";
+}
+
 export function formatGroundedAnswer(
   language: AssistantLanguage,
   grounding: AssistantGrounding,
@@ -593,6 +873,9 @@ export function formatGroundedAnswer(
   const facts = grounding.evidence.filter(
     ({ category }) => category === "fact",
   );
+  const guide = grounding.evidence.filter(
+    ({ category }) => category === "guide",
+  );
 
   appendSection(
     lines,
@@ -603,6 +886,11 @@ export function formatGroundedAnswer(
     lines,
     language === "zh-CN" ? "[事实]" : "[Facts]",
     facts.map(({ id, text }) => `[${id}] ${text}`),
+  );
+  appendSection(
+    lines,
+    language === "zh-CN" ? "[流程指南]" : "[Progression guide]",
+    guide.map(({ id, text }) => `[${id}] ${text}`),
   );
   appendSection(
     lines,
@@ -657,11 +945,18 @@ function classifyAssistantIntent(question: string): AssistantIntent {
   ) {
     return "bottlenecks";
   }
-  if (/(?:研究什么|科技|research next|what.*research)/u.test(normalized)) {
-    return "research";
-  }
   if (/(?:为什么|停了|停止|故障|why|stopped|not working)/u.test(normalized)) {
     return "diagnosis";
+  }
+  if (
+    /(?:下一步|接下来|下面.{0,3}该|该做什么|做什么好|该建什么|建什么好|扩建|该扩|规划|路线|流程|阶段|通关|next step|what.*next|should i (?:do|build|expand)|what to build|what to expand|road ?map|progression)/u.test(
+      normalized,
+    )
+  ) {
+    return "planning";
+  }
+  if (/(?:研究什么|科技|research next|what.*research)/u.test(normalized)) {
+    return "research";
   }
   return "general";
 }
@@ -712,10 +1007,109 @@ function selectAlerts(
   return alerts;
 }
 
+function synchronizedStateEvidence(
+  language: AssistantLanguage,
+  force: DynamicForceSummary,
+): GroundingEvidence[] {
+  const power = force.power;
+  const powerText =
+    language === "zh-CN"
+      ? `电力网络 ${power.network_count} 个；发电 ${formatPower(power.generated_watts)}；用电 ${formatPower(power.consumed_watts)}；满足率 ${formatNumber(power.satisfaction_ratio * 100)}%。`
+      : `Power networks: ${power.network_count}; generation: ${formatPower(power.generated_watts)}; consumption: ${formatPower(power.consumed_watts)}; satisfaction: ${formatNumber(power.satisfaction_ratio * 100)}%.`;
+  const researchText =
+    force.research === null
+      ? language === "zh-CN"
+        ? "当前没有进行中的研究。"
+        : "No research is currently active."
+      : language === "zh-CN"
+        ? `当前研究 ${force.research.technology_id}；进度 ${formatNumber(force.research.progress * 100)}%。`
+        : `Current research: ${force.research.technology_id}; progress: ${formatNumber(force.research.progress * 100)}%.`;
+
+  return [
+    { id: "S1", category: "fact", text: powerText },
+    { id: "S2", category: "fact", text: researchText },
+    productionFlowEvidence(language, force),
+  ];
+}
+
+function productionFlowEvidence(
+  language: AssistantLanguage,
+  force: DynamicForceSummary,
+): GroundingEvidence {
+  const flows = [
+    ...force.items.map((metric) => ({ kind: "item" as const, ...metric })),
+    ...force.fluids.map((metric) => ({ kind: "fluid" as const, ...metric })),
+  ]
+    .map((flow) => ({
+      ...flow,
+      deficit: flow.consumed_per_minute_1m - flow.produced_per_minute_1m,
+      throughput:
+        flow.consumed_per_minute_1m + flow.produced_per_minute_1m,
+    }))
+    .filter(({ throughput }) => throughput > 0);
+  const deficits = flows
+    .filter(({ deficit }) => deficit > 0)
+    .sort(
+      (left, right) =>
+        right.deficit - left.deficit ||
+        right.throughput - left.throughput ||
+        left.id.localeCompare(right.id),
+    );
+  const candidates = (deficits.length > 0
+    ? deficits
+    : flows.sort(
+        (left, right) =>
+          right.throughput - left.throughput ||
+          left.id.localeCompare(right.id),
+      )
+  ).slice(0, 3);
+
+  if (candidates.length === 0) {
+    return {
+      id: "S3",
+      category: "fact",
+      text:
+        language === "zh-CN"
+          ? "当前动态快照没有非零生产或消耗流量。"
+          : "The current dynamic snapshot contains no nonzero production or consumption flow.",
+    };
+  }
+
+  const entries = candidates.map((candidate) => {
+    const kind =
+      language === "zh-CN"
+        ? candidate.kind === "item"
+          ? "物品"
+          : "流体"
+        : candidate.kind;
+    const base =
+      language === "zh-CN"
+        ? `${kind} ${candidate.id}（产出 ${formatNumber(candidate.produced_per_minute_1m)}/min，消耗 ${formatNumber(candidate.consumed_per_minute_1m)}/min`
+        : `${kind} ${candidate.id} (produced ${formatNumber(candidate.produced_per_minute_1m)}/min, consumed ${formatNumber(candidate.consumed_per_minute_1m)}/min`;
+    if (deficits.length === 0) {
+      return `${base}${language === "zh-CN" ? "）" : ")"}`;
+    }
+    return language === "zh-CN"
+      ? `${base}，净缺口 ${formatNumber(candidate.deficit)}/min）`
+      : `${base}, net deficit ${formatNumber(candidate.deficit)}/min)`;
+  });
+  const text =
+    language === "zh-CN"
+      ? deficits.length > 0
+        ? `1 分钟净缺口候选：${entries.join("；")}。`
+        : `1 分钟样本未发现正净缺口；高吞吐项：${entries.join("；")}。`
+      : deficits.length > 0
+        ? `One-minute net-deficit candidates: ${entries.join("; ")}.`
+        : `The one-minute sample has no positive net deficit; high-throughput flows: ${entries.join("; ")}.`;
+
+  return { id: "S3", category: "fact", text };
+}
+
 function missingAdvisorEvidence(
   language: AssistantLanguage,
   intent: Exclude<AssistantIntent, "calculation">,
   question: string,
+  hasDynamicState: boolean,
 ): string {
   const oilQuestion =
     intent === "diagnosis" &&
@@ -729,6 +1123,9 @@ function missingAdvisorEvidence(
     if (intent === "research") {
       return "当前没有触发科研建议规则；需要更多科研包供需或目标信息后才能排序科技。";
     }
+    if (hasDynamicState) {
+      return "当前没有持续性规则告警；[S3] 只按 force 级 1 分钟聚合净流量排序，不含库存、皮带和单机停机原因。";
+    }
     return "当前本地规则没有活动告警，不能据此虚构瓶颈。";
   }
   if (oilQuestion) {
@@ -736,6 +1133,9 @@ function missingAdvisorEvidence(
   }
   if (intent === "research") {
     return "No research recommendation rule is active; more science supply or goal information is needed to rank technologies.";
+  }
+  if (hasDynamicState) {
+    return "No persistent advisor rule is active; [S3] ranks only force-level one-minute aggregate net flow and does not include inventory, belts, or per-machine stop causes.";
   }
   return "No local rule is active, so a bottleneck cannot be invented from this data.";
 }
@@ -762,10 +1162,13 @@ function localAdvisorInference(
   language: AssistantLanguage,
   intent: Exclude<AssistantIntent, "calculation">,
   alertCount: number,
+  hasDynamicState: boolean,
 ): string {
   if (language === "zh-CN") {
     if (alertCount === 0) {
-      return "当前为本地模式（确定性规则）；没有足够证据形成状态结论。";
+      return hasDynamicState
+        ? "电力、科研和生产净流量来自最新同步快照；[S3] 给出扩建候选，但不能单独证明具体机器根因。"
+        : "当前为本地模式（确定性规则）；没有足够证据形成状态结论。";
     }
     if (intent === "diagnosis") {
       return "这些规则信号给出可能原因范围，但不能证明某一台机器或管道就是根因。";
@@ -776,7 +1179,9 @@ function localAdvisorInference(
     return "优先级来自确定性规则的严重度与触发证据。";
   }
   if (alertCount === 0) {
-    return "Local rule mode has insufficient evidence for a state conclusion.";
+    return hasDynamicState
+      ? "Power, research, and production net flow come from the latest synchronized snapshot; [S3] supplies expansion candidates but does not prove a specific machine-level root cause."
+      : "Local rule mode has insufficient evidence for a state conclusion.";
   }
   if (intent === "diagnosis") {
     return "These rule signals narrow possible causes but do not prove that one machine or pipe is the root cause.";
@@ -799,4 +1204,17 @@ function appendSection(lines: string[], heading: string, values: string[]): void
 
 function formatNumber(value: number): string {
   return String(Math.round(value * 1_000) / 1_000);
+}
+
+function formatPower(value: number): string {
+  if (value >= 1_000_000_000) {
+    return `${formatNumber(value / 1_000_000_000)} GW`;
+  }
+  if (value >= 1_000_000) {
+    return `${formatNumber(value / 1_000_000)} MW`;
+  }
+  if (value >= 1_000) {
+    return `${formatNumber(value / 1_000)} kW`;
+  }
+  return `${formatNumber(value)} W`;
 }

@@ -387,10 +387,10 @@ void test(
   "rejects conflicting message IDs and survives malformed input",
   { timeout: 3_000 },
   async (context) => {
-    const warnings: string[] = [];
+    const warnings: Array<{ event: string; fields: Record<string, unknown> }> = [];
     const logger: CompanionLogger = {
       info: () => undefined,
-      warn: (event) => warnings.push(event),
+      warn: (event, fields = {}) => warnings.push({ event, fields }),
       error: () => undefined,
     };
     const companion = await startCompanionServer({ port: 0, logger });
@@ -421,7 +421,7 @@ void test(
       companion.address.address,
     );
     assert.equal(await receiveWithin(factorio, 50), undefined);
-    assert.ok(warnings.includes("udp_message_id_conflict"));
+    assert.ok(warnings.some(({ event }) => event === "udp_message_id_conflict"));
 
     await send(
       factorio,
@@ -429,6 +429,12 @@ void test(
       companion.address.port,
       companion.address.address,
     );
+    assert.equal(await receiveWithin(factorio, 20), undefined);
+    const invalidPacketWarning = warnings.find(
+      ({ event }) => event === "udp_invalid_packet_rejected",
+    );
+    assert.equal(invalidPacketWarning?.fields.error_code, "INVALID_JSON");
+    assert.equal(invalidPacketWarning?.fields.error_detail, "Packet is not valid JSON");
     const healthyHello = createHelloPacket({
       messageId: "factorio-after-malicious-input",
       tick: 602,

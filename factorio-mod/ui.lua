@@ -1,10 +1,14 @@
 local mod_gui = require("__core__.lualib.mod-gui")
+local ui_state = require("ui_state")
 
 local ui = {}
 
 ui.BUTTON_NAME = "factorio-ai-assistant-toggle"
 ui.PANEL_NAME = "factorio-ai-assistant-panel"
 ui.CHAT_INPUT_NAME = "factorio-ai-assistant-chat-input"
+ui.CHAT_SEND_NAME = "factorio-ai-assistant-chat-send"
+ui.CHAT_CANCEL_NAME = "factorio-ai-assistant-chat-cancel"
+ui.CHAT_CLEAR_NAME = "factorio-ai-assistant-chat-clear"
 ui.CALCULATOR_KIND_NAME = "factorio-ai-assistant-calculator-kind"
 ui.CALCULATOR_TARGET_NAME = "factorio-ai-assistant-calculator-target"
 ui.CALCULATOR_RATE_NAME = "factorio-ai-assistant-calculator-rate"
@@ -14,8 +18,18 @@ ui.CALCULATOR_MODULES_NAME = "factorio-ai-assistant-calculator-modules"
 local TITLEBAR_NAME = "factorio-ai-assistant-titlebar"
 local HEADER_STATUS_NAME = "factorio-ai-assistant-header-status"
 local CONTENT_NAME = "factorio-ai-assistant-content"
+local NOTICE_NAME = "factorio-ai-assistant-notice"
+local TABS_NAME = "factorio-ai-assistant-tabs"
+local BODY_NAME = "factorio-ai-assistant-body"
+local CHAT_HISTORY_NAME = "factorio-ai-assistant-chat-history"
+local CHAT_ENTRY_PREFIX = "factorio-ai-assistant-chat-entry-"
+local CHAT_EMPTY_NAME = "factorio-ai-assistant-chat-empty"
+local CHAT_LOADING_NAME = "factorio-ai-assistant-chat-loading"
 local TOAST_NAME = "factorio-ai-assistant-toast"
+local ALERT_HUD_NAME = "factorio-ai-assistant-alert-hud"
 local ALERT_SETTING_NAME = "factorio-ai-assistant-advisor-muted-rules"
+local HUD_MAX_ALERTS = 4
+local HUD_TEXT_WIDTH = 250
 
 local SIZE_DIMENSIONS = {
   compact = { width = 540, height = 620 },
@@ -53,15 +67,25 @@ local CALCULATION_ERROR_LOCALES = {
   TIMEOUT = "calc-error-timeout",
 }
 local apply_frame_size
+local ensure_shell
 local add_notice
 local add_tabs
+local update_tabs
 local render_chat
+local build_chat
+local chat_signature
+local sync_chat_entries
+local update_chat_controls
 local render_chat_entry
 local render_calculator
 local render_calculation_result
 local render_resource_rates
 local add_calculation_error
 local render_alerts
+local collect_force_alerts
+local compare_alerts
+local hud_alerts
+local hud_signature
 local render_status
 local refresh_header_status
 local incompatibility_caption
@@ -200,18 +224,22 @@ function ui.render(player, state, player_state)
   refresh_header_status(frame, state)
 
   local content = frame[CONTENT_NAME]
-  content.clear()
-  add_notice(content)
-  add_tabs(content, player_state.active_tab)
+  ensure_shell(content, player_state)
+  local body = content[BODY_NAME]
 
   if player_state.active_tab == "chat" then
-    render_chat(content, state, player_state)
-  elseif player_state.active_tab == "calculator" then
-    render_calculator(content, state, player_state)
+    render_chat(body, state, player_state)
+    return
+  end
+
+  body.clear()
+  body.tags = { view = player_state.active_tab }
+  if player_state.active_tab == "calculator" then
+    render_calculator(body, state, player_state)
   elseif player_state.active_tab == "alerts" then
-    render_alerts(content, state, player.force.name)
+    render_alerts(body, state, player_state, player.force.name)
   else
-    render_status(content, state)
+    render_status(body, state)
   end
 end
 
@@ -309,6 +337,101 @@ function ui.expire_toasts(state, tick)
   end
 end
 
+function ui.refresh_alerts_hud(player, state, player_state)
+  local frame_flow = mod_gui.get_frame_flow(player)
+  local existing = frame_flow[ALERT_HUD_NAME]
+  local alerts = hud_alerts(state, player_state, player.force.name)
+  if #alerts == 0 then
+    if existing ~= nil then
+      existing.destroy()
+    end
+    return
+  end
+
+  local signature = hud_signature(alerts)
+  if existing ~= nil then
+    if (existing.tags or {}).signature == signature then
+      return
+    end
+    existing.destroy()
+  end
+
+  local hud = frame_flow.add({
+    type = "frame",
+    name = ALERT_HUD_NAME,
+    direction = "vertical",
+    caption = { "factorio-ai-assistant.alert-hud-title", #alerts },
+    tags = { signature = signature },
+  })
+  hud.style.maximal_width = 360
+  hud.style.padding = 8
+  hud.style.top_padding = 4
+
+  local list = hud.add({ type = "flow", direction = "vertical" })
+  list.style.horizontally_stretchable = true
+  local shown = math.min(#alerts, HUD_MAX_ALERTS)
+  for index = 1, shown do
+    local alert = alerts[index]
+    if index > 1 then
+      list.add({ type = "line", direction = "horizontal" })
+    end
+    local row = list.add({ type = "flow", direction = "horizontal" })
+    row.style.horizontally_stretchable = true
+    row.style.vertical_align = "center"
+
+    local text_flow = row.add({ type = "flow", direction = "vertical" })
+    text_flow.style.horizontally_stretchable = true
+    local heading = text_flow.add({
+      type = "label",
+      caption = {
+        "factorio-ai-assistant.alert-heading",
+        localized_severity(alert.severity),
+        localized_rule(alert.rule_id),
+      },
+    })
+    heading.style.font = "default-bold"
+    heading.style.font_color = SEVERITY_COLORS[alert.severity]
+    local evidence = add_wrapped_label(text_flow, alert.evidence, HUD_TEXT_WIDTH)
+    evidence.style.font = "default-small"
+    evidence.style.font_color = { r = 0.72, g = 0.75, b = 0.78 }
+
+    local actions = row.add({ type = "flow", direction = "horizontal" })
+    actions.style.vertical_align = "center"
+    actions.add({
+      type = "sprite-button",
+      sprite = "utility/expand",
+      style = "frame_action_button",
+      tooltip = { "factorio-ai-assistant.open-alerts" },
+      tags = { action = "open-alerts" },
+    })
+    actions.add({
+      type = "sprite-button",
+      sprite = "utility/close",
+      style = "frame_action_button",
+      tooltip = { "factorio-ai-assistant.dismiss-alert-tooltip" },
+      tags = { action = "dismiss-alert", alert_id = alert.id },
+    })
+  end
+
+  if #alerts > shown then
+    hud.add({
+      type = "button",
+      caption = {
+        "factorio-ai-assistant.alert-hud-more",
+        #alerts - shown,
+      },
+      tags = { action = "open-alerts" },
+    })
+  end
+end
+
+function ui.clear_alerts_hud(player)
+  local hud = mod_gui.get_frame_flow(player)[ALERT_HUD_NAME]
+  if hud ~= nil then
+    hud.destroy()
+  end
+end
+
 function ui.save_location(player, player_state)
   local frame = player.gui.screen[ui.PANEL_NAME]
   if frame ~= nil then
@@ -331,33 +454,111 @@ apply_frame_size = function(frame, player_state)
   end
 end
 
+ensure_shell = function(content, player_state)
+  if content[NOTICE_NAME] == nil then
+    add_notice(content)
+  end
+  local tabs = content[TABS_NAME]
+  if tabs == nil then
+    tabs = add_tabs(content)
+  end
+  update_tabs(tabs, player_state.active_tab)
+  if content[BODY_NAME] == nil then
+    local body = content.add({
+      type = "flow",
+      name = BODY_NAME,
+      direction = "vertical",
+    })
+    body.style.horizontally_stretchable = true
+    body.style.vertically_stretchable = true
+  end
+end
+
 add_notice = function(parent)
   local notice = parent.add({
     type = "label",
+    name = NOTICE_NAME,
     caption = { "factorio-ai-assistant.nonofficial-notice" },
   })
   notice.style.font_color = { r = 0.7, g = 0.72, b = 0.75 }
 end
 
-add_tabs = function(parent, active_tab)
+add_tabs = function(parent)
   local flow = parent.add({
     type = "flow",
+    name = TABS_NAME,
     direction = "horizontal",
   })
   for _, tab in ipairs(TAB_ORDER) do
     flow.add({
       type = "button",
       caption = { "factorio-ai-assistant.tab-" .. tab },
-      style = tab == active_tab and "confirm_button" or "button",
       tags = {
         action = "tab",
         tab = tab,
       },
     })
   end
+  return flow
 end
 
-render_chat = function(parent, state, player_state)
+update_tabs = function(flow, active_tab)
+  for _, child in pairs(flow.children) do
+    local tab = child.tags and child.tags.tab
+    if tab ~= nil then
+      local style = tab == active_tab and "confirm_button" or "button"
+      if child.style.name ~= style then
+        child.style = style
+      end
+    end
+  end
+end
+
+render_chat = function(body, state, player_state)
+  local signature = chat_signature(state, player_state)
+  local tags = body.tags or {}
+  if tags.view ~= "chat" or tags.chat_signature ~= signature then
+    body.clear()
+    build_chat(body, state, player_state)
+    tags = {
+      view = "chat",
+      chat_signature = signature,
+      chat_revision = nil,
+    }
+  end
+
+  local history = body[CHAT_HISTORY_NAME]
+  sync_chat_entries(history, player_state)
+  update_chat_controls(body, player_state)
+
+  if tags.chat_revision ~= player_state.chat_revision then
+    history.scroll_to_bottom()
+    tags.chat_revision = player_state.chat_revision
+  end
+  body.tags = tags
+end
+
+chat_signature = function(state, player_state)
+  local mismatch = state.component_version_mismatch
+  local banner = "online"
+  if incompatibility_caption(state) ~= nil then
+    banner = "incompatible"
+  elseif not state.connected then
+    banner = "offline"
+  end
+  return table.concat({
+    banner,
+    tostring(state.protocol_mismatch),
+    mismatch ~= nil
+      and tostring(mismatch.mod_version)
+        .. ">"
+        .. tostring(mismatch.companion_version)
+      or "-",
+    player_state.size,
+  }, "|")
+end
+
+build_chat = function(parent, state, player_state)
   local incompatible = incompatibility_caption(state)
   if incompatible ~= nil then
     add_state_banner(parent, "warning", incompatible)
@@ -369,34 +570,18 @@ render_chat = function(parent, state, player_state)
 
   local history = parent.add({
     type = "scroll-pane",
+    name = CHAT_HISTORY_NAME,
     direction = "vertical",
   })
   history.style.horizontally_stretchable = true
   history.style.vertically_stretchable = true
   history.style.padding = 8
-  if #player_state.chat_history == 0 then
-    add_wrapped_label(
-      history,
-      { "factorio-ai-assistant.chat-empty" },
-      panel_text_width(player_state)
-    )
-  else
-    for _, entry in ipairs(player_state.chat_history) do
-      render_chat_entry(history, entry, player_state)
-    end
-  end
-  if player_state.chat_pending ~= nil then
-    local loading = history.add({
-      type = "label",
-      caption = { "factorio-ai-assistant.chat-loading" },
-    })
-    loading.style.font_color = { r = 1, g = 0.72, b = 0.2 }
-  end
 
   local quick = parent.add({
     type = "flow",
     direction = "horizontal",
   })
+  quick.style.vertical_align = "center"
   for index = 1, 3 do
     quick.add({
       type = "button",
@@ -407,6 +592,15 @@ render_chat = function(parent, state, player_state)
       },
     })
   end
+  local spacer = quick.add({ type = "empty-widget" })
+  spacer.style.horizontally_stretchable = true
+  quick.add({
+    type = "button",
+    name = ui.CHAT_CLEAR_NAME,
+    caption = { "factorio-ai-assistant.clear-chat" },
+    tooltip = { "factorio-ai-assistant.clear-chat-tooltip" },
+    tags = { action = "clear-chat" },
+  })
 
   local input_flow = parent.add({
     type = "flow",
@@ -418,25 +612,96 @@ render_chat = function(parent, state, player_state)
     tooltip = { "factorio-ai-assistant.chat-input-tooltip" },
   })
   input.style.horizontally_stretchable = true
-  input.enabled = player_state.chat_pending == nil
-  local send = input_flow.add({
+  input_flow.add({
     type = "button",
+    name = ui.CHAT_SEND_NAME,
     caption = { "factorio-ai-assistant.send" },
     style = "confirm_button",
     tags = { action = "send-chat" },
   })
-  send.enabled = player_state.chat_pending == nil
-  local cancel = input_flow.add({
+  input_flow.add({
     type = "button",
+    name = ui.CHAT_CANCEL_NAME,
     caption = { "factorio-ai-assistant.cancel" },
     tags = { action = "cancel-chat" },
   })
-  cancel.enabled = player_state.chat_pending ~= nil
 end
 
-render_chat_entry = function(parent, entry, player_state)
+sync_chat_entries = function(history, player_state)
+  local wanted = {}
+  for _, entry in ipairs(player_state.chat_history) do
+    wanted[CHAT_ENTRY_PREFIX .. entry.seq] = true
+  end
+  for _, child in pairs(history.children) do
+    local name = child.name
+    if name ~= nil
+      and string.sub(name, 1, #CHAT_ENTRY_PREFIX) == CHAT_ENTRY_PREFIX
+      and not wanted[name]
+    then
+      child.destroy()
+    end
+  end
+
+  local empty = history[CHAT_EMPTY_NAME]
+  if #player_state.chat_history == 0 then
+    if empty == nil then
+      local label = history.add({
+        type = "label",
+        name = CHAT_EMPTY_NAME,
+        caption = { "factorio-ai-assistant.chat-empty" },
+      })
+      label.style.single_line = false
+      label.style.maximal_width = panel_text_width(player_state)
+    end
+  elseif empty ~= nil then
+    empty.destroy()
+  end
+
+  for _, entry in ipairs(player_state.chat_history) do
+    local name = CHAT_ENTRY_PREFIX .. entry.seq
+    if history[name] == nil then
+      render_chat_entry(history, entry, player_state, name)
+    end
+  end
+
+  local loading = history[CHAT_LOADING_NAME]
+  if loading ~= nil then
+    loading.destroy()
+  end
+  if player_state.chat_pending ~= nil then
+    local pending = history.add({
+      type = "label",
+      name = CHAT_LOADING_NAME,
+      caption = { "factorio-ai-assistant.chat-loading" },
+    })
+    pending.style.font_color = { r = 1, g = 0.72, b = 0.2 }
+  end
+end
+
+update_chat_controls = function(body, player_state)
+  local pending = player_state.chat_pending ~= nil
+  local input = find_element(body, ui.CHAT_INPUT_NAME)
+  local send = find_element(body, ui.CHAT_SEND_NAME)
+  local cancel = find_element(body, ui.CHAT_CANCEL_NAME)
+  local clear = find_element(body, ui.CHAT_CLEAR_NAME)
+  if input ~= nil then
+    input.enabled = not pending
+  end
+  if send ~= nil then
+    send.enabled = not pending
+  end
+  if cancel ~= nil then
+    cancel.enabled = pending
+  end
+  if clear ~= nil then
+    clear.enabled = pending or #player_state.chat_history > 0
+  end
+end
+
+render_chat_entry = function(parent, entry, player_state, name)
   local card = parent.add({
     type = "frame",
+    name = name,
     direction = "vertical",
     style = "inside_shallow_frame",
   })
@@ -766,7 +1031,60 @@ add_calculation_error = function(parent, error_code)
   })
 end
 
-render_alerts = function(parent, state, force_id)
+compare_alerts = function(left, right)
+  local left_rank = SEVERITY_RANK[left.severity] or 99
+  local right_rank = SEVERITY_RANK[right.severity] or 99
+  if left_rank ~= right_rank then
+    return left_rank < right_rank
+  end
+  if left.first_seen ~= right.first_seen then
+    return left.first_seen < right.first_seen
+  end
+  return left.id < right.id
+end
+
+collect_force_alerts = function(state, force_id)
+  local alerts = {}
+  for _, alert in pairs(state.advisor_alerts or {}) do
+    if alert.force_id == force_id then
+      table.insert(alerts, alert)
+    end
+  end
+  table.sort(alerts, compare_alerts)
+  return alerts
+end
+
+hud_alerts = function(state, player_state, force_id)
+  local muted = muted_rule_set()
+  local visible = {}
+  for _, alert in ipairs(collect_force_alerts(state, force_id)) do
+    if not muted[alert.rule_id]
+      and not ui_state.is_alert_dismissed(player_state, alert)
+    then
+      table.insert(visible, alert)
+    end
+  end
+  return visible
+end
+
+hud_signature = function(alerts)
+  local parts = {}
+  for _, alert in ipairs(alerts) do
+    table.insert(
+      parts,
+      alert.id
+        .. "|"
+        .. alert.severity
+        .. "|"
+        .. tostring(alert.first_seen)
+        .. "|"
+        .. alert.evidence
+    )
+  end
+  return table.concat(parts, "\n")
+end
+
+render_alerts = function(parent, state, player_state, force_id)
   local incompatible = incompatibility_caption(state)
   if incompatible ~= nil then
     add_state_banner(parent, "warning", incompatible)
@@ -776,20 +1094,7 @@ render_alerts = function(parent, state, force_id)
     })
   end
 
-  local alerts = {}
-  for _, alert in pairs(state.advisor_alerts or {}) do
-    if alert.force_id == force_id then
-      table.insert(alerts, alert)
-    end
-  end
-  table.sort(alerts, function(left, right)
-    return (SEVERITY_RANK[left.severity] or 99)
-        < (SEVERITY_RANK[right.severity] or 99)
-      or (
-        left.severity == right.severity
-        and left.first_seen < right.first_seen
-      )
-  end)
+  local alerts = collect_force_alerts(state, force_id)
 
   local scroll = parent.add({
     type = "scroll-pane",
@@ -807,13 +1112,20 @@ render_alerts = function(parent, state, force_id)
 
   local muted = muted_rule_set()
   for _, alert in ipairs(alerts) do
+    local dismissed = ui_state.is_alert_dismissed(player_state, alert)
     local card = scroll.add({
       type = "frame",
       direction = "vertical",
       style = "inside_shallow_frame",
     })
     card.style.horizontally_stretchable = true
-    local heading = card.add({
+    local heading_flow = card.add({
+      type = "flow",
+      direction = "horizontal",
+    })
+    heading_flow.style.horizontally_stretchable = true
+    heading_flow.style.vertical_align = "center"
+    local heading = heading_flow.add({
       type = "label",
       caption = {
         "factorio-ai-assistant.alert-heading",
@@ -821,7 +1133,22 @@ render_alerts = function(parent, state, force_id)
         localized_rule(alert.rule_id),
       },
     })
-    heading.style.font_color = SEVERITY_COLORS[alert.severity]
+    heading.style.font_color = dismissed
+      and { r = 0.6, g = 0.62, b = 0.65 }
+      or SEVERITY_COLORS[alert.severity]
+    if dismissed or muted[alert.rule_id] then
+      local spacer = heading_flow.add({ type = "empty-widget" })
+      spacer.style.horizontally_stretchable = true
+      local badge = heading_flow.add({
+        type = "label",
+        caption = {
+          "factorio-ai-assistant."
+            .. (dismissed and "alert-dismissed" or "alert-muted"),
+        },
+      })
+      badge.style.font = "default-bold"
+      badge.style.font_color = { r = 0.6, g = 0.62, b = 0.65 }
+    end
     add_wrapped_label(
       card,
       { "factorio-ai-assistant.evidence", alert.evidence },
@@ -832,7 +1159,26 @@ render_alerts = function(parent, state, force_id)
       { "factorio-ai-assistant.recommendation", alert.recommendation },
       650
     )
-    card.add({
+    local actions = card.add({
+      type = "flow",
+      direction = "horizontal",
+    })
+    actions.add({
+      type = "button",
+      caption = {
+        "factorio-ai-assistant." ..
+          (dismissed and "restore-alert" or "dismiss-alert"),
+      },
+      tooltip = {
+        "factorio-ai-assistant." ..
+          (dismissed and "restore-alert-tooltip" or "dismiss-alert-tooltip"),
+      },
+      tags = {
+        action = dismissed and "restore-alert" or "dismiss-alert",
+        alert_id = alert.id,
+      },
+    })
+    actions.add({
       type = "button",
       caption = {
         "factorio-ai-assistant." ..

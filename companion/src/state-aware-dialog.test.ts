@@ -47,7 +47,7 @@ const silentLogger: CompanionLogger = {
 };
 
 void test(
-  "grounds all five state-aware dialog fixtures in deterministic tools",
+  "grounds all state-aware dialog fixtures in deterministic tools",
   async () => {
     const fixture = await readDialogFixture();
     const catalog = await readCatalog();
@@ -109,6 +109,54 @@ void test(
     });
     assert.match(ratioAnswer.text, new RegExp(String(recipe.machines.exact)));
     assert.match(ratioAnswer.text, new RegExp(String(recipe.machines.rounded_up)));
+  },
+);
+
+void test(
+  "uses a synchronized snapshot as evidence when no advisor rule is active",
+  async () => {
+    const fixture = await readDialogFixture();
+    const catalog = await readCatalog();
+    const store = populatedStateStore(fixture, catalog);
+    let providerCalls = 0;
+    const provider: AIProvider = {
+      kind: "openai-compatible",
+      complete(request) {
+        providerCalls += 1;
+        assert.equal(firstEvidenceId(request.context), "S1");
+        return Promise.resolve({
+          text: "当前电力满足率为 40% [S1]。",
+          model: "state-aware-no-alerts",
+        });
+      },
+    };
+    const service = new AssistantService({
+      config: resolveCompanionConfig(
+        { provider: "openclaw", model_retry_count: 0 },
+        {},
+      ),
+      stateStore: store,
+      advisor: new AdvisorEngine(undefined, "zh-CN"),
+      logger: silentLogger,
+      provider,
+    });
+
+    const answer = await service.answer({
+      question: "当前工厂状态怎么样？",
+      forceId: fixture.force_id,
+    });
+
+    assert.equal(providerCalls, 1);
+    assert.equal(answer.mode, "model");
+    assert.match(answer.text, /电力网络 1 个/);
+    assert.match(answer.text, /发电 40 MW/);
+    assert.match(answer.text, /用电 100 MW/);
+    assert.match(answer.text, /满足率 40%/);
+    assert.match(answer.text, /当前没有进行中的研究/);
+    assert.match(answer.text, /\[S3\] 1 分钟净缺口候选/);
+    assert.match(answer.text, /物品 iron-plate/);
+    assert.match(answer.text, /流体 petroleum-gas/);
+    assert.match(answer.text, /当前电力满足率为 40% \[S1\]/);
   },
 );
 

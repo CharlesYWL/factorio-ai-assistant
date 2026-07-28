@@ -8,6 +8,9 @@
       "path": "./packages/calculator"
     },
     {
+      "path": "./packages/guide"
+    },
+    {
       "path": "./companion"
     }
   ]

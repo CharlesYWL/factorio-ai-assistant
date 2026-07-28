@@ -70,6 +70,11 @@ assert.doesNotMatch(
   /defines\.events\.on_tick\b/,
   "The collector must not run a per-tick handler",
 );
+assert.doesNotMatch(
+  controlSource,
+  /script\.on_event\(\s*\{[^}]*\}\s*,\s*[^,()]+\s*,\s*[^)]+\)/su,
+  "Filtered Factorio events must be registered one at a time",
+);
 assert.ok(
   collectorSource.includes('type = "electric-pole"'),
   "The one-time entity scan must be restricted to electric poles",
@@ -85,6 +90,14 @@ assert.ok(
 assert.ok(
   controlSource.includes("game.create_profiler()"),
   "Dynamic sampling must record collection duration",
+);
+assert.ok(
+  controlSource.includes("local function run_every_second_tasks()")
+    && controlSource.includes("maybe_send_dynamic_snapshot()\n  update_connection_status()")
+    && controlSource.includes(
+      "script.on_nth_tick(UI_REFRESH_INTERVAL_TICKS, run_every_second_tasks)",
+    ),
+  "Dynamic sampling and UI refresh must share the single 60-tick handler",
 );
 for (const packetType of [
   "assistant_request",
@@ -144,10 +157,15 @@ for (const seededId of [
 }
 for (const transition of [
   "queue_chat",
+  "clear_chat",
   "complete_chat",
   "queue_calculation",
   "complete_calculation",
   "expire_requests",
+  "dismiss_alert",
+  "restore_alert",
+  "is_alert_dismissed",
+  "forget_alert",
 ]) {
   assert.ok(
     uiStateSource.includes(`function ui_state.${transition}`),
@@ -165,6 +183,24 @@ assert.ok(
   uiSource.includes("player.gui.screen"),
   "The advisor panel must use a movable screen GUI",
 );
+assert.ok(
+  uiSource.includes("scroll_to_bottom()"),
+  "The chat pane must be able to snap back to the newest message",
+);
+assert.ok(
+  uiSource.includes("mod_gui.get_frame_flow"),
+  "The persistent alert list must live in the top-left mod frame flow",
+);
+assert.ok(
+  uiSource.includes("function ui.refresh_alerts_hud"),
+  "ui.lua must expose the persistent alert list refresh",
+);
+for (const action of ["clear-chat", "dismiss-alert", "restore-alert"]) {
+  assert.ok(
+    controlSource.includes(`action == "${action}"`),
+    `control.lua must handle the ${action} GUI action`,
+  );
+}
 assert.ok(
   controlSource.includes("factorio-ai-assistant-mock"),
   "The in-game UI mock harness must stay available",

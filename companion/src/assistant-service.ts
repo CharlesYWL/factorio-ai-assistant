@@ -318,7 +318,7 @@ type ReconciledModelInference =
   | { kind: "ok"; text: string }
   | {
       kind: "conflict";
-      type: "unsafe_command" | "actions" | "citation" | "numeric" | "format";
+      type: "unsafe_command" | "citation" | "numeric" | "format";
     };
 
 function reconcileModelInference(
@@ -328,11 +328,7 @@ function reconcileModelInference(
   if (containsExecutableInstruction(value)) {
     return { kind: "conflict", type: "unsafe_command" };
   }
-  if (containsOrderedActions(value)) {
-    return { kind: "conflict", type: "actions" };
-  }
-
-  const text = value.replace(/\s+/g, " ").trim();
+  const text = normalizeModelInference(value);
   if (text.length === 0 || text.length > MAX_MODEL_INFERENCE_CHARACTERS) {
     return { kind: "conflict", type: "format" };
   }
@@ -349,7 +345,7 @@ function reconcileModelInference(
     return { kind: "conflict", type: "citation" };
   }
 
-  if (containsUnsupportedNumber(text)) {
+  if (containsUnsupportedNumber(text, grounding)) {
     return { kind: "conflict", type: "numeric" };
   }
   return { kind: "ok", text };
@@ -361,14 +357,49 @@ function containsExecutableInstruction(value: string): boolean {
   );
 }
 
-function containsOrderedActions(value: string): boolean {
-  return /(?:^|\n)\s*(?:\d{1,2}[.)、]|[-*])\s+/u.test(value);
+function normalizeModelInference(value: string): string {
+  return value
+    .split(/\r?\n/u)
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^#{1,6}\s*/u, "")
+        .replace(/^(?:\d{1,2}[.)、]|[-*•])\s*/u, "")
+        .trim(),
+    )
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !/^(?:建议|结论|分析|recommendations?|conclusion)\s*[:：]?$/iu.test(
+          line,
+        ),
+    )
+    .slice(0, 3)
+    .join("；")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function containsUnsupportedNumber(value: string): boolean {
+function containsUnsupportedNumber(
+  value: string,
+  grounding: AssistantGrounding,
+): boolean {
   const withoutCitations = value.replace(/\[[A-Z]\d+\]/g, "");
-  return (
-    /[零〇一二三四五六七八九十百千万两]/u.test(withoutCitations) ||
-    /-?\d+(?:[.,]\d+)?%?/u.test(withoutCitations)
+  const allowedNumbers = new Set(
+    grounding.evidence.flatMap(({ text }) => extractArabicNumbers(text)),
+  );
+  const addsArabicNumber = extractArabicNumbers(withoutCitations).some(
+    (number) => !allowedNumbers.has(number),
+  );
+  const addsChineseQuantity =
+    /(?:百分之[零〇一二三四五六七八九十百千万两]+|[零〇一二三四五六七八九十百千万两]+(?:台|级|秒|分钟|小时|天|瓦|千瓦|兆瓦|吉瓦|成|倍|%|％))/u.test(
+      withoutCitations,
+    );
+  return addsArabicNumber || addsChineseQuantity;
+}
+
+function extractArabicNumbers(value: string): string[] {
+  return [...value.matchAll(/-?\d+(?:[.,]\d+)?%?/g)].map(
+    (match) => match[0],
   );
 }

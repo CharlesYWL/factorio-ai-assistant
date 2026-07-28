@@ -12,6 +12,7 @@ const [
   companionPackage,
   protocolPackage,
   calculatorPackage,
+  guidePackage,
   modInfo,
   protocolSource,
   serverSource,
@@ -19,6 +20,8 @@ const [
   collectorSource,
   localizationSource,
   releaseNotes,
+  guideSource,
+  guideDoc,
 ] = await Promise.all([
   readJson("release.config.json"),
   readJson("package.json"),
@@ -26,6 +29,7 @@ const [
   readJson("companion/package.json"),
   readJson("packages/protocol/package.json"),
   readJson("packages/calculator/package.json"),
+  readJson("packages/guide/package.json"),
   readJson("factorio-mod/info.json"),
   readText("packages/protocol/src/index.ts"),
   readText("companion/src/server.ts"),
@@ -33,6 +37,8 @@ const [
   readText("factorio-mod/state_collector.lua"),
   readText("factorio-mod/localization.lua"),
   readText("docs/releases/v0.1.0-rc.1.md"),
+  readText("packages/guide/src/data.ts"),
+  readText("docs/guide.md"),
 ]);
 
 assert.match(release.version, /^\d+\.\d+\.\d+$/u, "Release version must be numeric semver");
@@ -42,12 +48,19 @@ for (const [name, manifest] of [
   ["companion", companionPackage],
   ["protocol", protocolPackage],
   ["calculator", calculatorPackage],
+  ["guide", guidePackage],
   ["Factorio Mod", modInfo],
 ]) {
   assert.equal(manifest.version, release.version, `${name} version must match release.config.json`);
 }
 
-for (const workspacePath of ["", "companion", "packages/protocol", "packages/calculator"]) {
+for (const workspacePath of [
+  "",
+  "companion",
+  "packages/protocol",
+  "packages/calculator",
+  "packages/guide",
+]) {
   assert.equal(
     lockfile.packages[workspacePath].version,
     release.version,
@@ -131,8 +144,34 @@ assert.equal(modInfo.name, "factorio-ai-assistant");
 assert.equal(modInfo.factorio_version, "2.0");
 assert.ok(releaseNotes.includes(release.release_tag), "Release notes must name the RC tag");
 
+const guideVersion = readStringConstant(
+  guideSource,
+  /GUIDE_VERSION = "([^"]+)"/u,
+  "guide version",
+);
+const guideFactorioVersion = readStringConstant(
+  guideSource,
+  /GUIDE_FACTORIO_VERSION = "([^"]+)"/u,
+  "guide Factorio version",
+);
+assert.ok(
+  guideDoc.includes(guideVersion),
+  "docs/guide.md must name the built-in guide version",
+);
+assert.ok(
+  guideDoc.includes(guideFactorioVersion),
+  "docs/guide.md must name the Factorio version the guide was verified against",
+);
+const guideSourceUrls = [...guideSource.matchAll(/url:\s*"([^"]+)"/gu)].map(
+  (match) => match[1],
+);
+assert.ok(guideSourceUrls.length > 0, "The guide must cite at least one source URL");
+for (const url of guideSourceUrls) {
+  assert.ok(guideDoc.includes(url), `docs/guide.md must cite guide source ${url}`);
+}
+
 console.log(
-  `Release consistency passed (${release.release_tag}, protocol ${release.protocol_version}, schema ${release.state_schema_version}).`,
+  `Release consistency passed (${release.release_tag}, protocol ${release.protocol_version}, schema ${release.state_schema_version}, guide ${guideVersion} for Factorio ${guideFactorioVersion}).`,
 );
 
 async function readJson(relativePath) {

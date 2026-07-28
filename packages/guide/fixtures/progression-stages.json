@@ -1,0 +1,554 @@
+{
+  "schema_version": 1,
+  "guide_version": "1.0.0",
+  "factorio_version": "2.0.72",
+  "description": "Stage inference fixtures for the built-in Factorio 2.0 base-game progression guide. Every case pins the expected stage, the first ordered step, and the expected data gaps.",
+  "cases": [
+    {
+      "id": "stage-1-bootstrap-no-power",
+      "expected_stage_id": "bootstrap",
+      "expected_stage_order": 1,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-1-1-steam-power",
+      "expected_step_origins": ["guide", "guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [],
+        "current_research": null,
+        "flows": [
+          {
+            "kind": "item",
+            "id": "iron-plate",
+            "produced_per_minute_1m": 6,
+            "consumed_per_minute_1m": 4,
+            "produced_per_minute_10m": 5,
+            "consumed_per_minute_10m": 4
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-2-automation-red-green",
+      "expected_stage_id": "automation-red-green",
+      "expected_stage_order": 2,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-2-1-automate-red-science",
+      "expected_step_origins": ["guide", "guide", "guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "electric-mining-drill"
+        ],
+        "current_research": { "technology_id": "logistic-science-pack", "progress": 0.4 },
+        "flows": [
+          {
+            "kind": "item",
+            "id": "automation-science-pack",
+            "produced_per_minute_1m": 6,
+            "consumed_per_minute_1m": 6,
+            "produced_per_minute_10m": 6,
+            "consumed_per_minute_10m": 6
+          },
+          {
+            "kind": "item",
+            "id": "iron-plate",
+            "produced_per_minute_1m": 120,
+            "consumed_per_minute_1m": 90,
+            "produced_per_minute_10m": 118,
+            "consumed_per_minute_10m": 90
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-3-smelting-logistics-military",
+      "expected_stage_id": "smelting-logistics-military",
+      "expected_stage_order": 3,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-3-1-steel-furnace-bus",
+      "expected_step_origins": ["guide", "guide", "guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "logistics",
+          "logistic-science-pack",
+          "steel-processing"
+        ],
+        "current_research": { "technology_id": "advanced-material-processing", "progress": 0.1 },
+        "flows": [
+          {
+            "kind": "item",
+            "id": "iron-plate",
+            "produced_per_minute_1m": 240,
+            "consumed_per_minute_1m": 300,
+            "produced_per_minute_10m": 240,
+            "consumed_per_minute_10m": 300
+          },
+          {
+            "kind": "item",
+            "id": "steel-plate",
+            "produced_per_minute_1m": 12,
+            "consumed_per_minute_1m": 10,
+            "produced_per_minute_10m": 12,
+            "consumed_per_minute_10m": 10
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-4-oil-chemical-blue",
+      "expected_stage_id": "oil-chemical-blue",
+      "expected_stage_order": 4,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-4-1-plastics-and-sulfur",
+      "expected_step_origins": ["guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "automation-2",
+          "logistics",
+          "logistics-2",
+          "logistic-science-pack",
+          "steel-processing",
+          "advanced-material-processing",
+          "engine",
+          "fluid-handling",
+          "oil-gathering",
+          "oil-processing"
+        ],
+        "current_research": { "technology_id": "plastics", "progress": 0.2 },
+        "flows": [
+          {
+            "kind": "fluid",
+            "id": "crude-oil",
+            "produced_per_minute_1m": 600,
+            "consumed_per_minute_1m": 600,
+            "produced_per_minute_10m": 600,
+            "consumed_per_minute_10m": 600
+          },
+          {
+            "kind": "fluid",
+            "id": "petroleum-gas",
+            "produced_per_minute_1m": 270,
+            "consumed_per_minute_1m": 40,
+            "produced_per_minute_10m": 270,
+            "consumed_per_minute_10m": 40
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-5-robotics-modules-scale",
+      "expected_stage_id": "robotics-modules-scale",
+      "expected_stage_order": 5,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-5-1-construction-robotics",
+      "expected_step_origins": ["guide", "guide", "guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "automation-2",
+          "logistics",
+          "logistics-2",
+          "logistic-science-pack",
+          "steel-processing",
+          "advanced-material-processing",
+          "engine",
+          "fluid-handling",
+          "oil-gathering",
+          "oil-processing",
+          "plastics",
+          "sulfur-processing",
+          "advanced-circuit",
+          "chemical-science-pack",
+          "advanced-oil-processing"
+        ],
+        "current_research": { "technology_id": "lubricant", "progress": 0.6 },
+        "flows": [
+          {
+            "kind": "item",
+            "id": "chemical-science-pack",
+            "produced_per_minute_1m": 30,
+            "consumed_per_minute_1m": 30,
+            "produced_per_minute_10m": 30,
+            "consumed_per_minute_10m": 30
+          },
+          {
+            "kind": "fluid",
+            "id": "petroleum-gas",
+            "produced_per_minute_1m": 300,
+            "consumed_per_minute_1m": 280,
+            "produced_per_minute_10m": 300,
+            "consumed_per_minute_10m": 280
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-6-production-science",
+      "expected_stage_id": "production-science",
+      "expected_stage_order": 6,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-6-1-electric-furnace",
+      "expected_step_origins": ["guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "automation-2",
+          "logistics",
+          "logistics-2",
+          "logistic-science-pack",
+          "steel-processing",
+          "advanced-material-processing",
+          "engine",
+          "fluid-handling",
+          "oil-gathering",
+          "oil-processing",
+          "plastics",
+          "sulfur-processing",
+          "advanced-circuit",
+          "chemical-science-pack",
+          "advanced-oil-processing",
+          "lubricant",
+          "electric-engine",
+          "battery",
+          "robotics",
+          "construction-robotics",
+          "modules",
+          "productivity-module",
+          "speed-module",
+          "processing-unit",
+          "railway"
+        ],
+        "current_research": { "technology_id": "advanced-material-processing-2", "progress": 0.3 },
+        "flows": [
+          {
+            "kind": "item",
+            "id": "chemical-science-pack",
+            "produced_per_minute_1m": 60,
+            "consumed_per_minute_1m": 60,
+            "produced_per_minute_10m": 60,
+            "consumed_per_minute_10m": 60
+          },
+          {
+            "kind": "item",
+            "id": "rail",
+            "produced_per_minute_1m": 40,
+            "consumed_per_minute_1m": 20,
+            "produced_per_minute_10m": 40,
+            "consumed_per_minute_10m": 20
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-7-utility-science",
+      "expected_stage_id": "utility-science",
+      "expected_stage_order": 7,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-7-1-low-density-structure",
+      "expected_step_origins": ["guide", "guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "automation-2",
+          "logistics",
+          "logistics-2",
+          "logistic-science-pack",
+          "steel-processing",
+          "advanced-material-processing",
+          "advanced-material-processing-2",
+          "engine",
+          "fluid-handling",
+          "oil-gathering",
+          "oil-processing",
+          "plastics",
+          "sulfur-processing",
+          "advanced-circuit",
+          "chemical-science-pack",
+          "advanced-oil-processing",
+          "lubricant",
+          "electric-engine",
+          "battery",
+          "robotics",
+          "construction-robotics",
+          "logistic-robotics",
+          "modules",
+          "productivity-module",
+          "productivity-module-2",
+          "speed-module",
+          "speed-module-2",
+          "processing-unit",
+          "railway",
+          "production-science-pack"
+        ],
+        "current_research": { "technology_id": "low-density-structure", "progress": 0.5 },
+        "flows": [
+          {
+            "kind": "item",
+            "id": "production-science-pack",
+            "produced_per_minute_1m": 60,
+            "consumed_per_minute_1m": 60,
+            "produced_per_minute_10m": 60,
+            "consumed_per_minute_10m": 60
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-8-rocket-launch",
+      "expected_stage_id": "rocket-launch",
+      "expected_stage_order": 8,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-8-1-rocket-silo-prerequisites",
+      "expected_step_origins": ["guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "automation-2",
+          "logistics",
+          "logistics-2",
+          "logistics-3",
+          "logistic-science-pack",
+          "steel-processing",
+          "advanced-material-processing",
+          "advanced-material-processing-2",
+          "engine",
+          "fluid-handling",
+          "oil-gathering",
+          "oil-processing",
+          "plastics",
+          "sulfur-processing",
+          "advanced-circuit",
+          "chemical-science-pack",
+          "advanced-oil-processing",
+          "lubricant",
+          "electric-engine",
+          "battery",
+          "robotics",
+          "construction-robotics",
+          "logistic-robotics",
+          "modules",
+          "productivity-module",
+          "productivity-module-2",
+          "productivity-module-3",
+          "speed-module",
+          "speed-module-2",
+          "speed-module-3",
+          "processing-unit",
+          "railway",
+          "production-science-pack",
+          "low-density-structure",
+          "utility-science-pack",
+          "concrete",
+          "radar",
+          "solar-energy",
+          "electric-energy-distribution-1",
+          "electric-energy-accumulators",
+          "flammables",
+          "rocket-fuel"
+        ],
+        "current_research": { "technology_id": "rocket-silo", "progress": 0.75 },
+        "flows": [
+          {
+            "kind": "item",
+            "id": "utility-science-pack",
+            "produced_per_minute_1m": 60,
+            "consumed_per_minute_1m": 60,
+            "produced_per_minute_10m": 60,
+            "consumed_per_minute_10m": 60
+          },
+          {
+            "kind": "item",
+            "id": "rocket-fuel",
+            "produced_per_minute_1m": 20,
+            "consumed_per_minute_1m": 0,
+            "produced_per_minute_10m": 20,
+            "consumed_per_minute_10m": 0
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "stage-8-rocket-parts-after-silo",
+      "expected_stage_id": "rocket-launch",
+      "expected_stage_order": 8,
+      "expected_basis": "state",
+      "expected_first_rule_id": "guide-8-2-rocket-part-lines",
+      "expected_step_origins": ["guide", "guide", "guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "logistic-science-pack",
+          "steel-processing",
+          "oil-processing",
+          "plastics",
+          "sulfur-processing",
+          "advanced-circuit",
+          "chemical-science-pack",
+          "advanced-oil-processing",
+          "robotics",
+          "modules",
+          "processing-unit",
+          "railway",
+          "advanced-material-processing-2",
+          "production-science-pack",
+          "low-density-structure",
+          "utility-science-pack",
+          "speed-module-3",
+          "productivity-module-3",
+          "concrete",
+          "radar",
+          "solar-energy",
+          "electric-energy-accumulators",
+          "rocket-fuel",
+          "rocket-silo"
+        ],
+        "current_research": null,
+        "flows": [
+          {
+            "kind": "item",
+            "id": "rocket-fuel",
+            "produced_per_minute_1m": 0,
+            "consumed_per_minute_1m": 0,
+            "produced_per_minute_10m": 0,
+            "consumed_per_minute_10m": 0
+          },
+          {
+            "kind": "item",
+            "id": "low-density-structure",
+            "produced_per_minute_1m": 30,
+            "consumed_per_minute_1m": 30,
+            "produced_per_minute_10m": 30,
+            "consumed_per_minute_10m": 30
+          }
+        ],
+        "alerts": []
+      }
+    },
+    {
+      "id": "no-state-general-clarification",
+      "expected_stage_id": "bootstrap",
+      "expected_stage_order": 1,
+      "expected_basis": "general",
+      "expected_first_rule_id": "guide-1-1-steam-power",
+      "expected_step_origins": ["guide", "guide", "guide"],
+      "expected_gap_rule_ids": ["state:researched_technologies", "state:flows"],
+      "state": {}
+    },
+    {
+      "id": "bottleneck-first-with-active-alerts",
+      "expected_stage_id": "oil-chemical-blue",
+      "expected_stage_order": 4,
+      "expected_basis": "state",
+      "expected_first_rule_id": "advisor:power-low",
+      "expected_step_origins": ["bottleneck", "bottleneck", "guide"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": [
+          "steam-power",
+          "electronics",
+          "automation-science-pack",
+          "automation",
+          "automation-2",
+          "logistics",
+          "logistic-science-pack",
+          "steel-processing",
+          "engine",
+          "fluid-handling",
+          "oil-gathering",
+          "oil-processing"
+        ],
+        "current_research": { "technology_id": "plastics", "progress": 0.05 },
+        "flows": [
+          {
+            "kind": "fluid",
+            "id": "petroleum-gas",
+            "produced_per_minute_1m": 45,
+            "consumed_per_minute_1m": 90,
+            "produced_per_minute_10m": 45,
+            "consumed_per_minute_10m": 90
+          }
+        ],
+        "alerts": [
+          {
+            "id": "power-low:player",
+            "rule_id": "power-low",
+            "force_id": "player",
+            "severity": "critical",
+            "evidence": "电力满足率 0.42；发电 3.2 MW，用电 7.6 MW。",
+            "recommendation": "先扩发电或减少负载，再继续扩产线。",
+            "first_seen": 100,
+            "last_seen": 400
+          },
+          {
+            "id": "material-deficit:player",
+            "rule_id": "material-deficit",
+            "force_id": "player",
+            "severity": "warning",
+            "evidence": "iron-plate 10m 生产 240/min，消费 300/min。",
+            "recommendation": "扩铁矿与熔炉阵列。",
+            "first_seen": 200,
+            "last_seen": 400
+          }
+        ]
+      }
+    },
+    {
+      "id": "truncated-state-reports-gaps",
+      "expected_stage_id": "automation-red-green",
+      "expected_stage_order": 2,
+      "expected_basis": "state",
+      "expected_gap_rule_ids": ["state:static_truncated", "state:dynamic_truncated"],
+      "state": {
+        "force_id": "player",
+        "researched_technologies": ["automation", "automation-science-pack"],
+        "static_truncated": true,
+        "dynamic_truncated": true,
+        "current_research": null,
+        "flows": [],
+        "alerts": []
+      }
+    }
+  ]
+}
