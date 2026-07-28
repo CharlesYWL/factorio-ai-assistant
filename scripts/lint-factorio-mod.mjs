@@ -66,6 +66,11 @@ assert.doesNotMatch(
   /defines\.events\.on_tick\b/,
   "The collector must not run a per-tick handler",
 );
+assert.doesNotMatch(
+  controlSource,
+  /script\.on_event\(\s*\{[^}]*\}\s*,\s*[^,()]+\s*,\s*[^)]+\)/su,
+  "Filtered Factorio events must be registered one at a time",
+);
 assert.ok(
   collectorSource.includes('type = "electric-pole"'),
   "The one-time entity scan must be restricted to electric poles",

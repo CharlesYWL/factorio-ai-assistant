@@ -1211,12 +1211,14 @@ local ELECTRIC_POLE_FILTER = {
   },
 }
 
-script.on_event({
+for _, event_id in ipairs({
   defines.events.on_built_entity,
   defines.events.on_robot_built_entity,
   defines.events.script_raised_built,
   defines.events.script_raised_revive,
-}, handle_electric_pole_built, ELECTRIC_POLE_FILTER)
+}) do
+  script.on_event(event_id, handle_electric_pole_built, ELECTRIC_POLE_FILTER)
+end
 
 script.on_event(
   defines.events.on_entity_cloned,
@@ -1224,12 +1226,14 @@ script.on_event(
   ELECTRIC_POLE_FILTER
 )
 
-script.on_event({
+for _, event_id in ipairs({
   defines.events.on_player_mined_entity,
   defines.events.on_robot_mined_entity,
   defines.events.on_entity_died,
   defines.events.script_raised_destroy,
-}, handle_electric_pole_removed, ELECTRIC_POLE_FILTER)
+}) do
+  script.on_event(event_id, handle_electric_pole_removed, ELECTRIC_POLE_FILTER)
+end
 
 script.on_event({
   defines.events.on_research_finished,
