@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Factorio AI Assistant M0 Architecture</title>
+  <title>Factorio AI Assistant M1 Architecture</title>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
   <style>
     * {
@@ -136,15 +136,15 @@
     <div class="header">
       <div class="header-row">
         <div class="pulse-dot"></div>
-        <h1>Factorio AI Assistant M0 Architecture</h1>
+        <h1>Factorio AI Assistant M1 Architecture</h1>
       </div>
-      <p class="subtitle">Read-only, bidirectional localhost UDP technical validation</p>
+      <p class="subtitle">Read-only, versioned game-state collection over localhost UDP</p>
     </div>
 
     <div class="diagram-container">
       <svg viewBox="0 0 1000 500" role="img" aria-labelledby="diagram-title diagram-description">
-        <title id="diagram-title">Factorio AI Assistant M0 architecture</title>
-        <desc id="diagram-description">Factorio exchanges hello and hello acknowledgement packets with a loopback-only Node.js companion.</desc>
+        <title id="diagram-title">Factorio AI Assistant M1 architecture</title>
+        <desc id="diagram-description">Factorio sends versioned static, delta, and bounded dynamic state to a loopback-only Node.js companion.</desc>
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
             <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"></polygon>
@@ -158,9 +158,9 @@
 
         <!-- Connections are drawn first so opaque component backplates mask them. -->
         <line x1="350" y1="155" x2="648" y2="155" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"></line>
-        <text x="500" y="143" fill="#22d3ee" font-size="9" text-anchor="middle">hello · JSON/UDP</text>
+        <text x="500" y="143" fill="#22d3ee" font-size="9" text-anchor="middle">hello · static/delta · dynamic</text>
         <line x1="650" y1="230" x2="352" y2="230" stroke="#34d399" stroke-width="2" marker-end="url(#arrowhead)"></line>
-        <text x="500" y="250" fill="#34d399" font-size="9" text-anchor="middle">hello_ack · JSON/UDP</text>
+        <text x="500" y="250" fill="#34d399" font-size="9" text-anchor="middle">hello_ack · state_ack · resync</text>
         <path d="M 225 270 L 225 305 Q 225 325 245 325 L 388 325" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowhead)"></path>
         <path d="M 775 270 L 775 305 Q 775 325 755 325 L 612 325" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowhead)"></path>
 
@@ -173,15 +173,15 @@
         <text x="225" y="140" fill="#94a3b8" font-size="9" text-anchor="middle">Lua Mod · read-only</text>
         <rect x="115" y="170" width="220" height="65" rx="6" fill="#0f172a"></rect>
         <rect x="115" y="170" width="220" height="65" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"></rect>
-        <text x="225" y="194" fill="#fff" font-size="10" font-weight="600" text-anchor="middle">Sidebar status panel</text>
-        <text x="225" y="214" fill="#94a3b8" font-size="8" text-anchor="middle">helpers.send_udp / recv_udp</text>
+        <text x="225" y="194" fill="#fff" font-size="10" font-weight="600" text-anchor="middle">Event cache + 5s aggregates</text>
+        <text x="225" y="214" fill="#94a3b8" font-size="8" text-anchor="middle">bounded state · sidebar status</text>
 
         <rect x="630" y="75" width="290" height="210" rx="10" fill="transparent" stroke="#fb7185" stroke-width="1" stroke-dasharray="4,4"></rect>
         <text x="645" y="92" fill="#fb7185" font-size="8">LOOPBACK BOUNDARY</text>
         <rect x="650" y="100" width="250" height="170" rx="8" fill="#0f172a"></rect>
         <rect x="650" y="100" width="250" height="170" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"></rect>
         <text x="775" y="132" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Node.js Companion</text>
-        <text x="775" y="153" fill="#94a3b8" font-size="9" text-anchor="middle">TypeScript · UDP4</text>
+        <text x="775" y="153" fill="#94a3b8" font-size="9" text-anchor="middle">TypeScript · UDP4 · revision cache</text>
         <rect x="690" y="180" width="170" height="52" rx="6" fill="#0f172a"></rect>
         <rect x="690" y="180" width="170" height="52" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1"></rect>
         <text x="775" y="201" fill="#fff" font-size="10" font-weight="600" text-anchor="middle">127.0.0.1:34197</text>
@@ -189,8 +189,8 @@
 
         <rect x="390" y="295" width="220" height="62" rx="6" fill="#0f172a"></rect>
         <rect x="390" y="295" width="220" height="62" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"></rect>
-        <text x="500" y="320" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">Protocol v1</text>
-        <text x="500" y="340" fill="#94a3b8" font-size="8" text-anchor="middle">version · id · type · time · payload</text>
+        <text x="500" y="320" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">Protocol v1 · State schema v1</text>
+        <text x="500" y="340" fill="#94a3b8" font-size="8" text-anchor="middle">16 KiB · chunks · revisions · truncation flags</text>
 
         <!-- Legend is outside the local-machine boundary. -->
         <text x="300" y="420" fill="#fff" font-size="10" font-weight="600">Legend</text>
@@ -212,7 +212,7 @@
         <ul>
           <li>• Explicit --enable-lua-udp gate</li>
           <li>• Polls datagrams through LuaHelpers</li>
-          <li>• Connected / Disconnected UI only</li>
+          <li>• Event-cached poles; no on_tick scan</li>
         </ul>
       </div>
       <div class="card">
@@ -222,24 +222,24 @@
         </div>
         <ul>
           <li>• IPv4 loopback bind is hard-coded</li>
-          <li>• hello is the only accepted request</li>
-          <li>• Replies to the datagram source port</li>
+          <li>• Strict decode, forward-compatible fields</li>
+          <li>• Atomic snapshot + delta state cache</li>
         </ul>
       </div>
       <div class="card">
         <div class="card-header">
           <div class="card-dot violet"></div>
-          <h3>M0 scope</h3>
+          <h3>M1 scope</h3>
         </div>
         <ul>
-          <li>• No model or factory scan</li>
+          <li>• IDs and aggregate values only</li>
           <li>• No RCON or automatic actions</li>
-          <li>• Mock integration test; Windows pending</li>
+          <li>• Fixture + UDP integration coverage</li>
         </ul>
       </div>
     </div>
 
-    <p class="footer">Factorio AI Assistant · M0 technical validation · Protocol v1</p>
+    <p class="footer">Factorio AI Assistant · M1 state collection · Protocol v1</p>
   </div>
 </body>
 </html>

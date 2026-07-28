@@ -28,6 +28,10 @@ const controlSource = await readFile(
   new URL("../factorio-mod/control.lua", import.meta.url),
   "utf8",
 );
+const collectorSource = await readFile(
+  new URL("../factorio-mod/state_collector.lua", import.meta.url),
+  "utf8",
+);
 
 for (const requiredApi of [
   "helpers.send_udp",
@@ -36,5 +40,27 @@ for (const requiredApi of [
 ]) {
   assert.ok(controlSource.includes(requiredApi), `control.lua must use ${requiredApi}`);
 }
+
+assert.doesNotMatch(
+  controlSource,
+  /defines\.events\.on_tick\b/,
+  "The collector must not run a per-tick handler",
+);
+assert.ok(
+  collectorSource.includes('type = "electric-pole"'),
+  "The one-time entity scan must be restricted to electric poles",
+);
+assert.ok(
+  collectorSource.includes("#encoded > MAX_PACKET_BYTES"),
+  "State packets must enforce the byte hard limit",
+);
+assert.ok(
+  collectorSource.includes("omitted_series"),
+  "Dynamic truncation must report omitted series",
+);
+assert.ok(
+  controlSource.includes("game.create_profiler()"),
+  "Dynamic sampling must record collection duration",
+);
 
 console.log(`Factorio mod lint passed (${luaFiles.length} Lua files).`);

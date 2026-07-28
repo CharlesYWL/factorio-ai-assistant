@@ -5,9 +5,14 @@ import type { AddressInfo } from "node:net";
 import {
   ProtocolError,
   createHelloAckPacket,
+  createResyncRequestPacket,
+  createStateAckPacket,
   decodePacket,
   encodePacket,
+  type ProtocolPacket,
 } from "@factorio-ai-assistant/protocol";
+
+import { CompanionStateStore, StateSyncError } from "./state-store.js";
 
 export const LOOPBACK_HOST = "127.0.0.1";
 export const DEFAULT_COMPANION_PORT = 34_197;
@@ -22,10 +27,12 @@ export interface CompanionLogger {
 export interface CompanionServerOptions {
   port?: number;
   logger?: CompanionLogger;
+  stateStore?: CompanionStateStore;
 }
 
 export interface CompanionServer {
   readonly address: AddressInfo;
+  readonly state: CompanionStateStore;
   close(): Promise<void>;
 }
 
@@ -36,10 +43,11 @@ export async function startCompanionServer(
   assertBindablePort(port);
 
   const logger = options.logger ?? console;
+  const stateStore = options.stateStore ?? new CompanionStateStore();
   const socket = createSocket("udp4");
 
   socket.on("message", (datagram, remote) => {
-    handleDatagram(socket, datagram, remote, logger);
+    handleDatagram(socket, datagram, remote, logger, stateStore);
   });
 
   await bindSocket(socket, port);
@@ -55,6 +63,7 @@ export async function startCompanionServer(
 
   return {
     address,
+    state: stateStore,
     async close(): Promise<void> {
       if (closed) {
         return;
@@ -91,6 +100,7 @@ function handleDatagram(
   datagram: Buffer,
   remote: RemoteInfo,
   logger: CompanionLogger,
+  stateStore: CompanionStateStore,
 ): void {
   if (remote.address !== LOOPBACK_HOST) {
     logger.warn(`Ignored packet from non-loopback address ${remote.address}`);
@@ -110,25 +120,143 @@ function handleDatagram(
     return;
   }
 
-  if (packet.type !== "hello") {
-    logger.warn(`Ignored unexpected ${packet.type} packet ${packet.message_id}`);
-    return;
+  switch (packet.type) {
+    case "hello":
+      sendPacket(
+        socket,
+        createHelloAckPacket({
+          messageId: `companion-${randomUUID()}`,
+          replyTo: packet.message_id,
+          timestamp: Date.now(),
+          companionVersion: COMPANION_VERSION,
+          staticRevision: stateStore.staticRevision,
+        }),
+        remote,
+        logger,
+        `Acknowledged ${packet.message_id} for ${remote.address}:${remote.port}`,
+      );
+      return;
+    case "static_snapshot": {
+      let completed: boolean;
+
+      try {
+        completed = stateStore.acceptStaticSnapshotChunk(packet);
+      } catch (error: unknown) {
+        if (!(error instanceof StateSyncError)) {
+          throw error;
+        }
+
+        requestResync(socket, remote, logger, error);
+        return;
+      }
+
+      acknowledgeStatePacket(
+        socket,
+        remote,
+        logger,
+        packet.message_id,
+        packet.payload.revision,
+        completed
+          ? `Accepted static snapshot ${packet.payload.snapshot_id} revision ${packet.payload.revision}`
+          : undefined,
+      );
+      return;
+    }
+    case "static_delta":
+      try {
+        stateStore.acceptStaticDelta(packet);
+      } catch (error: unknown) {
+        if (!(error instanceof StateSyncError)) {
+          throw error;
+        }
+
+        requestResync(socket, remote, logger, error);
+        return;
+      }
+
+      acknowledgeStatePacket(
+        socket,
+        remote,
+        logger,
+        packet.message_id,
+        packet.payload.revision,
+        `Accepted static delta revision ${packet.payload.revision}`,
+      );
+      return;
+    case "dynamic_snapshot":
+      stateStore.acceptDynamicSnapshot(packet);
+      if (packet.payload.truncated) {
+        logger.warn(
+          `Accepted truncated dynamic snapshot ${packet.message_id}: ` +
+            `${packet.payload.omitted_forces} forces and ` +
+            `${packet.payload.omitted_series} series omitted`,
+        );
+      }
+      return;
+    case "hello_ack":
+    case "state_ack":
+    case "resync_request":
+      logger.warn(`Ignored unexpected ${packet.type} packet ${packet.message_id}`);
   }
+}
 
-  const response = createHelloAckPacket({
-    messageId: `companion-${randomUUID()}`,
-    replyTo: packet.message_id,
-    timestamp: Date.now(),
-    companionVersion: COMPANION_VERSION,
-  });
+function acknowledgeStatePacket(
+  socket: Socket,
+  remote: RemoteInfo,
+  logger: CompanionLogger,
+  replyTo: string,
+  revision: number,
+  successMessage: string | undefined,
+): void {
+  sendPacket(
+    socket,
+    createStateAckPacket({
+      messageId: `companion-${randomUUID()}`,
+      replyTo,
+      timestamp: Date.now(),
+      revision,
+    }),
+    remote,
+    logger,
+    successMessage,
+  );
+}
 
-  socket.send(encodePacket(response), remote.port, remote.address, (error) => {
+function requestResync(
+  socket: Socket,
+  remote: RemoteInfo,
+  logger: CompanionLogger,
+  error: StateSyncError,
+): void {
+  logger.warn(`${error.message}; requesting a full static snapshot`);
+  sendPacket(
+    socket,
+    createResyncRequestPacket({
+      messageId: `companion-${randomUUID()}`,
+      timestamp: Date.now(),
+      expectedRevision: error.expectedRevision,
+    }),
+    remote,
+    logger,
+  );
+}
+
+function sendPacket(
+  socket: Socket,
+  packet: ProtocolPacket,
+  remote: RemoteInfo,
+  logger: CompanionLogger,
+  successMessage?: string,
+): void {
+  socket.send(encodePacket(packet), remote.port, remote.address, (error) => {
     if (error !== null) {
-      logger.error(`Failed to acknowledge ${packet.message_id}: ${error.message}`);
+      logger.error(`Failed to send ${packet.type} ${packet.message_id}: ${error.message}`);
       return;
     }
 
-    logger.info(`Acknowledged ${packet.message_id} for ${remote.address}:${remote.port}`);
+    if (successMessage !== undefined) {
+      logger.info(successMessage);
+    }
   });
 }
 

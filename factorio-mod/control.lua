@@ -1,9 +1,14 @@
 local mod_gui = require("__core__.lualib.mod-gui")
+local state_collector = require("state_collector")
 
 local PROTOCOL_VERSION = 1
+local STATE_SCHEMA_VERSION = 1
+local MAX_PACKET_BYTES = 16 * 1024
 local POLL_INTERVAL_TICKS = 15
 local UI_REFRESH_INTERVAL_TICKS = 60
 local HELLO_INTERVAL_TICKS = 300
+local SAMPLE_INTERVAL_TICKS = 300
+local STATIC_RETRY_INTERVAL_TICKS = 300
 local CONNECTION_TIMEOUT_TICKS = 600
 local PENDING_TIMEOUT_TICKS = 1200
 
@@ -25,11 +30,19 @@ local function get_state()
     last_hello_tick = nil,
     sequence = 0,
     pending = {},
+    static_pending = {},
     receive_error_logged = false,
     unsupported_version_logged = false,
   }
 
-  return storage.factorio_ai_assistant
+  local state = storage.factorio_ai_assistant
+  state.sequence = state.sequence or 0
+  state.pending = state.pending or {}
+  state.static_pending = state.static_pending or {}
+  state.receive_error_logged = state.receive_error_logged or false
+  state.unsupported_version_logged = state.unsupported_version_logged or false
+
+  return state
 end
 
 local function get_companion_port()
@@ -144,6 +157,29 @@ local function cleanup_pending(state)
   end
 end
 
+local function send_udp_payload(encoded, description)
+  local success, error_message = pcall(
+    helpers.send_udp,
+    get_companion_port(),
+    encoded
+  )
+
+  if not success then
+    local state = get_state()
+    state.connected = false
+    log(
+      "[factorio-ai-assistant] UDP "
+        .. description
+        .. " failed: "
+        .. tostring(error_message)
+    )
+    refresh_all_ui()
+    return false
+  end
+
+  return true
+end
+
 local function send_hello()
   local state = get_state()
 
@@ -172,23 +208,122 @@ local function send_hello()
   }
 
   local encoded = helpers.table_to_json(packet)
-  local success, error_message = pcall(
-    helpers.send_udp,
-    get_companion_port(),
-    encoded
-  )
-
   state.last_hello_tick = game.tick
 
-  if not success then
-    state.connected = false
-    log("[factorio-ai-assistant] UDP send failed: " .. tostring(error_message))
-    refresh_all_ui()
+  if not send_udp_payload(encoded, "hello send") then
     return false
   end
 
   state.pending[message_id] = game.tick
   return true
+end
+
+local function has_static_pending(state)
+  return next(state.static_pending) ~= nil
+end
+
+local function transmit_static_packet(packet)
+  packet.last_sent_tick = game.tick
+  return send_udp_payload(packet.encoded, "state send")
+end
+
+local function queue_static_snapshot()
+  if not UDP_AVAILABLE then
+    return false
+  end
+
+  local state = get_state()
+  local packets = state_collector.build_static_snapshot(state)
+
+  if packets == nil then
+    state_collector.invalidate_static(state)
+    return false
+  end
+
+  state.static_pending = {}
+
+  for _, packet in ipairs(packets) do
+    state.static_pending[packet.message_id] = packet
+    transmit_static_packet(packet)
+  end
+
+  return true
+end
+
+local function queue_static_delta(force)
+  local state = get_state()
+
+  if has_static_pending(state) then
+    state_collector.invalidate_static(state)
+    return
+  end
+
+  local packet, full_snapshot_required =
+    state_collector.build_static_delta(state, force)
+
+  if full_snapshot_required then
+    queue_static_snapshot()
+    return
+  end
+
+  if packet ~= nil then
+    state.static_pending[packet.message_id] = packet
+    transmit_static_packet(packet)
+  end
+end
+
+local function retry_static_packets()
+  local state = get_state()
+
+  for _, packet in pairs(state.static_pending) do
+    if game.tick - (packet.last_sent_tick or 0)
+      >= STATIC_RETRY_INTERVAL_TICKS
+    then
+      transmit_static_packet(packet)
+    end
+  end
+
+  if not has_static_pending(state)
+    and state.connected
+    and state_collector.static_is_dirty(state)
+  then
+    queue_static_snapshot()
+  end
+end
+
+local function send_dynamic_snapshot()
+  local state = get_state()
+
+  if not UDP_AVAILABLE or not state.connected then
+    return
+  end
+
+  local profiler = game.create_profiler()
+  local result =
+    state_collector.build_dynamic_snapshot(state, SAMPLE_INTERVAL_TICKS)
+
+  profiler.stop()
+
+  if result == nil then
+    return
+  end
+
+  send_udp_payload(result.encoded, "dynamic snapshot send")
+
+  if state_collector.should_log_sample(state, result.packet) then
+    log(
+      "[factorio-ai-assistant] State sample: interval="
+        .. SAMPLE_INTERVAL_TICKS
+        .. " ticks, duration="
+        .. tostring(profiler)
+        .. ", bytes="
+        .. #result.encoded
+        .. ", omitted_forces="
+        .. result.packet.payload.omitted_forces
+        .. ", omitted_series="
+        .. result.packet.payload.omitted_series
+    )
+  end
 end
 
 local function poll_udp()
@@ -211,32 +346,21 @@ local function poll_udp()
 end
 
 local function is_non_empty_string(value)
-  return type(value) == "string" and value ~= ""
+  return type(value) == "string" and value ~= "" and #value <= 128
 end
 
-local function handle_udp_packet(event)
-  if event.source_port ~= get_companion_port() then
-    return
-  end
+local function is_non_negative_integer(value)
+  return type(value) == "number" and value >= 0 and value % 1 == 0
+end
 
-  local raw_packet = event.payload
-  if type(raw_packet) ~= "string" then
-    return
-  end
-
-  local success, packet = pcall(helpers.json_to_table, raw_packet)
-  if not success or type(packet) ~= "table" then
-    return
-  end
-
-  if packet.protocol_version ~= PROTOCOL_VERSION
-    or packet.type ~= "hello_ack"
-    or not is_non_empty_string(packet.message_id)
-    or type(packet.timestamp) ~= "number"
-    or packet.timestamp < 0
-    or type(packet.payload) ~= "table"
+local function handle_hello_ack(packet, event)
+  if not is_non_negative_integer(packet.timestamp)
     or not is_non_empty_string(packet.payload.reply_to)
     or not is_non_empty_string(packet.payload.companion_version)
+    or (
+      packet.payload.static_revision ~= nil
+      and not is_non_negative_integer(packet.payload.static_revision)
+    )
   then
     return
   end
@@ -250,7 +374,106 @@ local function handle_udp_packet(event)
   state.connected = true
   state.last_response_tick = event.tick
   state.companion_version = packet.payload.companion_version
+
+  if not has_static_pending(state)
+    and packet.payload.static_revision ~= nil
+    and packet.payload.static_revision
+      ~= state_collector.static_revision(state)
+  then
+    state_collector.prepare_resync(
+      state,
+      packet.payload.static_revision
+    )
+  end
+
+  if not has_static_pending(state)
+    and state_collector.static_is_dirty(state)
+  then
+    queue_static_snapshot()
+  end
+
   refresh_all_ui()
+end
+
+local function handle_state_ack(packet, event)
+  if packet.schema_version ~= STATE_SCHEMA_VERSION
+    or not is_non_negative_integer(packet.timestamp)
+    or not is_non_empty_string(packet.payload.reply_to)
+    or not is_non_negative_integer(packet.payload.revision)
+    or packet.payload.revision == 0
+  then
+    return
+  end
+
+  local state = get_state()
+  local pending = state.static_pending[packet.payload.reply_to]
+
+  if pending == nil or pending.revision ~= packet.payload.revision then
+    return
+  end
+
+  state.static_pending[packet.payload.reply_to] = nil
+  state.connected = true
+  state.last_response_tick = event.tick
+
+  if not has_static_pending(state)
+    and state_collector.static_is_dirty(state)
+  then
+    queue_static_snapshot()
+  end
+
+  refresh_all_ui()
+end
+
+local function handle_resync_request(packet, event)
+  if packet.schema_version ~= STATE_SCHEMA_VERSION
+    or not is_non_negative_integer(packet.timestamp)
+    or not is_non_negative_integer(packet.payload.expected_revision)
+  then
+    return
+  end
+
+  local state = get_state()
+  state.static_pending = {}
+  state.connected = true
+  state.last_response_tick = event.tick
+  state_collector.prepare_resync(
+    state,
+    packet.payload.expected_revision
+  )
+  queue_static_snapshot()
+  refresh_all_ui()
+end
+
+local function handle_udp_packet(event)
+  if event.source_port ~= get_companion_port() then
+    return
+  end
+
+  local raw_packet = event.payload
+  if type(raw_packet) ~= "string" or #raw_packet > MAX_PACKET_BYTES then
+    return
+  end
+
+  local success, packet = pcall(helpers.json_to_table, raw_packet)
+  if not success or type(packet) ~= "table" then
+    return
+  end
+
+  if packet.protocol_version ~= PROTOCOL_VERSION
+    or not is_non_empty_string(packet.message_id)
+    or type(packet.payload) ~= "table"
+  then
+    return
+  end
+
+  if packet.type == "hello_ack" then
+    handle_hello_ack(packet, event)
+  elseif packet.type == "state_ack" then
+    handle_state_ack(packet, event)
+  elseif packet.type == "resync_request" then
+    handle_resync_request(packet, event)
+  end
 end
 
 local function update_connection_status()
@@ -273,7 +496,10 @@ local function initialize_player(player)
 end
 
 script.on_init(function()
-  get_state()
+  local state = get_state()
+  state.static_pending = {}
+  state_collector.initialize(state)
+  state_collector.invalidate_static(state)
 
   for _, player in pairs(game.players) do
     initialize_player(player)
@@ -283,7 +509,10 @@ script.on_init(function()
 end)
 
 script.on_configuration_changed(function()
-  get_state()
+  local state = get_state()
+  state.static_pending = {}
+  state_collector.initialize(state)
+  state_collector.invalidate_static(state)
 
   for _, player in pairs(game.players) do
     initialize_player(player)
@@ -306,6 +535,71 @@ script.on_event(defines.events.on_player_joined_game, function(event)
     send_hello()
   end
 end)
+
+local function handle_electric_pole_built(event)
+  local entity = event.entity or event.destination
+
+  if entity ~= nil then
+    state_collector.track_electric_pole(get_state(), entity)
+  end
+end
+
+local function handle_electric_pole_removed(event)
+  if event.entity ~= nil then
+    state_collector.untrack_electric_pole(get_state(), event.entity)
+  end
+end
+
+local function handle_research_change(event)
+  queue_static_delta(event.research.force)
+end
+
+local function handle_force_context_change()
+  local state = get_state()
+  state_collector.invalidate_static(state)
+
+  if state.connected and not has_static_pending(state) then
+    queue_static_snapshot()
+  end
+end
+
+local ELECTRIC_POLE_FILTER = {
+  {
+    filter = "type",
+    type = "electric-pole",
+  },
+}
+
+script.on_event({
+  defines.events.on_built_entity,
+  defines.events.on_robot_built_entity,
+  defines.events.script_raised_built,
+  defines.events.script_raised_revive,
+}, handle_electric_pole_built, ELECTRIC_POLE_FILTER)
+
+script.on_event(
+  defines.events.on_entity_cloned,
+  handle_electric_pole_built,
+  ELECTRIC_POLE_FILTER
+)
+
+script.on_event({
+  defines.events.on_player_mined_entity,
+  defines.events.on_robot_mined_entity,
+  defines.events.on_entity_died,
+  defines.events.script_raised_destroy,
+}, handle_electric_pole_removed, ELECTRIC_POLE_FILTER)
+
+script.on_event({
+  defines.events.on_research_finished,
+  defines.events.on_research_reversed,
+}, handle_research_change)
+
+script.on_event({
+  defines.events.on_force_created,
+  defines.events.on_forces_merged,
+  defines.events.on_player_changed_force,
+}, handle_force_context_change)
 
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
@@ -334,10 +628,16 @@ script.on_event(defines.events.on_gui_click, function(event)
   end
 end)
 
+local function run_periodic_network_tasks()
+  send_hello()
+  retry_static_packets()
+  send_dynamic_snapshot()
+end
+
 if UDP_AVAILABLE then
   script.on_event(UDP_EVENT, handle_udp_packet)
   script.on_nth_tick(POLL_INTERVAL_TICKS, poll_udp)
-  script.on_nth_tick(HELLO_INTERVAL_TICKS, send_hello)
+  script.on_nth_tick(HELLO_INTERVAL_TICKS, run_periodic_network_tasks)
 end
 
 script.on_nth_tick(UI_REFRESH_INTERVAL_TICKS, update_connection_status)
