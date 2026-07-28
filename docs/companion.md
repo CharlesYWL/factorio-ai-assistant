@@ -9,6 +9,10 @@ Companion 默认不连接模型，以 `local` 模式启动：精确计算器、�
 配置优先级为环境变量、`FACTORIO_ASSISTANT_CONFIG` 指向的本机 JSON 文件、内置默认值。
 示例文件为 [`companion.config.example.json`](../companion.config.example.json)。
 
+Release ZIP 用户直接运行 `start-companion.cmd`；脚本检查 Node.js 22，把输出写入
+`logs/companion-current.log`，并在存在 `companion.config.json` 时自动使用它。
+`node companion.mjs --version` 可在排错时输出 Companion 版本。
+
 ```powershell
 Copy-Item .\companion.config.example.json "$env:LOCALAPPDATA\factorio-ai-assistant.json"
 $env:FACTORIO_ASSISTANT_CONFIG = "$env:LOCALAPPDATA\factorio-ai-assistant.json"
@@ -145,3 +149,7 @@ Assistant 在调用模型前先按问题执行受限的本地工具，模型不�
 | `invalid_response` | endpoint 必须返回所选 provider 的非流式 JSON schema，且 body 小于 64 KiB |
 | 配置 JSON 无法加载 | 检查 UTF-8 JSON、字段拼写和 64 KiB 文件上限 |
 | 日志需要分享 | 可分享结构化事件，但仍应人工检查本机路径；日志设计上不含 key、问题或完整状态 |
+
+Windows release 包可运行 `collect-diagnostics.ps1`。它只收集 Companion 当前日志、
+`factorio-current.log`、版本信息和脱敏配置，不收集存档或环境变量；分享前仍要检查本机
+路径。

@@ -121,6 +121,11 @@ assert.ok(
   controlSource.includes("factorio-ai-assistant-mock"),
   "The in-game UI mock harness must stay available",
 );
+assert.ok(
+  controlSource.includes("component_version_mismatch")
+    && controlSource.includes("protocol_mismatch"),
+  "The Mod must surface component and protocol version mismatches",
+);
 for (const input of [
   "factorio-ai-assistant-toggle-input",
   "factorio-ai-assistant-tab-1",

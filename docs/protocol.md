@@ -5,6 +5,10 @@
 和 `2`。
 任意消息的硬上限为 16 KiB（16,384 bytes）。
 
+传输协议不匹配时 Mod 不解析 payload，而是在 Status 显示本地期望值和收到的远端版本。
+协议相同但 Mod/Companion release 版本不同也会停止聊天、计算和新状态同步；必须从同一
+bundle 同时升级或降级。这样不会用旧组件继续处理新版本数据。
+
 TypeScript 权威编解码器位于 `packages/protocol/`，Factorio Mod 在
 `factorio-mod/state_collector.lua` 中镜像同一 schema。代表性的 vanilla 2.0 fixture：
 

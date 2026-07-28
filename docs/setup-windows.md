@@ -1,12 +1,15 @@
 # Windows + Steam 安装与联调
 
+> **Steam 成就警告：** 启用任何 Factorio Mod 后，该存档都不能获得 Steam 成就。
+> 安装前备份存档，并使用测试副本验收。
+
 ## 前置条件
 
 - Windows 上的 Factorio 2.0.59 或更高 2.0 版本（Steam 版）。Mod 元数据允许
   `base >= 2.0`，但 Lua UDP API 从 2.0.59 才开始提供；更早版本会安全保持
   `Disconnected`。
 - Node.js 22 或更高版本。
-- PowerShell，当前目录为本仓库根目录。
+- PowerShell；执行命令时进入下载目录或解压后的 Companion 目录。
 
 Factorio 与 Companion 必须使用两个不同的 UDP 端口：
 
@@ -15,28 +18,43 @@ Factorio 与 Companion 必须使用两个不同的 UDP 端口：
 | Companion | `127.0.0.1` | `34197` |
 | Factorio Lua UDP | localhost | `34198` |
 
-## 1. 构建 Companion
+## 1. 校验并安装同一 release bundle
+
+从私有 `v0.1.0-rc.1` GitHub Release 下载：
+
+- `factorio-ai-assistant_0.1.0.zip`
+- `factorio-ai-assistant-companion-windows-x64-0.1.0.zip`
+- `SHA256SUMS`
+
+在 PowerShell 计算并与 `SHA256SUMS` 对照：
 
 ```powershell
-npm install
-npm run build
+Get-FileHash .\factorio-ai-assistant_0.1.0.zip -Algorithm SHA256
+Get-FileHash .\factorio-ai-assistant-companion-windows-x64-0.1.0.zip -Algorithm SHA256
 ```
 
-## 2. 安装 Mod
-
-将 `factorio-mod/` 的内容复制到 Factorio 用户 Mod 目录，并确保目标文件夹名与
-`info.json` 中的名称和版本一致：
+把 Mod ZIP 原样放入 `%APPDATA%\Factorio\mods`（Factorio 可直接读取 ZIP），把
+Companion ZIP 解压到当前用户可写目录：
 
 ```powershell
-$mod = "$env:APPDATA\Factorio\mods\factorio-ai-assistant_0.1.0"
-New-Item -ItemType Directory -Force $mod | Out-Null
-Copy-Item ".\factorio-mod\*" $mod -Recurse -Force
+Copy-Item .\factorio-ai-assistant_0.1.0.zip "$env:APPDATA\Factorio\mods\" -Force
+Expand-Archive .\factorio-ai-assistant-companion-windows-x64-0.1.0.zip `
+  "$env:LOCALAPPDATA\FactorioAI Assistant" -Force
+Set-Location "$env:LOCALAPPDATA\FactorioAI Assistant\factorio-ai-assistant-companion-0.1.0"
 ```
 
 启动 Factorio 后，在 **Mods** 中确认 `Factorio AI Assistant` 已启用。该 Mod 只依赖
 `base >= 2.0`，不需要 Space Age。
 
-## 3. 配置 Steam 启动参数
+开发者从源码运行时才需要：
+
+```powershell
+npm install
+npm run build
+npm start
+```
+
+## 2. 配置 Steam 启动参数
 
 Steam 中打开 **Factorio → Properties → General → Launch Options**，填写：
 
@@ -47,12 +65,12 @@ Steam 中打开 **Factorio → Properties → General → Launch Options**，填
 这个端口是 Factorio 自己接收 `hello_ack` 的端口，不是 Companion 的监听端口。
 修改后应完全退出并重新启动 Factorio。
 
-## 4. 启动 Companion
+## 3. 启动 Companion
 
-在仓库根目录运行：
+进入解压后的 Companion 目录，双击 `start-companion.cmd`，或在 PowerShell 运行：
 
 ```powershell
-npm start
+.\start-companion.ps1
 ```
 
 预期输出：
@@ -65,8 +83,8 @@ npm start
 如需修改 Companion 端口，只能修改端口，监听地址仍固定为 `127.0.0.1`：
 
 ```powershell
-$env:FACTORIO_ASSISTANT_COMPANION_PORT = "40000"
-npm start
+Copy-Item .\companion.config.example.json .\companion.config.json
+# 编辑 companion.config.json 的 port 后重新运行 start-companion.cmd
 ```
 
 同时在 Factorio 的 **Settings → Mod settings → Startup** 中把
@@ -78,7 +96,7 @@ npm start
 `FACTORIO_ASSISTANT_CONFIG`。Companion 配置的 `sampling_interval_ms` 会在握手后同步
 给 Mod；默认 5 秒。
 
-## 5. 验证 UI 与双向通信
+## 4. 验证 UI 与双向通信
 
 1. 载入或新建一个存档。
 2. 点击顶部的 **AI Assistant** 按钮或按 `Ctrl+Shift+A` 打开顾问面板；
@@ -111,7 +129,10 @@ npm start
 /factorio-ai-assistant-mock clear
 ```
 
-## 6. 真实 Factorio 2.0 存档对话验收清单（待 Windows 实机）
+快速清单见 [`windows-smoke-test.md`](windows-smoke-test.md)；性能与 30 分钟稳定性见
+[`performance.md`](performance.md)。
+
+## 5. 真实 Factorio 2.0 存档对话验收清单（待 Windows 实机）
 
 使用一个已解锁高级炼油、正在稳定生产化学科研包，且可以人为制造缺电、断料和油品堵塞
 的原版 2.0 存档。先保留一份副本；本清单只观察与提问，不要求 Mod 或 Companion 修改
@@ -138,6 +159,28 @@ Factorio 2.0 图形客户端完成：
 - [ ] 保存 `factorio-current.log` 与 Companion 的脱敏日志，并记录 Factorio 版本、
   Mod 版本、provider / model、存档副本名及每项通过 / 失败结果。
 
+## 升级、降级与卸载
+
+升级或降级：
+
+1. 完全退出 Factorio，并关闭 Companion 窗口。
+2. 备份自己的 `companion.config.json` 和需要保留的日志。
+3. 删除旧 Mod ZIP/目录与旧 Companion 程序文件。
+4. 从**同一个** release bundle 同时安装 Mod 和 Companion，再恢复配置。
+5. Status 核对双方版本。版本或协议不匹配时 UI 会停止聊天、计算和新状态同步，并显示
+  应从同一 bundle 成对升级/降级。
+
+卸载：
+
+```powershell
+Remove-Item "$env:APPDATA\Factorio\mods\factorio-ai-assistant_0.1.0.zip" -Force
+Remove-Item "$env:APPDATA\Factorio\mods\factorio-ai-assistant_0.1.0" -Recurse -Force `
+  -ErrorAction SilentlyContinue
+```
+
+然后从 Steam 启动参数删除 `--enable-lua-udp=34198`，并删除自己解压的 Companion
+目录。Mod 不会在游戏外留下服务；存档中的 Mod 状态由 Factorio 管理。
+
 ## 排错
 
 | 现象 | 检查项 |
@@ -149,10 +192,11 @@ Factorio 2.0 图形客户端完成：
 | 模型超时 / 限流 | 本地计算与告警会继续工作；provider 只有限重试一次，详见 `companion.md` |
 | 日志提示需要 2.0.59 | 更新 Factorio；旧版 2.0 可加载 Mod，但没有 Lua UDP API |
 | UI 没有按钮 | 确认 Mod 已启用、目录名正确，并检查 `%APPDATA%\Factorio\factorio-current.log` |
-| 显示协议不兼容 | Mod 与 Companion 版本不成套；重新复制 `factorio-mod/` 并执行 `npm run build` |
+| 显示版本/协议不兼容 | 记录 Status 中双方版本，从同一个 release bundle 同时升级或降级 Mod 与 Companion |
 | 计算器报告多配方歧义 | 简化面板不能选择复杂上游配方；改用仓库 JSON CLI |
 | 游戏暂停时响应延迟 | `helpers.recv_udp` 随游戏更新轮询；恢复游戏后再观察 |
 | 安全软件告警 | 仅允许 `factorio.exe` 和 Node.js 的本机 loopback UDP，不要建立公网入站规则 |
+| 需要提交日志 | 在 Companion 目录运行 `.\collect-diagnostics.ps1`，分享前人工检查生成的 ZIP |
 
 ## 验证状态
 

@@ -1,8 +1,16 @@
 import { loadCompanionConfig } from "./config.js";
 import { JsonLogger } from "./logger.js";
-import { startCompanionServer } from "./server.js";
+import { COMPANION_VERSION, startCompanionServer } from "./server.js";
 
-async function main(): Promise<void> {
+async function main(args: string[]): Promise<void> {
+  if (args.length === 1 && args[0] === "--version") {
+    process.stdout.write(`${COMPANION_VERSION}\n`);
+    return;
+  }
+  if (args.length > 0) {
+    throw new Error(`Unknown command-line option ${args[0]}`);
+  }
+
   const config = await loadCompanionConfig();
   const logger = new JsonLogger();
   const server = await startCompanionServer({ config, logger });
@@ -28,7 +36,7 @@ async function main(): Promise<void> {
 }
 
 try {
-  await main();
+  await main(process.argv.slice(2));
 } catch (error: unknown) {
   new JsonLogger().error("companion_start_failed", {
     error_name: error instanceof Error ? error.name : "unknown",

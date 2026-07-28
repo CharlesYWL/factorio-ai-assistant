@@ -14,8 +14,14 @@
     "start": "npm run start --workspace @factorio-ai-assistant/companion",
     "calculate": "node packages/calculator/dist/cli.js",
     "pretest": "npm run build",
-    "test": "node --test packages/*/dist/*.test.js companion/dist/*.test.js",
-    "lint": "eslint . && node scripts/lint-factorio-mod.mjs"
+    "test": "node --test packages/*/dist/*.test.js companion/dist/*.test.js scripts/*.test.mjs",
+    "lint": "eslint . && node scripts/lint-factorio-mod.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "check:security": "node scripts/check-security.mjs",
+    "benchmark": "npm run build && node scripts/performance-baseline.mjs",
+    "package": "npm run build && node scripts/performance-baseline.mjs && node scripts/package-release.mjs",
+    "package:verify": "node scripts/verify-release.mjs",
+    "verify": "npm run lint && npm test && npm run check:release && npm run check:security"
   },
   "engines": {
     "node": ">=22.0.0",
@@ -24,6 +30,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.10.1",
+    "esbuild": "^0.25.12",
     "eslint": "^10.8.0",
     "globals": "^17.8.0",
     "luaparse": "^0.3.1",

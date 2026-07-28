@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  lint-security:
+    name: Lint and release gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run check:release
+      - run: npm run check:security
+
+  package:
+    name: Package release candidate
+    needs:
+      - build-test
+      - lint-security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run package
+      - run: npm run package:verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factorio-ai-assistant-v0.1.0-rc.1
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/v0.1.0-rc.1/*
+            release/factorio-ai-assistant-v0.1.0-rc.1.zip
+            release/factorio-ai-assistant-v0.1.0-rc.1.zip.sha256

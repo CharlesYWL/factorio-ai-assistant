@@ -1,0 +1,8 @@
+{
+  "version": "0.1.0",
+  "release_tag": "v0.1.0-rc.1",
+  "protocol_version": 1,
+  "state_schema_version": 2,
+  "node_major_version": 22,
+  "factorio_min_version": "2.0.59"
+}
