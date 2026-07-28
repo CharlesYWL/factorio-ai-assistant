@@ -20,7 +20,7 @@ Factorio 与 Companion 必须使用两个不同的 UDP 端口：
 
 ## 1. 校验并安装同一 release bundle
 
-从私有 `v0.1.0-rc.1` GitHub Release 下载：
+从私有 `v0.1.0-rc.2` GitHub Release 下载：
 
 - `factorio-ai-assistant_0.1.0.zip`
 - `factorio-ai-assistant-companion-windows-x64-0.1.0.zip`

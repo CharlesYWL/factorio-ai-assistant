@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "release_tag": "v0.1.0-rc.1",
+  "release_tag": "v0.1.0-rc.2",
   "protocol_version": 1,
   "state_schema_version": 2,
   "node_major_version": 22,
