@@ -112,6 +112,47 @@ void test(
   },
 );
 
+void test(
+  "uses a synchronized snapshot as evidence when no advisor rule is active",
+  async () => {
+    const fixture = await readDialogFixture();
+    const catalog = await readCatalog();
+    const store = populatedStateStore(fixture, catalog);
+    let providerCalls = 0;
+    const provider: AIProvider = {
+      kind: "openai-compatible",
+      complete(request) {
+        providerCalls += 1;
+        assert.equal(firstEvidenceId(request.context), "A1");
+        return Promise.resolve({
+          text: "同步状态可以用于定性分析 [A1]。",
+          model: "state-aware-no-alerts",
+        });
+      },
+    };
+    const service = new AssistantService({
+      config: resolveCompanionConfig(
+        { provider: "openclaw", model_retry_count: 0 },
+        {},
+      ),
+      stateStore: store,
+      advisor: new AdvisorEngine(undefined, "zh-CN"),
+      logger: silentLogger,
+      provider,
+    });
+
+    const answer = await service.answer({
+      question: "当前工厂状态怎么样？",
+      forceId: fixture.force_id,
+    });
+
+    assert.equal(providerCalls, 1);
+    assert.equal(answer.mode, "model");
+    assert.match(answer.text, /当前 force 的动态快照已同步/);
+    assert.match(answer.text, /同步状态可以用于定性分析 \[A1\]/);
+  },
+);
+
 async function readDialogFixture(): Promise<DialogFixture> {
   return JSON.parse(
     await readFile(

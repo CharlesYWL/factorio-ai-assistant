@@ -475,6 +475,16 @@ export class AssistantToolbox {
       category: "fact" as const,
       text: alert.evidence,
     }));
+    if (dynamicForce !== undefined && evidence.length === 0) {
+      evidence.push({
+        id: "A1",
+        category: "fact",
+        text:
+          this.#language === "zh-CN"
+            ? "当前 force 的动态快照已同步；确定性规则当前没有活动告警。"
+            : "The current force snapshot is synchronized; no deterministic advisor rule is active.",
+      });
+    }
     const actions = alerts.map((alert, index) => ({
       text: alert.recommendation,
       evidence_id: `A${index + 1}`,
@@ -526,6 +536,16 @@ export class AssistantToolbox {
                     evidence: alert.evidence,
                     recommendation: alert.recommendation,
                   })),
+                  ...(alerts.length === 0
+                    ? {
+                        synchronized_snapshot: {
+                          evidence_id: "A1",
+                          truncated:
+                            this.#stateStore.dynamicState?.payload.truncated ===
+                            true,
+                        },
+                      }
+                    : {}),
                 },
               }),
         },
