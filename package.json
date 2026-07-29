@@ -11,6 +11,9 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",
+    "dev": "node scripts/dev-companion.mjs",
+    "dev:link": "node scripts/dev-link-mod.mjs",
+    "dev:unlink": "node scripts/dev-link-mod.mjs --unlink",
     "start": "npm run start --workspace @factorio-ai-assistant/companion",
     "calculate": "node packages/calculator/dist/cli.js",
     "pretest": "npm run build",

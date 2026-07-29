@@ -7,6 +7,18 @@ import luaparse from "luaparse";
 const modDirectory = fileURLToPath(new URL("../factorio-mod/", import.meta.url));
 const infoPath = new URL("../factorio-mod/info.json", import.meta.url);
 
+/**
+ * Reads mod source with line endings normalized to LF. Checkouts on Windows
+ * use CRLF, which silently breaks any assertion whose literal spans a newline.
+ */
+async function readSource(relativePath) {
+  const source = await readFile(
+    new URL(`../factorio-mod/${relativePath}`, import.meta.url),
+    "utf8",
+  );
+  return source.replace(/\r\n/gu, "\n");
+}
+
 const info = JSON.parse(await readFile(infoPath, "utf8"));
 assert.equal(info.factorio_version, "2.0", "info.json must target Factorio 2.0");
 assert.deepEqual(
@@ -24,38 +36,14 @@ for (const fileName of luaFiles) {
   luaparse.parse(source, { luaVersion: "5.2" });
 }
 
-const controlSource = await readFile(
-  new URL("../factorio-mod/control.lua", import.meta.url),
-  "utf8",
-);
-const collectorSource = await readFile(
-  new URL("../factorio-mod/state_collector.lua", import.meta.url),
-  "utf8",
-);
-const uiSource = await readFile(
-  new URL("../factorio-mod/ui.lua", import.meta.url),
-  "utf8",
-);
-const uiStateSource = await readFile(
-  new URL("../factorio-mod/ui_state.lua", import.meta.url),
-  "utf8",
-);
-const pauseSource = await readFile(
-  new URL("../factorio-mod/pause.lua", import.meta.url),
-  "utf8",
-);
-const settingsSource = await readFile(
-  new URL("../factorio-mod/settings.lua", import.meta.url),
-  "utf8",
-);
-const localizationSource = await readFile(
-  new URL("../factorio-mod/localization.lua", import.meta.url),
-  "utf8",
-);
-const dataSource = await readFile(
-  new URL("../factorio-mod/data.lua", import.meta.url),
-  "utf8",
-);
+const controlSource = await readSource("control.lua");
+const collectorSource = await readSource("state_collector.lua");
+const uiSource = await readSource("ui.lua");
+const uiStateSource = await readSource("ui_state.lua");
+const pauseSource = await readSource("pause.lua");
+const settingsSource = await readSource("settings.lua");
+const localizationSource = await readSource("localization.lua");
+const dataSource = await readSource("data.lua");
 const englishLocale = await readFile(
   new URL("../factorio-mod/locale/en/locale.cfg", import.meta.url),
   "utf8",
