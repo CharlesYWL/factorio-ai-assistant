@@ -272,6 +272,34 @@ function ui_state.is_alert_dismissed(player_state, alert)
   return dismissed_at ~= nil and dismissed_at == (alert.first_seen or 0)
 end
 
+--- Alerts of one force that this player has not dismissed in their current
+--- lifecycle. Muted rules stay in the list: muting silences a whole rule type
+--- and remains a separate switch from dismissing what is open right now.
+function ui_state.pending_alerts(state, player_state, force_id)
+  local pending = {}
+  for _, alert in pairs(state.advisor_alerts or {}) do
+    if alert.force_id == force_id
+      and not ui_state.is_alert_dismissed(player_state, alert)
+    then
+      table.insert(pending, alert)
+    end
+  end
+  return pending
+end
+
+--- Batch dismiss: writes only this player's dismissed_alerts and never touches
+--- state.advisor_alerts, quiet mode or muted rules, so a dismissed alert comes
+--- back once it closes and triggers again.
+function ui_state.dismiss_all_alerts(state, player_state, force_id)
+  local dismissed = 0
+  for _, alert in ipairs(ui_state.pending_alerts(state, player_state, force_id)) do
+    if ui_state.dismiss_alert(player_state, alert) then
+      dismissed = dismissed + 1
+    end
+  end
+  return dismissed
+end
+
 function ui_state.forget_alert(state, alert_id)
   if type(alert_id) ~= "string" then
     return

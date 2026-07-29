@@ -40,6 +40,14 @@ const uiStateSource = await readFile(
   new URL("../factorio-mod/ui_state.lua", import.meta.url),
   "utf8",
 );
+const pauseSource = await readFile(
+  new URL("../factorio-mod/pause.lua", import.meta.url),
+  "utf8",
+);
+const settingsSource = await readFile(
+  new URL("../factorio-mod/settings.lua", import.meta.url),
+  "utf8",
+);
 const localizationSource = await readFile(
   new URL("../factorio-mod/localization.lua", import.meta.url),
   "utf8",
@@ -175,6 +183,8 @@ for (const transition of [
   "restore_alert",
   "is_alert_dismissed",
   "forget_alert",
+  "pending_alerts",
+  "dismiss_all_alerts",
 ]) {
   assert.ok(
     uiStateSource.includes(`function ui_state.${transition}`),
@@ -204,12 +214,83 @@ assert.ok(
   uiSource.includes("function ui.refresh_alerts_hud"),
   "ui.lua must expose the persistent alert list refresh",
 );
-for (const action of ["clear-chat", "dismiss-alert", "restore-alert"]) {
+for (const action of [
+  "clear-chat",
+  "dismiss-alert",
+  "restore-alert",
+  "clear-alerts",
+]) {
   assert.ok(
     controlSource.includes(`action == "${action}"`),
     `control.lua must handle the ${action} GUI action`,
   );
 }
+assert.ok(
+  uiSource.includes('tags = { action = "clear-alerts" }'),
+  "The Alerts tab and the persistent alert card must offer a clear-all action",
+);
+assert.equal(
+  countOccurrences(uiSource, 'action = "clear-alerts"'),
+  2,
+  "Clear-all must be offered both on the Alerts tab and on the persistent card",
+);
+
+// Auto-pause is only correct while exactly one open path and one close path own
+// the claim, so control.lua must funnel every entry point through its helpers.
+for (const helper of ["open_advisor", "close_advisor", "toggle_advisor"]) {
+  assert.ok(
+    controlSource.includes(`local function ${helper}(player)`),
+    `control.lua must define ${helper}`,
+  );
+}
+assert.equal(
+  countOccurrences(controlSource, "ui.open("),
+  1,
+  "control.lua may only call ui.open from open_advisor",
+);
+assert.equal(
+  countOccurrences(controlSource, "ui.close("),
+  1,
+  "control.lua may only call ui.close from close_advisor",
+);
+assert.doesNotMatch(
+  uiSource,
+  /function ui\.toggle\b/u,
+  "ui.lua must not expose a second toggle path that skips the pause handling",
+);
+assert.ok(
+  uiSource.includes("player.opened = frame"),
+  "The advisor panel must register as the opened GUI so ESC raises on_gui_closed",
+);
+for (const cleanup of [
+  "defines.events.on_player_left_game",
+  "defines.events.on_player_removed",
+]) {
+  assert.ok(
+    controlSource.includes(cleanup),
+    `control.lua must release the auto-pause claim on ${cleanup}`,
+  );
+}
+assert.ok(
+  controlSource.includes("pause.reconcile(get_state())"),
+  "control.lua must reconcile a stale pause claim from the periodic handler",
+);
+assert.ok(
+  pauseSource.includes("game.is_multiplayer()"),
+  "pause.lua must gate auto-pause on single player",
+);
+for (const source of [controlSource, uiSource, uiStateSource]) {
+  assert.doesNotMatch(
+    source,
+    /game\.tick_paused/u,
+    "Only pause.lua may read or write game.tick_paused",
+  );
+}
+assert.match(
+  settingsSource,
+  /name = "factorio-ai-assistant-auto-pause-on-open",\s*setting_type = "runtime-per-user",\s*default_value = true,/u,
+  "Auto-pause must ship as a per-player runtime setting that defaults to on",
+);
 assert.ok(
   controlSource.includes("factorio-ai-assistant-mock"),
   "The in-game UI mock harness must stay available",
@@ -227,6 +308,21 @@ for (const input of [
 ]) {
   assert.ok(dataSource.includes(input), `data.lua must declare ${input}`);
 }
+for (const localeKey of [
+  "clear-alerts",
+  "clear-alerts-tooltip",
+  "alerts-cleared",
+  "status-auto-pause",
+  "auto-pause-on",
+  "auto-pause-off",
+  "auto-pause-multiplayer",
+  "factorio-ai-assistant-auto-pause-on-open",
+]) {
+  assert.ok(
+    englishLocale.includes(`\n${localeKey}=`),
+    `The locale files must define ${localeKey}`,
+  );
+}
 assert.deepEqual(
   localeKeys(chineseLocale),
   localeKeys(englishLocale),
@@ -234,6 +330,10 @@ assert.deepEqual(
 );
 
 console.log(`Factorio mod lint passed (${luaFiles.length} Lua files).`);
+
+function countOccurrences(source, needle) {
+  return source.split(needle).length - 1;
+}
 
 function localeKeys(source) {
   let section = "";

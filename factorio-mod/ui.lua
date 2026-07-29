@@ -1,4 +1,5 @@
 local mod_gui = require("__core__.lualib.mod-gui")
+local pause = require("pause")
 local ui_state = require("ui_state")
 
 local ui = {}
@@ -9,6 +10,8 @@ ui.CHAT_INPUT_NAME = "factorio-ai-assistant-chat-input"
 ui.CHAT_SEND_NAME = "factorio-ai-assistant-chat-send"
 ui.CHAT_CANCEL_NAME = "factorio-ai-assistant-chat-cancel"
 ui.CHAT_CLEAR_NAME = "factorio-ai-assistant-chat-clear"
+ui.CLEAR_ALERTS_NAME = "factorio-ai-assistant-clear-alerts"
+ui.HUD_CLEAR_ALERTS_NAME = "factorio-ai-assistant-hud-clear-alerts"
 
 local TITLEBAR_NAME = "factorio-ai-assistant-titlebar"
 local HEADER_STATUS_NAME = "factorio-ai-assistant-header-status"
@@ -70,6 +73,7 @@ local add_status_value
 local localized_rule
 local localized_severity
 local muted_rule_set
+local auto_pause_caption
 local format_last_response
 local panel_text_width
 local find_element
@@ -156,21 +160,26 @@ function ui.open(player, state, player_state)
       y = 72,
     }
   end
+  -- Registering the panel as the opened GUI is what makes ESC close it and
+  -- raise on_gui_closed, which is the only close path the Mod cannot trigger
+  -- itself.
+  player.opened = frame
   ui.render(player, state, player_state)
 end
 
 function ui.close(player)
   local frame = player.gui.screen[ui.PANEL_NAME]
+  if frame == nil then
+    return
+  end
+  if player.opened == frame then
+    -- Clearing `opened` raises on_gui_closed, which re-enters this function, so
+    -- look the frame up again instead of destroying a stale handle.
+    player.opened = nil
+    frame = player.gui.screen[ui.PANEL_NAME]
+  end
   if frame ~= nil then
     frame.destroy()
-  end
-end
-
-function ui.toggle(player, state, player_state)
-  if ui.is_open(player) then
-    ui.close(player)
-  else
-    ui.open(player, state, player_state)
   end
 end
 
@@ -196,7 +205,7 @@ function ui.render(player, state, player_state)
   if player_state.active_tab == "alerts" then
     render_alerts(body, state, player_state, player.force.name)
   else
-    render_status(body, state)
+    render_status(body, state, player)
   end
 end
 
@@ -262,6 +271,16 @@ function ui.show_toast(player, state, alert)
   })
   state.toast_expiry = state.toast_expiry or {}
   state.toast_expiry[player.index] = game.tick + 8 * 60
+end
+
+function ui.hide_toast(player, state)
+  local toast = player.gui.screen[TOAST_NAME]
+  if toast ~= nil then
+    toast.destroy()
+  end
+  if state ~= nil and state.toast_expiry ~= nil then
+    state.toast_expiry[player.index] = nil
+  end
 end
 
 function ui.expire_toasts(state, tick)
@@ -363,6 +382,14 @@ function ui.refresh_alerts_hud(player, state, player_state)
       tags = { action = "open-alerts" },
     })
   end
+
+  hud.add({
+    type = "button",
+    name = ui.HUD_CLEAR_ALERTS_NAME,
+    caption = { "factorio-ai-assistant.clear-alerts" },
+    tooltip = { "factorio-ai-assistant.clear-alerts-tooltip" },
+    tags = { action = "clear-alerts" },
+  })
 end
 
 function ui.clear_alerts_hud(player)
@@ -765,6 +792,24 @@ render_alerts = function(parent, state, player_state, force_id)
 
   local alerts = collect_force_alerts(state, force_id)
 
+  local toolbar = parent.add({
+    type = "flow",
+    direction = "horizontal",
+  })
+  toolbar.style.horizontally_stretchable = true
+  toolbar.style.vertical_align = "center"
+  local toolbar_spacer = toolbar.add({ type = "empty-widget" })
+  toolbar_spacer.style.horizontally_stretchable = true
+  local clear_all = toolbar.add({
+    type = "button",
+    name = ui.CLEAR_ALERTS_NAME,
+    caption = { "factorio-ai-assistant.clear-alerts" },
+    tooltip = { "factorio-ai-assistant.clear-alerts-tooltip" },
+    tags = { action = "clear-alerts" },
+  })
+  clear_all.enabled =
+    #ui_state.pending_alerts(state, player_state, force_id) > 0
+
   local scroll = parent.add({
     type = "scroll-pane",
     direction = "vertical",
@@ -882,7 +927,7 @@ render_alerts = function(parent, state, player_state, force_id)
   end
 end
 
-render_status = function(parent, state)
+render_status = function(parent, state, player)
   local incompatible = incompatibility_caption(state)
   if incompatible ~= nil then
     add_state_banner(parent, "warning", incompatible)
@@ -939,6 +984,7 @@ render_status = function(parent, state)
     "status-name-locale",
     localization_summary(state)
   )
+  add_status_row(table_element, "status-auto-pause", auto_pause_caption(player))
 
   local assistant = state.assistant_status
   if assistant ~= nil then
@@ -1083,6 +1129,18 @@ muted_rule_set = function()
     result[rule_id] = true
   end
   return result
+end
+
+--- Auto-pause is deliberately unavailable in multiplayer, so the Status tab has
+--- to say why instead of showing a switch that silently does nothing.
+auto_pause_caption = function(player)
+  if not pause.is_available() then
+    return "auto-pause-multiplayer"
+  end
+  if pause.is_enabled(player) then
+    return "auto-pause-on"
+  end
+  return "auto-pause-off"
 end
 
 --- Debug summary of the display-name sync: which locale the Companion is being

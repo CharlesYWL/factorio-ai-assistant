@@ -10,6 +10,13 @@ data:extend({
   },
   {
     type = "bool-setting",
+    name = "factorio-ai-assistant-auto-pause-on-open",
+    setting_type = "runtime-per-user",
+    default_value = true,
+    order = "a-a",
+  },
+  {
+    type = "bool-setting",
     name = "factorio-ai-assistant-advisor-quiet-mode",
     setting_type = "runtime-global",
     default_value = false,
