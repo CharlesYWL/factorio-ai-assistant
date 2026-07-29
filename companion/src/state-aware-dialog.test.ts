@@ -207,7 +207,7 @@ void test(
         sources.add(action.source);
         assert.match(action.action_id, /^(?:guide|alert|calculation|model)-[0-9a-f]{8}$/u);
         assert.equal(action.action_id.startsWith(`${action.source}-`), true);
-        assert.ok(action.text.length > 0 && action.text.length <= 240);
+        assert.ok(action.text.length > 0 && action.text.length <= 320);
         assert.doesNotMatch(action.text, /\[[A-Z]\d+\]/u);
         assert.doesNotMatch(action.text, /[\n\r]/u);
         assert.ok(answer.text.includes(action.text) || action.source === "model");

@@ -359,6 +359,33 @@ return function(suite)
     equal(#player_state.todos, 1, "todo count after migration")
   end)
 
+  test("a long Chinese suggestion is measured in characters, not bytes", function()
+    local world = online_world()
+    local player = world.game.players[1]
+    -- The shipped zh-CN guide objectives run past 240 UTF-8 bytes; measuring
+    -- bytes here would silently drop the most useful suggestion of all.
+    local text = string.rep("补齐化学科技包产线并检查供给", 20)
+    equal(#text, 20 * 42, "byte length")
+    answer_with(world, player, {
+      suite.suggestion("guide-0000000a", text, "guide"),
+    })
+
+    local buttons = suite.todo_buttons(world, player)
+    equal(#buttons, 1, "add-to-todo buttons")
+    world.click(player, buttons[1])
+    equal(suite.todos(world, player)[1].text, text, "todo text")
+  end)
+
+  test("a suggestion past the character limit is still rejected", function()
+    local world = online_world()
+    local player = world.game.players[1]
+    answer_with(world, player, {
+      suite.suggestion("guide-0000000a", string.rep("补", 321), "guide"),
+    })
+
+    equal(#suite.todo_buttons(world, player), 0, "add-to-todo buttons")
+  end)
+
   test("open todos sort before completed ones, oldest first", function()
     local world = online_world()
     local player = world.game.players[1]

@@ -26,7 +26,12 @@ export const SUGGESTED_ACTION_SOURCES = [
 ] as const;
 export const MAX_SUGGESTED_ACTIONS = 3;
 export const MAX_SUGGESTED_ACTION_ID_CHARACTERS = 64;
-export const MAX_SUGGESTED_ACTION_TEXT_CHARACTERS = 240;
+/**
+ * Suggestion text is measured in characters on both sides of the wire. The
+ * shipped progression guide has objectives past 250 characters, so a tighter
+ * cap would silently drop the most useful "next step" of all.
+ */
+export const MAX_SUGGESTED_ACTION_TEXT_CHARACTERS = 320;
 export const CALCULATION_RESPONSE_STATUSES = ["ok", "error"] as const;
 export const RESOURCE_KINDS = ["item", "fluid"] as const;
 export const PRIVACY_MODES = ["local-only", "remote-provider"] as const;

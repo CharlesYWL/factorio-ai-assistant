@@ -5,7 +5,12 @@ local MAX_CHAT_HISTORY = 30
 --- small and the Alerts tab readable, and a full list rejects new adds instead
 --- of silently evicting something the player chose to keep.
 local MAX_TODOS = 25
-local MAX_TODO_TEXT = 240
+--- Character limit, matched to the protocol's `MAX_SUGGESTED_ACTION_TEXT_CHARACTERS`.
+--- Counting bytes here would silently drop suggestions in Chinese, where the
+--- shipped guide objectives are well past 240 UTF-8 bytes. The byte guard is a
+--- separate, deliberately loose safety net for a hostile sender.
+local MAX_TODO_TEXT = 320
+local MAX_TODO_TEXT_BYTES = MAX_TODO_TEXT * 4
 local MAX_TODO_ID = 64
 local MAX_SUGGESTED_ACTIONS = 3
 local TODO_SOURCES = {
@@ -24,6 +29,7 @@ local valid_size
 local append_chat
 local touch_chat
 local find_todo
+local utf8_length
 
 function ui_state.ensure_player(state, player_index)
   state.ui_players = state.ui_players or {}
@@ -363,7 +369,8 @@ function ui_state.sanitize_suggested_actions(value)
       and string.match(entry.action_id, "^[%w_%-]+$") ~= nil
       and type(entry.text) == "string"
       and #entry.text > 0
-      and #entry.text <= MAX_TODO_TEXT
+      and #entry.text <= MAX_TODO_TEXT_BYTES
+      and utf8_length(entry.text) <= MAX_TODO_TEXT
       and string.find(entry.text, "[%c]") == nil
       and TODO_SOURCES[entry.source]
       and not seen[entry.action_id]
@@ -500,6 +507,12 @@ find_todo = function(player_state, todo_id)
     end
   end
   return nil
+end
+
+--- Counts UTF-8 code points, not bytes: continuation bytes are 0x80..0xBF.
+utf8_length = function(value)
+  local _, count = string.gsub(value, "[^\128-\191]", "")
+  return count
 end
 
 function ui_state.append_system(player_state, locale, tick, error_code)

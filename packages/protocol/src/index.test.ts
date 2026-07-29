@@ -6,6 +6,7 @@ import {
   DEFAULT_ADVISOR_CONFIG,
   MAX_PACKET_BYTES,
   MAX_SUGGESTED_ACTIONS,
+  MAX_SUGGESTED_ACTION_TEXT_CHARACTERS,
   PROTOCOL_VERSION,
   ProtocolError,
   createAdvisorUpdatePacket,
@@ -310,6 +311,32 @@ void test("carries optional grounded suggestions on a successful answer", () => 
     })),
   });
   assert.equal(capped.payload.suggested_actions?.length, MAX_SUGGESTED_ACTIONS);
+
+  // The limit is characters on both sides of the wire: a Chinese suggestion of
+  // the documented length is three times as many bytes and must still pass.
+  const chinese = createAssistantResponsePacket({
+    messageId: "companion-assistant-chinese",
+    timestamp: 1_753_680_000_003,
+    reply_to: "factorio-assistant-4",
+    status: "ok",
+    mode: "local",
+    text: "长建议。",
+    suggested_actions: [
+      {
+        action_id: "guide-0000000f",
+        text: "补".repeat(MAX_SUGGESTED_ACTION_TEXT_CHARACTERS),
+        source: "guide",
+      },
+    ],
+  });
+  assert.deepEqual(decodePacket(encodePacket(chinese)), chinese);
+  assert.equal(
+    Buffer.byteLength(
+      chinese.payload.suggested_actions?.[0]?.text ?? "",
+      "utf8",
+    ),
+    MAX_SUGGESTED_ACTION_TEXT_CHARACTERS * 3,
+  );
 });
 
 void test("rejects suggestions that could not become a safe todo", () => {
@@ -332,7 +359,7 @@ void test("rejects suggestions that could not become a safe todo", () => {
     [{ action_id: "guide-0001", text: "unknown source", source: "provider" }],
     [{ action_id: "guide-0001", text: "", source: "guide" }],
     [{ action_id: "guide-0001", text: "control\u0007char", source: "guide" }],
-    [{ action_id: "guide-0001", text: "a".repeat(241), source: "guide" }],
+    [{ action_id: "guide-0001", text: "a".repeat(321), source: "guide" }],
     [{ action_id: "a".repeat(65), text: "long id", source: "guide" }],
     [
       { action_id: "guide-0001", text: "first", source: "guide" },

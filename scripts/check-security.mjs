@@ -79,7 +79,7 @@ assert.match(
 );
 assert.match(assistantSource, /collectSuggestedActions\(grounding, \[\]\)/u);
 assert.match(protocolSource, /MAX_SUGGESTED_ACTIONS = 3/u);
-assert.match(protocolSource, /MAX_SUGGESTED_ACTION_TEXT_CHARACTERS = 240/u);
+assert.match(protocolSource, /MAX_SUGGESTED_ACTION_TEXT_CHARACTERS = 320/u);
 assert.match(controlSource, /type\(payload\.suggested_actions\) ~= "table"/u);
 
 console.log(
