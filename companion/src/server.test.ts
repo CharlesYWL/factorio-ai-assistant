@@ -209,67 +209,6 @@ void test(
 );
 
 void test(
-  "delivers grounded suggestions on the assistant response packet",
-  { timeout: 3_000 },
-  async (context) => {
-    const stateStore = new CompanionStateStore();
-    const advisor = new AdvisorEngine({
-      ...DEFAULT_ADVISOR_CONFIG,
-      muted_rules: ADVISOR_RULE_IDS.filter((id) => id !== "research-idle"),
-      research_idle_ticks: 0,
-    });
-    const state = dynamicSnapshot(100, 1);
-    stateStore.acceptDynamicSnapshot(state);
-    advisor.evaluate(state);
-    const companion = await startCompanionServer({
-      port: 0,
-      logger: silentLogger,
-      stateStore,
-      advisor,
-    });
-    const factorio = createSocket("udp4");
-    context.after(async () => {
-      await closeSocket(factorio);
-      await companion.close();
-    });
-    await bindSocket(factorio);
-
-    const request = createAssistantRequestPacket({
-      messageId: "factorio-assistant-suggestions",
-      tick: 600,
-      forceId: "player",
-      question: "当前最大的瓶颈是什么？",
-    });
-    const responsePromise = receiveOne(factorio);
-    await send(
-      factorio,
-      encodePacket(request),
-      companion.address.port,
-      companion.address.address,
-    );
-
-    const datagram = (await responsePromise).datagram;
-    const response = decodePacket(datagram);
-    assert.equal(response.type, "assistant_response");
-    if (response.type !== "assistant_response") {
-      return;
-    }
-    assert.equal(response.payload.status, "ok");
-    const actions = response.payload.suggested_actions ?? [];
-    assert.ok(actions.length > 0, "The advisor alert must offer a suggestion");
-    assert.ok(actions.length <= 3);
-    for (const action of actions) {
-      assert.equal(action.source, "alert");
-      assert.match(action.action_id, /^alert-[0-9a-f]{8}$/u);
-    }
-    assert.ok(
-      Buffer.byteLength(datagram, "utf8") <= MAX_PACKET_BYTES,
-      "The suggestion list must stay inside the datagram limit",
-    );
-  },
-);
-
-void test(
   "ingests a static snapshot, acknowledges it, and advertises its revision",
   { timeout: 3_000 },
   async (context) => {

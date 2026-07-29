@@ -45,7 +45,7 @@ import { CompanionStateStore, StateSyncError } from "./state-store.js";
 export { DEFAULT_COMPANION_PORT, LOOPBACK_HOST, parseCompanionPort };
 export type { CompanionLogger } from "./logger.js";
 export const COMPANION_VERSION = "0.1.0";
-export const COMPANION_BUILD = "v0.1.0-rc.4";
+export const COMPANION_BUILD = "v0.1.0-rc.5";
 
 const RECENT_REQUEST_TTL_MS = 60_000;
 const MAX_RECENT_REQUESTS = 1_024;
@@ -440,9 +440,6 @@ async function handleAssistantRequest(
         ...(answer.fallbackReason === undefined
           ? {}
           : { fallback_reason: answer.fallbackReason }),
-        ...(answer.suggestedActions.length === 0
-          ? {}
-          : { suggested_actions: answer.suggestedActions }),
       }),
       remote,
       logger,

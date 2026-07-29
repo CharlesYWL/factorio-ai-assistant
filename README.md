@@ -1,6 +1,6 @@
 # Factorio AI Assistant
 
-Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.4 把聊天、确定性生产比例、内置原版流程指南、
+Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.5 把聊天、确定性生产比例、内置原版流程指南、
 实时提醒和连接状态整合进可移动的游戏内面板：玩家只用自然语言提问，数字与证据全部由受限的只读
 计算 / 顾问工具产生；Companion 支持 OpenClaw / OpenAI-compatible 与 Ollama，无 Key、模型
 离线、限流、超时或与工具冲突时自动保留本地计算与规则答案。系统不发送地图，也不会
@@ -9,21 +9,21 @@ Factorio 2.0 原版的只读游戏内顾问。v0.1.0-rc.4 把聊天、确定性�
 > **Steam 成就警告：** Factorio 启用任何 Mod 后，该存档都不能获得 Steam 成就。
 > 安装前备份存档，并优先使用专门的测试副本。
 
-## v0.1.0-rc.4 私有候选
+## v0.1.0-rc.5 私有候选
 
 CI 生成可重复验证的 Mod ZIP、Windows Companion ZIP、示例配置、性能报告、
 `SHA256SUMS` 和总 bundle。Mod ZIP 与 Companion ZIP 使用确定性打包，同一提交重复构建
 SHA-256 不变；`performance-baseline.json` 是每次构建的实测数据，因此它和总 bundle 的
 SHA-256 每次构建各不相同，以 Release 内的 `SHA256SUMS` 为准。推荐流程：
 
-1. 从私有 GitHub Release 下载同一个 `v0.1.0-rc.4` 的全部资产并核对 SHA-256。
+1. 从私有 GitHub Release 下载同一个 `v0.1.0-rc.5` 的全部资产并核对 SHA-256。
 2. 按 [`docs/setup-windows.md`](docs/setup-windows.md) 安装 Mod、配置 Steam UDP 参数并
    运行 `start-companion.cmd`。
 3. 按 [`docs/windows-smoke-test.md`](docs/windows-smoke-test.md) 做 30–50 分钟实机冒烟；
    再按 [`docs/performance.md`](docs/performance.md) 完成三场景、30 分钟稳定性/UPS 验证。
 
 本轮变更、已知限制和实机验收清单见
-[`docs/releases/v0.1.0-rc.4.md`](docs/releases/v0.1.0-rc.4.md)。
+[`docs/releases/v0.1.0-rc.5.md`](docs/releases/v0.1.0-rc.5.md)。
 
 Mod 和 Companion 必须来自同一 bundle；混用版本时 UI 会显示双方版本并要求成对升级
 或降级。此候选不会自动发布到 Factorio Mod Portal。
@@ -60,7 +60,7 @@ flowchart LR
 
 ## 游戏内面板
 
-![游戏内 Chat、Alerts、Status 面板、AI 建议“加入待办”与左上角常驻提醒 / 待办卡片预览](docs/ui-preview.svg)
+![游戏内 Chat、Alerts、Status 面板与左上角常驻提醒卡片预览](docs/ui-preview.svg)
 
 预览使用内置 mock harness 的确定性数据绘制，对应实机布局和文案；自动化环境没有
 Factorio 图形客户端，Windows 实机截图仍列在验证清单中。
@@ -79,21 +79,10 @@ Factorio 图形客户端，Windows 实机截图仍列在验证清单中。
 - **Alerts**：按严重度显示证据和建议，可静音 / 恢复规则，也可逐条忽略 / 恢复；主动
   提醒使用 8 秒第三方 toast，不写入聊天区连续刷屏。页面右上角的**清理全部**一次忽略
   本势力当前的全部活动提醒，没有可忽略的提醒时按钮为灰色。
-- **AI 建议转待办**：回答里最多 3 条结构化“建议的下一步”，每条旁边有**加入待办**。
-  点击后按钮变成“已加入”并禁用，同一条建议无论出现在哪次回答里都只会产生一条待办
-  （`action_id` 由来源与文本确定性推导）。建议只有四种来源：流程指南、活动提醒、
-  确定性产能计算，以及已经通过 unsafe-command / 引用 / 数字对账的模型推断——回答一旦
-  回退到本地模式，模型建议就不会出现。**AI 和 Companion 都不能自动创建、完成或删除
-  待办**，全部写入都由玩家点击确认。
-- **待办列表**：作为 Alerts 页内的独立区块（不新增标签页），未完成在前、按加入顺序
-  排列，支持完成 / 恢复、逐条删除、清理已完成和清理全部，并保留来源与创建 tick。
-  列表按玩家隔离并有上限，达到上限时拒绝新增而不是覆盖你保留的条目。不集成任何
-  第三方 Todo List Mod，也不使用 `remote.call`。
-- **常驻提醒卡片**：左上角待办式列表，只在有活动告警或未完成待办时出现，显示严重度、
-  规则标题和证据摘要，并提供“打开顾问”、逐条忽略和“清理全部”；有未完成待办时额外
-  显示一行未完成数量，点击进入 Alerts 页，不会产生任何新 toast。忽略只影响当前告警
-  生命周期，告警关闭后再次触发会重新出现；规则静音仍是独立开关。清理全部只写当前
-  玩家的忽略记录，不删除告警本身，也不改变安静模式或规则静音。
+- **常驻提醒卡片**：左上角待办式列表，只在有活动告警时出现，显示严重度、规则标题和
+  证据摘要，并提供“打开顾问”、逐条忽略和“清理全部”。忽略只影响当前告警生命周期，
+  告警关闭后再次触发会重新出现；规则静音仍是独立开关。清理全部只写当前玩家的忽略
+  记录，不删除告警本身，也不改变安静模式或规则静音。
 - **打开时自动暂停**：单人游戏中打开顾问会自动暂停游戏，关闭时恢复。该行为是每玩家
   设置（`打开 AI 顾问时自动暂停`，默认开启），顶部按钮、`Ctrl+Shift+A`、`Ctrl+Shift+1..3`
   和提醒卡片跳转走同一条开关逻辑。本 Mod 只恢复自己触发的那次暂停：打开前就已暂停、
@@ -113,7 +102,6 @@ Enter 提交，Esc 关闭（面板注册为当前打开的 GUI，所以 Esc 与�
 
 ```text
 /factorio-ai-assistant-mock ready
-/factorio-ai-assistant-mock todos
 /factorio-ai-assistant-mock offline
 /factorio-ai-assistant-mock loading
 /factorio-ai-assistant-mock timeout
@@ -133,15 +121,13 @@ Enter 提交，Esc 关闭（面板注册为当前打开的 GUI，所以 Esc 与�
 消息（用于验证“上翻后仍会因新消息回到底部”），`chat-cleared` 复现清空后的空状态；
 `alerts-none / alerts-one / alerts-many` 覆盖常驻卡片的 0 / 1 / 多告警布局，
 `alert-close` 关闭当前告警，`alert-reopen` 以新的生命周期重新触发，用于验证被忽略
-的提醒会重新出现；`ready` 的回答带结构化建议以便验证“加入待办”，`todos` 在此基础上
-直接把三条建议加入待办并完成其中一条，用于检查 Alerts 页的待办区块与常驻卡片计数。
+的提醒会重新出现。
 
 ## 本地验证
 
 需要 Node.js 22 或更高版本。`npm test` 除 TypeScript 包外，还会在一个最小的
 Factorio 运行时替身上加载 `factorio-mod/` 的 Lua 模块，覆盖自动暂停、批量清理提醒，
-AI 建议转待办（添加、去重、完成 / 恢复、删除、清理、上限、存档迁移与多人隔离），
-以及三者共存时的集成接缝（清理提醒后保留待办卡片、清理动作不误释放暂停、旧存档迁移）。
+以及两者共存时的集成接缝（清理提醒不误释放暂停、旧存档迁移）。
 
 ```bash
 npm install
