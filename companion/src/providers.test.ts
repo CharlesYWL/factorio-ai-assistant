@@ -8,6 +8,7 @@ import {
   OllamaProvider,
   OpenAICompatibleProvider,
   ProviderError,
+  buildOpenAICompatibleRequest,
   createConfiguredProvider,
   type ProviderRequest,
 } from "./providers.js";
@@ -22,6 +23,23 @@ const fixtureRequest: ProviderRequest = {
     },
   },
 };
+
+void test("tells the model the recipe data is authoritative", () => {
+  // The player's save may run mods that redefine recipes, so the prompt must
+  // stop the model from falling back on what it remembers about vanilla.
+  const request = buildOpenAICompatibleRequest(
+    fixtureRequest,
+    "fixture-model",
+    400,
+  );
+  const messages = request.messages as Array<{ role: string; content: string }>;
+  const system = messages[0]?.content ?? "";
+
+  assert.match(system, /authoritative/u);
+  assert.match(system, /rename items|change ingredients/u);
+  assert.match(system, /nickname/iu);
+  assert.match(system, /do not output Lua/iu);
+});
 
 void test("sends and validates the OpenClaw/OpenAI-compatible fixture contract", async () => {
   const expectedRequest = JSON.parse(

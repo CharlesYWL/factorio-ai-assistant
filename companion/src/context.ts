@@ -1,535 +1,346 @@
-import type { ProductionResult } from "@factorio-ai-assistant/calculator";
 import type {
   AdvisorAlert,
+  AreaSnapshotPacket,
+  AssistantHistoryTurn,
   DynamicForceSummary,
-  FlowMetric,
-  LocalizedNameKind,
 } from "@factorio-ai-assistant/protocol";
 
+import { IDENTIFIER_NAMES, type LocalizedNameLookup } from "./localization.js";
+import { buildRecipeContext, type RecipeContext } from "./recipe-context.js";
 import type { StaticState } from "./state-store.js";
-import type { AssistantToolModelContext } from "./assistant-tools.js";
-import {
-  IDENTIFIER_NAMES,
-  localizedNameKey,
-  type LocalizedNameLookup,
-} from "./localization.js";
 
-const MAX_TECHNOLOGIES = 64;
-const MAX_FLOWS = 16;
+const MAX_FLOWS = 20;
 const MAX_ALERTS = 3;
-const MAX_CALCULATION_RECIPES = 32;
-const MAX_LOCALIZED_CONTEXT_NAMES = 96;
+const MAX_TECHNOLOGIES = 128;
 
 export interface ContextSources {
   staticState?: StaticState;
   dynamicForce?: DynamicForceSummary;
   alerts?: AdvisorAlert[];
-  calculation?: ProductionResult;
-  toolContext?: AssistantToolModelContext;
   names?: LocalizedNameLookup;
+  history?: readonly AssistantHistoryTurn[];
+  forceId?: string;
+  /** What the player last framed with the inspector tool. */
+  areaSelection?: AreaSnapshotPacket;
 }
 
 export type CompactModelContext = Record<string, unknown>;
 
+/**
+ * Assembles what the model needs to answer, then trims to fit the byte budget.
+ *
+ * The Companion deliberately does not interpret the question: it does not
+ * classify intent, parse rates, or resolve which product is the "target". It
+ * only supplies the recipe subgraph for whatever products the question names,
+ * plus current factory state, and lets the model do the reasoning. This matters
+ * because recipes come from the player's actual save, which mods may have
+ * changed, so the data must be authoritative even though the reasoning is not.
+ */
 export function buildCompactContext(
   question: string,
   sources: ContextSources,
   budgetBytes: number,
 ): CompactModelContext {
-  const intent = classifyQuestion(question);
+  const names = sources.names ?? IDENTIFIER_NAMES;
   const context: CompactModelContext = {
-    context_schema_version: 1,
-    quality: {
-      static_available: sources.staticState !== undefined,
-      static_truncated: sources.staticState?.truncated ?? false,
-      dynamic_available: sources.dynamicForce !== undefined,
+    context_schema_version: 2,
+    data_quality: {
+      recipes_available: sources.staticState !== undefined,
+      recipes_truncated: sources.staticState?.truncated ?? false,
+      live_state_available: sources.dynamicForce !== undefined,
     },
   };
-  const omitted: Record<string, number> = {};
+
+  const recipeContext = buildRecipeContext(
+    question,
+    sources.staticState,
+    names,
+    sources.forceId,
+  );
+
+  // Recipes first: they are the one thing the model cannot know on its own,
+  // because this save's recipes may differ from vanilla.
+  if (recipeContext !== undefined) {
+    fit(context, "recipes", recipeContext, budgetBytes, (value) =>
+      shrinkRecipeContext(value as RecipeContext),
+    );
+  }
+
   const force = sources.dynamicForce;
 
-  if (sources.toolContext !== undefined) {
-    appendToolContext(context, sources.toolContext, budgetBytes, omitted);
+  // The selection is what the question is usually about, so it outranks the
+  // global flow series: a player who framed 48 furnaces wants those furnaces.
+  if (sources.areaSelection !== undefined) {
+    fit(
+      context,
+      "selected_area",
+      compactSelection(sources.areaSelection, names),
+      budgetBytes,
+      (value) => shrinkSelection(value as CompactSelection),
+    );
   }
 
   if (force !== undefined) {
-    if (!trySet(context, "force_id", force.id, budgetBytes)) {
-      omitted.force_id = 1;
-    }
-    if (
-      !trySet(
-        context,
-        "current_research",
-        force.research === null
-          ? null
-          : {
-              technology_id: force.research.technology_id,
-              progress: force.research.progress,
-            },
-        budgetBytes,
-      )
-    ) {
-      omitted.current_research = 1;
-    }
-    if (intent.production || intent.advice) {
-      if (!trySet(context, "power", { ...force.power }, budgetBytes)) {
-        omitted.power = 1;
-      }
-      appendFlows(
-        context,
-        "production",
-        selectFlows(question, force.items, force.fluids),
-        budgetBytes,
-        omitted,
-      );
-    }
-  }
-
-  if (intent.technology) {
-    const staticForce = sources.staticState?.forces.find(
-      ({ id }) => id === force?.id,
+    fit(context, "force_id", force.id, budgetBytes);
+    fit(
+      context,
+      "power",
+      {
+        generated_watts: force.power.generated_watts,
+        consumed_watts: force.power.consumed_watts,
+        satisfaction_ratio: force.power.satisfaction_ratio,
+      },
+      budgetBytes,
     );
-    if (staticForce !== undefined) {
-      const technologies = prioritizeIdentifiers(
-        question,
-        staticForce.researched_technologies,
-      );
-      if (
-        !trySet(
-          context,
-          "researched_technology_count",
-          staticForce.researched_technologies.length,
-          budgetBytes,
-        )
-      ) {
-        omitted.researched_technology_count = 1;
-      }
-      appendValues(
-        context,
-        "researched_technologies",
-        technologies.slice(0, MAX_TECHNOLOGIES),
-        budgetBytes,
-        omitted,
-      );
-      if (technologies.length > MAX_TECHNOLOGIES) {
-        omitted.researched_technologies =
-          (omitted.researched_technologies ?? 0) +
-          technologies.length -
-          MAX_TECHNOLOGIES;
-      }
-    }
-  }
-
-  if (
-    sources.toolContext === undefined &&
-    (intent.advice || sources.alerts !== undefined)
-  ) {
-    const alerts = [...(sources.alerts ?? [])]
-      .sort(compareAlerts)
-      .slice(0, MAX_ALERTS)
-      .map((alert) => ({
-        id: alert.id,
-        severity: alert.severity,
-        evidence: alert.evidence,
-        recommendation: alert.recommendation,
-      }));
-    appendValues(context, "active_alerts", alerts, budgetBytes, omitted);
-    if ((sources.alerts?.length ?? 0) > MAX_ALERTS) {
-        omitted.active_alerts =
-          (omitted.active_alerts ?? 0) +
-          (sources.alerts?.length ?? 0) -
-          MAX_ALERTS;
-    }
-  }
-
-  if (
-    sources.toolContext === undefined &&
-    sources.calculation !== undefined
-  ) {
-    appendCalculation(context, sources.calculation, budgetBytes, omitted);
-  }
-
-  appendLocalizedNames(context, sources, budgetBytes, omitted);
-
-  if (Object.keys(omitted).length > 0) {
-    const withOmitted = { ...context, omitted };
-    if (encodedLength(withOmitted) <= budgetBytes) {
-      context.omitted = omitted;
-    }
-  }
-
-  if (encodedLength(context) > budgetBytes) {
-    throw new Error(
-      `Context minimum exceeds budget of ${budgetBytes} bytes`,
+    fit(
+      context,
+      "current_research",
+      force.research === null
+        ? null
+        : {
+            id: force.research.technology_id,
+            name: names.lookup("technology", force.research.technology_id),
+            progress: force.research.progress,
+          },
+      budgetBytes,
+    );
+    fit(
+      context,
+      "production_per_minute",
+      topFlows(force, names),
+      budgetBytes,
+      (value) => {
+        const flows = value as unknown[];
+        return flows.length <= 1 ? undefined : flows.slice(0, flows.length - 1);
+      },
     );
   }
+
+  const alerts = (sources.alerts ?? []).slice(0, MAX_ALERTS).map((alert) => ({
+    rule_id: alert.rule_id,
+    severity: alert.severity,
+    evidence: alert.evidence,
+  }));
+  if (alerts.length > 0) {
+    fit(context, "active_alerts", alerts, budgetBytes, (value) => {
+      const list = value as unknown[];
+      return list.length <= 1 ? undefined : list.slice(0, list.length - 1);
+    });
+  }
+
+  const staticForce = staticForceOf(sources);
+  if (staticForce !== undefined) {
+    fit(
+      context,
+      "researched_technologies",
+      staticForce.researched_technologies.slice(0, MAX_TECHNOLOGIES),
+      budgetBytes,
+      (value) => {
+        const list = value as unknown[];
+        return list.length <= 8 ? undefined : list.slice(0, list.length >> 1);
+      },
+    );
+  }
+
+  if (sources.history !== undefined && sources.history.length > 0) {
+    // Newest turn is the one a follow-up refers to, so drop the oldest first.
+    fit(context, "recent_turns", [...sources.history], budgetBytes, (value) => {
+      const turns = value as unknown[];
+      return turns.length <= 1 ? undefined : turns.slice(1);
+    });
+  }
+
   return context;
 }
 
 /**
- * Append the display names for identifiers that survived into the context. The
- * identifier stays the key the model must reason with; the name is only used so
- * the answer can address the player in the game language.
+ * Sets `key` if it fits, otherwise repeatedly shrinks it until it does. A field
+ * with no shrink strategy is simply dropped when it does not fit.
  */
-function appendLocalizedNames(
-  context: CompactModelContext,
-  sources: ContextSources,
-  budgetBytes: number,
-  omitted: Record<string, number>,
-): void {
-  const names = sources.names ?? IDENTIFIER_NAMES;
-  if (names.locale === undefined) {
-    return;
-  }
-
-  const serialized = JSON.stringify(context);
-  const localized: Record<string, string> = {};
-  let candidates = 0;
-
-  for (const [kind, id] of collectNameReferences(sources)) {
-    const key = localizedNameKey(kind, id);
-    if (key in localized || !serialized.includes(JSON.stringify(id))) {
-      continue;
-    }
-    const name = names.lookup(kind, id);
-    if (name === undefined || name === id) {
-      continue;
-    }
-    candidates += 1;
-    if (candidates > MAX_LOCALIZED_CONTEXT_NAMES) {
-      omitted.localized_names = (omitted.localized_names ?? 0) + 1;
-      continue;
-    }
-    localized[key] = name;
-  }
-
-  if (Object.keys(localized).length === 0) {
-    return;
-  }
-
-  context.localized_names = {};
-  const target = context.localized_names as Record<string, string>;
-  for (const [key, name] of Object.entries(localized)) {
-    target[key] = name;
-    if (encodedLength(context) > budgetBytes) {
-      delete target[key];
-      omitted.localized_names = (omitted.localized_names ?? 0) + 1;
-    }
-  }
-
-  if (Object.keys(target).length === 0) {
-    delete context.localized_names;
-  }
-}
-
-function* collectNameReferences(
-  sources: ContextSources,
-): Generator<readonly [LocalizedNameKind, string]> {
-  const force = sources.dynamicForce;
-
-  if (force?.research != null) {
-    yield ["technology", force.research.technology_id];
-  }
-  for (const flow of force?.items ?? []) {
-    yield ["item", flow.id];
-  }
-  for (const flow of force?.fluids ?? []) {
-    yield ["fluid", flow.id];
-  }
-  for (const staticForce of sources.staticState?.forces ?? []) {
-    for (const technologyId of staticForce.researched_technologies) {
-      yield ["technology", technologyId];
-    }
-  }
-  for (const target of sources.calculation?.targets ?? []) {
-    yield [target.kind, target.id];
-  }
-  for (const recipe of sources.calculation?.recipes ?? []) {
-    yield ["recipe", recipe.recipe_id];
-    yield ["machine", recipe.machine_id];
-  }
-  for (const input of sources.calculation?.external_inputs ?? []) {
-    yield [input.kind, input.id];
-  }
-  for (const byproduct of sources.calculation?.byproducts ?? []) {
-    yield [byproduct.kind, byproduct.id];
-  }
-}
-
-function appendToolContext(
-  context: CompactModelContext,
-  toolContext: AssistantToolModelContext,
-  budgetBytes: number,
-  omitted: Record<string, number>,
-): void {
-  if (
-    trySet(
-      context,
-      "deterministic_tools",
-      {
-        contract_version: toolContext.contract_version,
-        policy: toolContext.policy,
-        intent: toolContext.intent,
-        calls: [],
-        evidence: [],
-        assumptions: [],
-        missing_data: [],
-      },
-      budgetBytes,
-    )
-  ) {
-    appendNestedValues(
-      context,
-      "deterministic_tools",
-      "calls",
-      toolContext.calls,
-      budgetBytes,
-      omitted,
-    );
-    appendNestedValues(
-      context,
-      "deterministic_tools",
-      "evidence",
-      toolContext.evidence,
-      budgetBytes,
-      omitted,
-    );
-    appendNestedValues(
-      context,
-      "deterministic_tools",
-      "assumptions",
-      toolContext.assumptions,
-      budgetBytes,
-      omitted,
-    );
-    appendNestedValues(
-      context,
-      "deterministic_tools",
-      "missing_data",
-      toolContext.missing_data,
-      budgetBytes,
-      omitted,
-    );
-    return;
-  }
-
-  omitted.deterministic_tools = 1;
-}
-
-function appendFlows(
-  context: CompactModelContext,
-  key: string,
-  flows: Array<FlowMetric & { kind: "item" | "fluid" }>,
-  budgetBytes: number,
-  omitted: Record<string, number>,
-): void {
-  const values = flows.slice(0, MAX_FLOWS).map((flow) => ({
-    kind: flow.kind,
-    id: flow.id,
-    produced_per_minute_1m: flow.produced_per_minute_1m,
-    consumed_per_minute_1m: flow.consumed_per_minute_1m,
-    produced_per_minute_10m: flow.produced_per_minute_10m,
-    consumed_per_minute_10m: flow.consumed_per_minute_10m,
-  }));
-  appendValues(context, key, values, budgetBytes, omitted);
-  if (flows.length > MAX_FLOWS) {
-    omitted[key] = (omitted[key] ?? 0) + flows.length - MAX_FLOWS;
-  }
-}
-
-function appendCalculation(
-  context: CompactModelContext,
-  calculation: ProductionResult,
-  budgetBytes: number,
-  omitted: Record<string, number>,
-): void {
-  const compact: Record<string, unknown> = {
-    targets: calculation.targets.map((target) => ({
-      kind: target.kind,
-      id: target.id,
-      per_minute: target.per_minute,
-    })),
-    assumptions: {
-      byproduct_policy: calculation.assumptions.byproduct_policy,
-      rounding: calculation.assumptions.rounding,
-      source_resources: calculation.assumptions.source_resources,
-    },
-  };
-  if (!trySet(context, "deterministic_calculation", compact, budgetBytes)) {
-    omitted.deterministic_calculation = 1;
-    return;
-  }
-
-  const recipes = calculation.recipes
-    .slice(0, MAX_CALCULATION_RECIPES)
-    .map((recipe) => ({
-      recipe_id: recipe.recipe_id,
-      machine_id: recipe.machine_id,
-      machine_count_exact: recipe.machines.exact,
-      machine_count_rounded_up: recipe.machines.rounded_up,
-      module_ids: recipe.module_ids,
-      technology_productivity_bonus: recipe.technology_productivity_bonus,
-    }));
-  appendNestedValues(
-    context,
-    "deterministic_calculation",
-    "recipes",
-    recipes,
-    budgetBytes,
-    omitted,
-  );
-  if (calculation.recipes.length > MAX_CALCULATION_RECIPES) {
-    omitted.calculation_recipes =
-      (omitted.calculation_recipes ?? 0) +
-      calculation.recipes.length - MAX_CALCULATION_RECIPES;
-  }
-
-  appendNestedValues(
-    context,
-    "deterministic_calculation",
-    "external_inputs",
-    calculation.external_inputs.map((input) => ({
-      kind: input.kind,
-      id: input.id,
-      per_minute: input.per_minute,
-    })),
-    budgetBytes,
-    omitted,
-  );
-}
-
-function appendNestedValues(
-  context: CompactModelContext,
-  parentKey: string,
-  key: string,
-  values: unknown[],
-  budgetBytes: number,
-  omitted: Record<string, number>,
-): void {
-  const parent = context[parentKey] as Record<string, unknown>;
-  parent[key] = [];
-  const target = parent[key] as unknown[];
-  for (const value of values) {
-    target.push(value);
-    if (encodedLength(context) > budgetBytes) {
-      target.pop();
-      omitted[key] = (omitted[key] ?? 0) + 1;
-    }
-  }
-  if (target.length === 0) {
-    delete parent[key];
-  }
-}
-
-function appendValues(
-  context: CompactModelContext,
-  key: string,
-  values: unknown[],
-  budgetBytes: number,
-  omitted: Record<string, number>,
-): void {
-  context[key] = [];
-  const target = context[key] as unknown[];
-  for (const value of values) {
-    target.push(value);
-    if (encodedLength(context) > budgetBytes) {
-      target.pop();
-      omitted[key] = (omitted[key] ?? 0) + 1;
-    }
-  }
-  if (target.length === 0) {
-    delete context[key];
-  }
-}
-
-function trySet(
+function fit(
   context: CompactModelContext,
   key: string,
   value: unknown,
   budgetBytes: number,
-): boolean {
-  context[key] = value;
-  if (encodedLength(context) <= budgetBytes) {
-    return true;
+  shrink?: (value: unknown) => unknown,
+): void {
+  let candidate = value;
+  while (candidate !== undefined) {
+    context[key] = candidate;
+    if (encodedLength(context) <= budgetBytes) {
+      return;
+    }
+    delete context[key];
+    if (shrink === undefined) {
+      return;
+    }
+    candidate = shrink(candidate);
   }
-  delete context[key];
-  return false;
 }
 
-function classifyQuestion(question: string): {
-  technology: boolean;
-  production: boolean;
-  advice: boolean;
-} {
-  const normalized = question.toLowerCase();
-  const technology =
-    /(?:research|technology|science|研究|科技|蓝瓶|紫瓶|黄瓶)/u.test(normalized);
-  const production =
-    /(?:production|factory|ratio|machine|power|oil|bottleneck|生产|产线|比例|机器|电力|石油|瓶颈|缺|停)/u.test(
-      normalized,
-    );
-  const advice =
-    /(?:why|next|should|problem|alert|为什么|下一步|建议|问题|告警|依据)/u.test(
-      normalized,
-    );
+interface CompactSelection {
+  area: string;
+  entity_count: number;
+  omitted_entities: number;
+  truncated: boolean;
+  /** Individually reported machines, grouped by prototype for readability. */
+  machines: Array<Record<string, unknown>>;
+  /** Everything counted rather than listed, such as belts. */
+  other: Array<Record<string, unknown>>;
+}
+
+/**
+ * Shapes a selection for the model. Status and recipe travel per machine
+ * because "why is this one stalled" is exactly the question this feature
+ * exists to answer; belts and inserters are counts only.
+ */
+function compactSelection(
+  selection: AreaSnapshotPacket,
+  names: LocalizedNameLookup,
+): CompactSelection {
+  const { payload } = selection;
+  const label = (id: string): string | undefined => {
+    const name = names.lookup("item", id) ?? names.lookup("machine", id);
+    return name === id ? undefined : name;
+  };
+
   return {
-    technology,
-    production: production || (!technology && !advice),
-    advice: advice || (!technology && !production),
+    area: `(${round(payload.area.x1)},${round(payload.area.y1)}) to (${round(payload.area.x2)},${round(payload.area.y2)})`,
+    entity_count: payload.entities.length,
+    omitted_entities: payload.omitted_entities,
+    truncated: payload.truncated,
+    machines: payload.entities.map((entity) => ({
+      id: entity.id,
+      ...(label(entity.id) === undefined ? {} : { name: label(entity.id) }),
+      at: [entity.x, entity.y],
+      ...(entity.recipe === undefined ? {} : { recipe: entity.recipe }),
+      ...(entity.status === undefined ? {} : { status: entity.status }),
+      ...(entity.modules === undefined ? {} : { modules: entity.modules }),
+      ...(entity.contents === undefined ? {} : { contents: entity.contents }),
+      ...(entity.fluids === undefined ? {} : { fluids: entity.fluids }),
+    })),
+    other: payload.groups.map((group) => ({
+      id: group.id,
+      ...(label(group.id) === undefined ? {} : { name: label(group.id) }),
+      count: group.count,
+    })),
   };
 }
 
-function selectFlows(
-  question: string,
-  items: FlowMetric[],
-  fluids: FlowMetric[],
-): Array<FlowMetric & { kind: "item" | "fluid" }> {
-  const normalized = question.toLowerCase();
+/** Sheds per-machine detail before dropping machines outright. */
+function shrinkSelection(
+  value: CompactSelection,
+): CompactSelection | undefined {
+  const hasDetail = value.machines.some(
+    (machine) => "contents" in machine || "fluids" in machine,
+  );
+  if (hasDetail) {
+    return {
+      ...value,
+      machines: value.machines.map((machine) =>
+        Object.fromEntries(
+          Object.entries(machine).filter(
+            ([key]) => key !== "contents" && key !== "fluids",
+          ),
+        ),
+      ),
+      truncated: true,
+    };
+  }
+  if (value.machines.length <= 1) {
+    return undefined;
+  }
+  return {
+    ...value,
+    machines: value.machines.slice(0, value.machines.length >> 1),
+    truncated: true,
+  };
+}
+
+/** Drops the least relevant recipes; the ranking put the relevant chain first. */
+function shrinkRecipeContext(value: RecipeContext): RecipeContext | undefined {
+  if (value.recipes.length <= 1) {
+    return undefined;
+  }
+  const kept = value.recipes.slice(0, Math.max(1, value.recipes.length >> 1));
+  // Names only pay for themselves while the id they describe is still present.
+  const usedIds = new Set<string>();
+  for (const recipe of kept) {
+    usedIds.add(recipe.r[0]);
+    for (const [id] of [...recipe.i, ...recipe.o]) {
+      usedIds.add(id);
+    }
+  }
+  for (const machine of value.machines) {
+    usedIds.add(machine.id);
+  }
+
+  return {
+    ...value,
+    recipes: kept,
+    names: Object.fromEntries(
+      Object.entries(value.names).filter(([id]) => usedIds.has(id)),
+    ),
+    truncated: true,
+  };
+}
+
+function topFlows(
+  force: DynamicForceSummary,
+  names: LocalizedNameLookup,
+): Array<Record<string, unknown>> {
   return [
-    ...items.map((flow) => ({ ...flow, kind: "item" as const })),
-    ...fluids.map((flow) => ({ ...flow, kind: "fluid" as const })),
-  ].sort((left, right) => {
-    const leftMentioned = normalized.includes(left.id.toLowerCase()) ? 1 : 0;
-    const rightMentioned = normalized.includes(right.id.toLowerCase()) ? 1 : 0;
-    return (
-      rightMentioned - leftMentioned ||
-      flowPriority(right) - flowPriority(left) ||
-      left.kind.localeCompare(right.kind) ||
-      left.id.localeCompare(right.id)
-    );
-  });
+    ...force.items.map((flow) => ({ ...flow, kind: "item" as const })),
+    ...force.fluids.map((flow) => ({ ...flow, kind: "fluid" as const })),
+  ]
+    .filter(
+      (flow) =>
+        flow.produced_per_minute_1m > 0 || flow.consumed_per_minute_1m > 0,
+    )
+    .sort(
+      (left, right) =>
+        deficit(right) - deficit(left) ||
+        throughput(right) - throughput(left) ||
+        left.id.localeCompare(right.id),
+    )
+    .slice(0, MAX_FLOWS)
+    .map((flow) => {
+      const name = names.lookup(flow.kind, flow.id);
+      return {
+        id: flow.id,
+        ...(name === undefined || name === flow.id ? {} : { name }),
+        produced: round(flow.produced_per_minute_1m),
+        consumed: round(flow.consumed_per_minute_1m),
+      };
+    });
 }
 
-function flowPriority(flow: FlowMetric): number {
-  const deficit = Math.max(
-    0,
-    flow.consumed_per_minute_10m - flow.produced_per_minute_10m,
-  );
-  return (
-    deficit * 10 +
-    flow.produced_per_minute_1m +
-    flow.consumed_per_minute_1m +
-    flow.produced_per_minute_10m +
-    flow.consumed_per_minute_10m
-  );
+function deficit(flow: {
+  produced_per_minute_1m: number;
+  consumed_per_minute_1m: number;
+}): number {
+  return flow.consumed_per_minute_1m - flow.produced_per_minute_1m;
 }
 
-function prioritizeIdentifiers(question: string, values: string[]): string[] {
-  const normalized = question.toLowerCase();
-  return [...values].sort((left, right) => {
-    const leftMentioned = normalized.includes(left.toLowerCase()) ? 1 : 0;
-    const rightMentioned = normalized.includes(right.toLowerCase()) ? 1 : 0;
-    return rightMentioned - leftMentioned || left.localeCompare(right);
-  });
+function throughput(flow: {
+  produced_per_minute_1m: number;
+  consumed_per_minute_1m: number;
+}): number {
+  return flow.produced_per_minute_1m + flow.consumed_per_minute_1m;
 }
 
-function compareAlerts(left: AdvisorAlert, right: AdvisorAlert): number {
-  const rank = { critical: 0, warning: 1, info: 2 };
-  return (
-    rank[left.severity] - rank[right.severity] ||
-    left.first_seen - right.first_seen ||
-    left.id.localeCompare(right.id)
-  );
+function round(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function staticForceOf(
+  sources: ContextSources,
+): StaticState["forces"][number] | undefined {
+  const forces = sources.staticState?.forces ?? [];
+  const wanted = sources.forceId ?? sources.dynamicForce?.id;
+  return wanted === undefined
+    ? forces[0]
+    : forces.find(({ id }) => id === wanted) ?? forces[0];
 }
 
 function encodedLength(value: unknown): number {

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import type { ProductionResult } from "@factorio-ai-assistant/calculator";
 import {
   ADVISOR_RULE_IDS,
   DEFAULT_ADVISOR_CONFIG,
@@ -17,21 +16,11 @@ import {
 } from "@factorio-ai-assistant/protocol";
 
 import { AdvisorEngine, type AdvisorStaticState } from "./advisor.js";
-import { AssistantService } from "./assistant-service.js";
-import { resolveCompanionConfig } from "./config.js";
 import { buildCompactContext } from "./context.js";
 import { LocalizedNameStore } from "./localization.js";
-import type { CompanionLogger } from "./logger.js";
-import { CompanionStateStore } from "./state-store.js";
 
 const START = 3_600;
 const DURATION = 600;
-
-const silentLogger: CompanionLogger = {
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined,
-};
 
 const staticState: AdvisorStaticState = {
   truncated: false,
@@ -105,21 +94,7 @@ void test("advisor renders English display names for an English game", async () 
   assert.doesNotMatch(deficit.evidence, /iron-plate/);
 });
 
-void test("chat answers name products and machines in the game language", async () => {
-  const names = await chineseNames();
-  const localized = await answerCalculation(names);
-
-  assert.match(localized, /化学科技包 45\/min/);
-  assert.match(localized, /3\.5 台 组装机 2 型/);
-  assert.doesNotMatch(localized, /assembling-machine-2/);
-  assert.doesNotMatch(localized, /chemical-science-pack/);
-
-  const fallback = await answerCalculation(undefined);
-  assert.match(fallback, /chemical-science-pack 45\/min/);
-  assert.match(fallback, /3\.5 台 assembling-machine-2/);
-});
-
-void test("model context carries a localized name map for present identifiers", async () => {
+void test("live production flows carry game-language names", async () => {
   const names = await chineseNames();
   const context = buildCompactContext(
     "为什么铁板不够？",
@@ -132,44 +107,16 @@ void test("model context carries a localized name map for present identifiers", 
     },
     4_096,
   );
-  const map = context.localized_names as Record<string, string>;
 
-  assert.equal(map["item:iron-plate"], "铁板");
-  assert.equal(map["technology:robotics"], "机器人技术");
-  assert.equal(map["fluid:heavy-oil"], undefined);
+  const flows = context.production_per_minute as Array<Record<string, unknown>>;
+  const ironPlate = flows.find((entry) => entry.id === "iron-plate");
+  assert.equal(ironPlate?.name, "铁板");
+
+  const research = context.current_research as Record<string, unknown>;
+  assert.equal(research.name, "机器人技术");
 });
 
-void test("localized names are trimmed predictably when the budget is tight", async () => {
-  const names = await chineseNames();
-  const sources = {
-    dynamicForce: force({
-      items: [
-        flow("iron-plate", 50, 100, 50, 100),
-        flow("copper-plate", 50, 100, 50, 100),
-        flow("steel-plate", 50, 100, 50, 100),
-      ],
-    }),
-    names,
-  };
-  const generous = buildCompactContext("铁板", sources, 4_096);
-  const generousMap = generous.localized_names as Record<string, string>;
-  assert.equal(Object.keys(generousMap).length, 3);
-
-  const budget =
-    Buffer.byteLength(JSON.stringify(generous), "utf8") - 20;
-  const tight = buildCompactContext("铁板", sources, budget);
-  const tightMap = (tight.localized_names ?? {}) as Record<string, string>;
-
-  assert.ok(Object.keys(tightMap).length < 3);
-  assert.ok(
-    Buffer.byteLength(JSON.stringify(tight), "utf8") <= budget,
-  );
-  for (const [key, name] of Object.entries(tightMap)) {
-    assert.equal(name, generousMap[key]);
-  }
-});
-
-void test("context omits the name map entirely without a synchronized locale", () => {
+void test("identifiers travel unchanged without a synchronized locale", () => {
   const context = buildCompactContext(
     "为什么铁板不够？",
     {
@@ -180,9 +127,13 @@ void test("context omits the name map entirely without a synchronized locale", (
     4_096,
   );
 
-  assert.equal(context.localized_names, undefined);
+  const flows = context.production_per_minute as Array<Record<string, unknown>>;
+  const ironPlate = flows.find((entry) => entry.id === "iron-plate");
+  assert.equal(ironPlate?.id, "iron-plate");
+  // Without a locale there is no name to add, and the identifier must remain
+  // usable on its own.
+  assert.equal("name" in (ironPlate ?? {}), false);
 });
-
 async function chineseNames(): Promise<LocalizedNameStore> {
   const names = new LocalizedNameStore();
   names.apply(await readLocalization("vanilla-2.0-localization-zh-CN.json"));
@@ -245,23 +196,6 @@ function openAlert(
   };
 }
 
-async function answerCalculation(
-  names: LocalizedNameStore | undefined,
-): Promise<string> {
-  const service = new AssistantService({
-    config: resolveCompanionConfig({}, {}),
-    stateStore: new CompanionStateStore(),
-    advisor: new AdvisorEngine(),
-    logger: silentLogger,
-    ...(names === undefined ? {} : { localization: names }),
-  });
-  const answer = await service.answer({
-    question: "45 蓝瓶每分钟需要多少机器？",
-    calculation: productionResult(),
-  });
-  return answer.text;
-}
-
 function force(
   overrides: Partial<Pick<DynamicForceSummary, "items" | "fluids" | "research">>,
 ): DynamicForceSummary {
@@ -312,61 +246,6 @@ function snapshot(
       omitted_forces: 0,
       omitted_series: 0,
       forces: [dynamicForce],
-    },
-  };
-}
-
-function productionResult(): ProductionResult {
-  return {
-    targets: [
-      {
-        kind: "item",
-        id: "chemical-science-pack",
-        per_second: 0.75,
-        per_minute: 45,
-        per_second_fraction: "3/4",
-      },
-    ],
-    recipes: [
-      {
-        recipe_id: "chemical-science-pack",
-        category: "crafting",
-        machine_id: "assembling-machine-2",
-        machine_crafting_speed: 0.75,
-        effective_crafting_speed: 0.75,
-        module_ids: [],
-        module_speed_bonus: 0,
-        module_productivity_bonus: 0,
-        technology_productivity_bonus: 0,
-        effective_productivity_bonus: 0,
-        crafts: {
-          per_second: 0.5,
-          per_minute: 30,
-          per_second_fraction: "1/2",
-        },
-        machines: {
-          exact: 3.5,
-          exact_fraction: "7/2",
-          rounded_up: 4,
-        },
-        ingredients: [],
-        products: [],
-      },
-    ],
-    external_inputs: [],
-    byproducts: [],
-    fluid_rates: [],
-    item_bandwidth: [],
-    flows: [],
-    assumptions: {
-      byproduct_policy: "surplus",
-      rounding: "Exact counts are shown with a rounded-up build count.",
-      source_resources: [],
-      belt_speeds: {},
-      recipe_selections: {},
-      machine_selections: {},
-      module_loadouts: {},
-      technology_productivity_bonuses: {},
     },
   };
 }

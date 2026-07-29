@@ -1,20 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import type { ProductionResult } from "@factorio-ai-assistant/calculator";
+import type { AssistantHistoryTurn } from "@factorio-ai-assistant/protocol";
 
 import type { AdvisorEngine } from "./advisor.js";
 import type { CompanionConfig } from "./config.js";
 import { isLoopbackUrl } from "./config.js";
-import {
-  buildCompactContext,
-  type ContextSources,
-} from "./context.js";
-import {
-  AssistantToolbox,
-  formatGroundedAnswer,
-  toAssistantToolModelContext,
-  type AssistantGrounding,
-} from "./assistant-tools.js";
+import { buildCompactContext, type ContextSources } from "./context.js";
 import type { CompanionLogger } from "./logger.js";
 import {
   IDENTIFIER_NAMES,
@@ -30,7 +21,6 @@ import type { CompanionStateStore } from "./state-store.js";
 
 export const MAX_QUESTION_BYTES = 4_096;
 export const MAX_QUESTION_CHARACTERS = 2_000;
-const MAX_MODEL_INFERENCE_CHARACTERS = 1_000;
 
 export type AssistantMode = "local" | "local-model" | "remote-model";
 
@@ -44,7 +34,11 @@ export interface AssistantStatus {
 export interface AssistantRequest {
   question: string;
   forceId?: string;
-  calculation?: ProductionResult;
+  /**
+   * The asking player's own recent turns, supplied by the Mod when that player
+   * opted in, so a follow-up like "那它呢" can be understood.
+   */
+  history?: readonly AssistantHistoryTurn[];
   signal?: AbortSignal;
 }
 
@@ -66,6 +60,16 @@ export interface AssistantServiceOptions {
   localization?: LocalizedNameLookup;
 }
 
+/**
+ * Answers player questions by handing the model the data it cannot know —
+ * this save's recipes and current state — and letting it reason.
+ *
+ * The Companion does not classify the question, parse it, or check the answer.
+ * Earlier versions did all three with regular expressions and rejected any
+ * answer whose numbers were not copied verbatim from precomputed evidence;
+ * that misread ordinary questions and discarded correct answers. The remaining
+ * responsibility here is to supply accurate, save-specific data.
+ */
 export class AssistantService {
   readonly #config: CompanionConfig;
   readonly #stateStore: CompanionStateStore;
@@ -73,7 +77,6 @@ export class AssistantService {
   readonly #logger: CompanionLogger;
   readonly #provider: AIProvider | undefined;
   readonly #executor: ProviderExecutor | undefined;
-  readonly #toolbox: AssistantToolbox;
   readonly #names: LocalizedNameLookup;
 
   public constructor(options: AssistantServiceOptions) {
@@ -82,12 +85,6 @@ export class AssistantService {
     this.#advisor = options.advisor;
     this.#logger = options.logger;
     this.#names = options.localization ?? IDENTIFIER_NAMES;
-    this.#toolbox = new AssistantToolbox(
-      options.stateStore,
-      options.advisor,
-      options.config.language,
-      this.#names,
-    );
     this.#provider =
       options.provider ?? createConfiguredProvider(options.config);
     this.#executor =
@@ -129,99 +126,59 @@ export class AssistantService {
   public async answer(request: AssistantRequest): Promise<AssistantAnswer> {
     const question = validateQuestion(request.question);
     const requestId = `assistant-${randomUUID()}`;
-    const grounding = this.#toolbox.ground(
-      question,
-      request.forceId,
-      request.calculation,
-    );
-    const sources = this.#collectContext(request, grounding);
+
+    if (this.#executor === undefined || this.#provider === undefined) {
+      return this.#stateSummary(requestId, request, "no_model_configured");
+    }
+
     const context = buildCompactContext(
       question,
-      sources,
+      this.#collectContext(request),
       this.#config.contextBudgetBytes,
     );
 
-    if (grounding.evidence.length === 0) {
-      return this.#localAnswer(
-        requestId,
-        grounding,
-        this.#provider === undefined ? "local_mode" : "insufficient_data",
+    try {
+      const response = await this.#executor.complete(
+        { requestId, language: this.#config.language, question, context },
+        request.signal,
       );
-    }
-
-    if (this.#executor !== undefined && this.#provider !== undefined) {
-      try {
-        const response = await this.#executor.complete(
-          {
-            requestId,
-            language: this.#config.language,
-            question,
-            context,
-          },
-          request.signal,
-        );
-        const reconciled = reconcileModelInference(
-          response.text,
-          grounding,
-        );
-        if (reconciled.kind === "conflict") {
-          this.#logger.warn("assistant_model_conflict", {
-            request_id: requestId,
-            provider: this.#provider.kind,
-            conflict_type: reconciled.type,
-          });
-          return this.#localAnswer(requestId, grounding, "model_conflict");
-        }
-        this.#logger.info("assistant_request_completed", {
-          request_id: requestId,
-          mode: "model",
-          provider: this.#provider.kind,
-          model: response.model,
-        });
-        return {
-          requestId,
-          mode: "model",
-          text: formatGroundedAnswer(
-            this.#config.language,
-            grounding,
-            reconciled.text,
-          ),
-          provider: this.#provider.kind,
-          model: response.model,
-        };
-      } catch (error: unknown) {
-        const providerError =
-          error instanceof ProviderError
-            ? error
-            : new ProviderError(
-                "unavailable",
-                "Provider request failed",
-                false,
-              );
-        if (providerError.code === "cancelled") {
-          throw providerError;
-        }
-        this.#logger.warn("assistant_provider_fallback", {
-          request_id: requestId,
-          provider: this.#provider.kind,
-          error_code: providerError.code,
-          status: providerError.status,
-        });
-        return this.#localAnswer(
-          requestId,
-          grounding,
-          providerError.code,
-        );
+      const text = response.text.trim();
+      if (text.length === 0) {
+        return this.#stateSummary(requestId, request, "empty_response");
       }
-    }
 
-    return this.#localAnswer(requestId, grounding, "local_mode");
+      this.#logger.info("assistant_request_completed", {
+        request_id: requestId,
+        mode: "model",
+        provider: this.#provider.kind,
+        model: response.model,
+      });
+      return {
+        requestId,
+        mode: "model",
+        text,
+        provider: this.#provider.kind,
+        model: response.model,
+      };
+    } catch (error: unknown) {
+      const providerError =
+        error instanceof ProviderError
+          ? error
+          : new ProviderError("unavailable", "Provider request failed", false);
+      if (providerError.code === "cancelled") {
+        throw providerError;
+      }
+      this.#logger.warn("assistant_provider_fallback", {
+        request_id: requestId,
+        provider: this.#provider.kind,
+        error_code: providerError.code,
+        status: providerError.status,
+      });
+      return this.#stateSummary(requestId, request, providerError.code);
+    }
   }
 
-  #collectContext(
-    request: AssistantRequest,
-    grounding: AssistantGrounding,
-  ): ContextSources {
+  #collectContext(request: AssistantRequest): ContextSources {
     const dynamicForces = this.#stateStore.dynamicState?.payload.forces ?? [];
     const dynamicForce =
       request.forceId === undefined
@@ -240,21 +197,61 @@ export class AssistantService {
         ? {}
         : { staticState: this.#stateStore.staticState }),
       ...(dynamicForce === undefined ? {} : { dynamicForce }),
-      alerts,
-      ...(grounding.calculation === undefined
+      ...(forceId === undefined ? {} : { forceId }),
+      ...(this.#stateStore.areaSelection === undefined
         ? {}
-        : { calculation: grounding.calculation }),
-      toolContext: toAssistantToolModelContext(grounding),
+        : { areaSelection: this.#stateStore.areaSelection }),
+      alerts: [...alerts],
+      ...(request.history === undefined || request.history.length === 0
+        ? {}
+        : { history: request.history }),
       names: this.#names,
     };
   }
 
-  #localAnswer(
+  /**
+   * What can still be said when the model is unavailable: the deterministic
+   * alerts and the headline live numbers, with no attempt to answer.
+   */
+  #stateSummary(
     requestId: string,
-    grounding: AssistantGrounding,
+    request: AssistantRequest,
     fallbackReason: string,
   ): AssistantAnswer {
-    const text = formatGroundedAnswer(this.#config.language, grounding);
+    const chinese = this.#config.language === "zh-CN";
+    const lines: string[] = [
+      chinese
+        ? "模型暂时不可用，下面是当前可以确定的状态。"
+        : "The model is unavailable; here is the state that is known for certain.",
+    ];
+
+    const forces = this.#stateStore.dynamicState?.payload.forces ?? [];
+    const force =
+      request.forceId === undefined
+        ? forces[0]
+        : forces.find(({ id }) => id === request.forceId);
+
+    if (force !== undefined) {
+      const satisfaction = Math.round(force.power.satisfaction_ratio * 100);
+      lines.push(
+        chinese
+          ? `电力满足率 ${satisfaction}%。`
+          : `Power satisfaction is ${satisfaction}%.`,
+      );
+    }
+
+    const alerts = this.#advisor.activeAlerts
+      .filter(
+        (alert) => force === undefined || alert.force_id === force.id,
+      )
+      .slice(0, 3);
+    for (const alert of alerts) {
+      lines.push(`- ${alert.evidence}`);
+    }
+    if (alerts.length === 0) {
+      lines.push(chinese ? "当前没有活动告警。" : "No alerts are active.");
+    }
+
     this.#logger.info("assistant_request_completed", {
       request_id: requestId,
       mode: "local",
@@ -263,7 +260,7 @@ export class AssistantService {
     return {
       requestId,
       mode: "local",
-      text,
+      text: lines.join("\n"),
       fallbackReason,
     };
   }
@@ -312,94 +309,4 @@ function containsDisallowedControl(value: string): boolean {
     }
   }
   return false;
-}
-
-type ReconciledModelInference =
-  | { kind: "ok"; text: string }
-  | {
-      kind: "conflict";
-      type: "unsafe_command" | "citation" | "numeric" | "format";
-    };
-
-function reconcileModelInference(
-  value: string,
-  grounding: AssistantGrounding,
-): ReconciledModelInference {
-  if (containsExecutableInstruction(value)) {
-    return { kind: "conflict", type: "unsafe_command" };
-  }
-  const text = normalizeModelInference(value);
-  if (text.length === 0 || text.length > MAX_MODEL_INFERENCE_CHARACTERS) {
-    return { kind: "conflict", type: "format" };
-  }
-
-  const evidenceIds = new Set(grounding.evidence.map(({ id }) => id));
-  const citations = [...text.matchAll(/\[([A-Z]\d+)\]/g)].map(
-    (match) => match[1] ?? "",
-  );
-  if (
-    evidenceIds.size > 0 &&
-    (citations.length === 0 ||
-      citations.some((citation) => !evidenceIds.has(citation)))
-  ) {
-    return { kind: "conflict", type: "citation" };
-  }
-
-  if (containsUnsupportedNumber(text, grounding)) {
-    return { kind: "conflict", type: "numeric" };
-  }
-  return { kind: "ok", text };
-}
-
-function containsExecutableInstruction(value: string): boolean {
-  return /```|(?:^|\s)\/(?:c|sc|silent-command)\b|rcon\b|remote\.call|commands\.add_command|script\.on_|game\.[a-z_]|自动(?:建造|修改|拆除)|automatically (?:build|modify|remove)/imu.test(
-    value,
-  );
-}
-
-function normalizeModelInference(value: string): string {
-  return value
-    .split(/\r?\n/u)
-    .map((line) =>
-      line
-        .trim()
-        .replace(/^#{1,6}\s*/u, "")
-        .replace(/^(?:\d{1,2}[.)、]|[-*•])\s*/u, "")
-        .trim(),
-    )
-    .filter(
-      (line) =>
-        line.length > 0 &&
-        !/^(?:建议|结论|分析|recommendations?|conclusion)\s*[:：]?$/iu.test(
-          line,
-        ),
-    )
-    .slice(0, 3)
-    .join("；")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function containsUnsupportedNumber(
-  value: string,
-  grounding: AssistantGrounding,
-): boolean {
-  const withoutCitations = value.replace(/\[[A-Z]\d+\]/g, "");
-  const allowedNumbers = new Set(
-    grounding.evidence.flatMap(({ text }) => extractArabicNumbers(text)),
-  );
-  const addsArabicNumber = extractArabicNumbers(withoutCitations).some(
-    (number) => !allowedNumbers.has(number),
-  );
-  const addsChineseQuantity =
-    /(?:百分之[零〇一二三四五六七八九十百千万两]+|[零〇一二三四五六七八九十百千万两]+(?:台|级|秒|分钟|小时|天|瓦|千瓦|兆瓦|吉瓦|成|倍|%|％))/u.test(
-      withoutCitations,
-    );
-  return addsArabicNumber || addsChineseQuantity;
-}
-
-function extractArabicNumbers(value: string): string[] {
-  return [...value.matchAll(/-?\d+(?:[.,]\d+)?%?/g)].map(
-    (match) => match[0],
-  );
 }
