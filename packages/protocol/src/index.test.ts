@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   DEFAULT_ADVISOR_CONFIG,
   MAX_PACKET_BYTES,
+  MAX_SUGGESTED_ACTIONS,
   PROTOCOL_VERSION,
   ProtocolError,
   createAdvisorUpdatePacket,
@@ -261,6 +262,154 @@ void test("rejects inconsistent UI response states", () => {
         ),
       "INVALID_PACKET",
     );
+});
+
+void test("carries optional grounded suggestions on a successful answer", () => {
+  const response = createAssistantResponsePacket({
+    messageId: "companion-assistant-actions",
+    timestamp: 1_753_680_000_000,
+    reply_to: "factorio-assistant-1",
+    status: "ok",
+    mode: "model",
+    text: "电力是当前的限制项 [A1]",
+    suggested_actions: [
+      { action_id: "alert-3f2a19bc", text: "增加锅炉和蒸汽机。", source: "alert" },
+      { action_id: "model-91b6cd04", text: "电力是当前的限制项", source: "model" },
+    ],
+  });
+
+  assert.deepEqual(decodePacket(encodePacket(response)), response);
+  assert.equal(response.payload.suggested_actions?.length, 2);
+
+  const withoutActions = createAssistantResponsePacket({
+    messageId: "companion-assistant-plain",
+    timestamp: 1_753_680_000_001,
+    reply_to: "factorio-assistant-2",
+    status: "ok",
+    mode: "local",
+    text: "当前没有活动告警。",
+    suggested_actions: [],
+  });
+  assert.equal(
+    Object.hasOwn(withoutActions.payload, "suggested_actions"),
+    false,
+    "An empty suggestion list must stay off the wire",
+  );
+
+  const capped = createAssistantResponsePacket({
+    messageId: "companion-assistant-capped",
+    timestamp: 1_753_680_000_002,
+    reply_to: "factorio-assistant-3",
+    status: "ok",
+    mode: "local",
+    text: "四条建议只发前三条。",
+    suggested_actions: [1, 2, 3, 4].map((index) => ({
+      action_id: `guide-0000000${index}`,
+      text: `step ${index}`,
+      source: "guide" as const,
+    })),
+  });
+  assert.equal(capped.payload.suggested_actions?.length, MAX_SUGGESTED_ACTIONS);
+});
+
+void test("rejects suggestions that could not become a safe todo", () => {
+  const base = createAssistantResponsePacket({
+    messageId: "companion-assistant-bad-actions",
+    timestamp: 1_753_680_000_000,
+    reply_to: "factorio-assistant-1",
+    status: "ok",
+    mode: "local",
+    text: "答案正文。",
+  });
+  const withActions = (actions: unknown): string =>
+    JSON.stringify({
+      ...base,
+      payload: { ...base.payload, suggested_actions: actions },
+    });
+
+  for (const actions of [
+    [{ action_id: "guide 0001", text: "spaced id", source: "guide" }],
+    [{ action_id: "guide-0001", text: "unknown source", source: "provider" }],
+    [{ action_id: "guide-0001", text: "", source: "guide" }],
+    [{ action_id: "guide-0001", text: "control\u0007char", source: "guide" }],
+    [{ action_id: "guide-0001", text: "a".repeat(241), source: "guide" }],
+    [{ action_id: "a".repeat(65), text: "long id", source: "guide" }],
+    [
+      { action_id: "guide-0001", text: "first", source: "guide" },
+      { action_id: "guide-0001", text: "duplicate id", source: "guide" },
+    ],
+    [1, 2, 3, 4].map((index) => ({
+      action_id: `guide-000${index}`,
+      text: `step ${index}`,
+      source: "guide",
+    })),
+    "not-an-array",
+    [{ text: "no id", source: "guide" }],
+  ]) {
+    expectProtocolError(
+      () => decodePacket(withActions(actions)),
+      "INVALID_PACKET",
+    );
+  }
+
+  const cancelled = createAssistantResponsePacket({
+    messageId: "companion-assistant-cancelled",
+    timestamp: 1_753_680_000_000,
+    reply_to: "factorio-assistant-1",
+    status: "cancelled",
+  });
+  expectProtocolError(
+    () =>
+      decodePacket(
+        JSON.stringify({
+          ...cancelled,
+          payload: {
+            ...cancelled.payload,
+            suggested_actions: [
+              { action_id: "guide-0001", text: "step", source: "guide" },
+            ],
+          },
+        }),
+      ),
+    "INVALID_PACKET",
+  );
+});
+
+void test("decodes assistant answers with and without suggested actions", async () => {
+  for (const fileName of [
+    "assistant-response-legacy.json",
+    "assistant-response-suggested-actions.json",
+  ]) {
+    const encoded = await readFile(new URL(fileName, fixtureDirectory), "utf8");
+    const fixture = JSON.parse(encoded) as unknown;
+
+    assert.deepEqual(decodePacket(encoded), fixture);
+  }
+
+  const legacy = decodePacket(
+    await readFile(
+      new URL("assistant-response-legacy.json", fixtureDirectory),
+      "utf8",
+    ),
+  );
+  assert.equal(legacy.type, "assistant_response");
+  assert.equal(
+    legacy.payload.suggested_actions,
+    undefined,
+    "A pre-todo Companion answer must still decode",
+  );
+
+  const current = decodePacket(
+    await readFile(
+      new URL("assistant-response-suggested-actions.json", fixtureDirectory),
+      "utf8",
+    ),
+  );
+  assert.equal(current.type, "assistant_response");
+  assert.deepEqual(
+    current.payload.suggested_actions?.map(({ source }) => source),
+    ["alert", "calculation", "model"],
+  );
 });
 
 void test("validates the optional companion sampling interval", () => {

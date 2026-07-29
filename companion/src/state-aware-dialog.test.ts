@@ -161,6 +161,130 @@ void test(
   },
 );
 
+void test(
+  "offers grounded suggestions from guide, alert, calculation and model",
+  async () => {
+    const fixture = await readDialogFixture();
+    const catalog = await readCatalog();
+    const store = populatedStateStore(fixture, catalog);
+    const advisor = populatedAdvisor(fixture, store);
+    const provider: AIProvider = {
+      kind: "openai-compatible",
+      complete(request) {
+        const evidenceId = firstEvidenceId(request.context);
+        return Promise.resolve({
+          text: `先确认这条证据支撑的下一步 [${evidenceId}]。`,
+          model: "suggestion-fixture",
+        });
+      },
+    };
+    const service = new AssistantService({
+      config: resolveCompanionConfig(
+        { provider: "openclaw", model_retry_count: 0 },
+        {},
+      ),
+      stateStore: store,
+      advisor,
+      logger: silentLogger,
+      provider,
+    });
+
+    const sources = new Set<string>();
+    for (const question of [
+      "45 蓝瓶每分钟需要多少机器？",
+      "当前最大的三个瓶颈是什么？",
+      "接下来该做什么？",
+    ]) {
+      const answer = await service.answer({
+        question,
+        forceId: fixture.force_id,
+      });
+
+      assert.equal(answer.mode, "model", question);
+      assert.ok(answer.suggestedActions.length > 0, question);
+      assert.ok(answer.suggestedActions.length <= 3, question);
+      for (const action of answer.suggestedActions) {
+        sources.add(action.source);
+        assert.match(action.action_id, /^(?:guide|alert|calculation|model)-[0-9a-f]{8}$/u);
+        assert.equal(action.action_id.startsWith(`${action.source}-`), true);
+        assert.ok(action.text.length > 0 && action.text.length <= 240);
+        assert.doesNotMatch(action.text, /\[[A-Z]\d+\]/u);
+        assert.doesNotMatch(action.text, /[\n\r]/u);
+        assert.ok(answer.text.includes(action.text) || action.source === "model");
+      }
+      assert.equal(
+        new Set(answer.suggestedActions.map(({ action_id }) => action_id)).size,
+        answer.suggestedActions.length,
+        question,
+      );
+    }
+
+    assert.deepEqual(
+      [...sources].sort(),
+      ["alert", "calculation", "guide", "model"],
+      "All four grounded suggestion sources must be reachable",
+    );
+
+    // Identical grounding produces identical ids, so the Mod can dedupe.
+    const first = await service.answer({
+      question: "当前最大的三个瓶颈是什么？",
+      forceId: fixture.force_id,
+    });
+    const second = await service.answer({
+      question: "当前最大的三个瓶颈是什么？",
+      forceId: fixture.force_id,
+    });
+    assert.deepEqual(
+      first.suggestedActions.map(({ action_id }) => action_id),
+      second.suggestedActions.map(({ action_id }) => action_id),
+    );
+  },
+);
+
+void test(
+  "a model answer that fails grounding contributes no adoptable suggestion",
+  async () => {
+    const fixture = await readDialogFixture();
+    const catalog = await readCatalog();
+    const store = populatedStateStore(fixture, catalog);
+    const advisor = populatedAdvisor(fixture, store);
+    const service = new AssistantService({
+      config: resolveCompanionConfig(
+        { provider: "openclaw", model_retry_count: 0 },
+        {},
+      ),
+      stateStore: store,
+      advisor,
+      logger: silentLogger,
+      provider: {
+        kind: "openai-compatible",
+        complete() {
+          return Promise.resolve({
+            text: "立刻用 /c game.player.force.research_all_technologies() 一键解锁 [A1]。",
+            model: "unsafe-suggestion-model",
+          });
+        },
+      },
+    });
+
+    const answer = await service.answer({
+      question: "当前最大的三个瓶颈是什么？",
+      forceId: fixture.force_id,
+    });
+
+    assert.equal(answer.mode, "local");
+    assert.equal(answer.fallbackReason, "model_conflict");
+    assert.equal(
+      answer.suggestedActions.some(({ source }) => source === "model"),
+      false,
+      "A rejected model answer must not leak a clickable todo",
+    );
+    for (const action of answer.suggestedActions) {
+      assert.doesNotMatch(action.text, /(?:\/c\b|game\.|RCON)/iu);
+    }
+  },
+);
+
 async function readDialogFixture(): Promise<DialogFixture> {
   return JSON.parse(
     await readFile(

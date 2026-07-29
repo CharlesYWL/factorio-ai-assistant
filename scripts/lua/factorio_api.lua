@@ -182,6 +182,11 @@ function api.create(sources, options)
   local nth_tick_handlers = {}
   local commands_registered = {}
   local logs = {}
+  --- Stand-in for the JSON wire: `deliver_packet` registers a decoded table
+  --- under a short handle, and `helpers.json_to_table` hands it back, so the
+  --- Mod's real `handle_udp_packet` validation runs unchanged.
+  local decodable_packets = {}
+  local decodable_sequence = 0
 
   local defines = setmetatable({}, {
     __index = function(root, group)
@@ -285,8 +290,8 @@ function api.create(sources, options)
     table_to_json = function()
       return "{}"
     end,
-    json_to_table = function()
-      return nil
+    json_to_table = function(raw)
+      return decodable_packets[raw]
     end,
   }
 
@@ -428,6 +433,19 @@ function api.create(sources, options)
     local handler = commands_registered[name]
     assert(handler ~= nil, "no command registered as " .. tostring(name))
     handler({ player_index = player_index, parameter = parameter })
+  end
+
+  --- Delivers one Companion packet exactly the way the engine would: over the
+  --- UDP event, from the configured Companion port.
+  function world.deliver_packet(packet, source_port)
+    decodable_sequence = decodable_sequence + 1
+    local handle = "packet-" .. decodable_sequence
+    decodable_packets[handle] = packet
+    return raise(defines.events.on_udp_packet_received, {
+      source_port = source_port
+        or settings.startup["factorio-ai-assistant-companion-port"].value,
+      payload = handle,
+    })
   end
 
   function world.find_all(player, predicate)

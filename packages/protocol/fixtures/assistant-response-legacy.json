@@ -1,0 +1,14 @@
+{
+  "protocol_version": 1,
+  "schema_version": 2,
+  "message_id": "companion-assistant-legacy-1",
+  "type": "assistant_response",
+  "timestamp": 1753680000000,
+  "payload": {
+    "reply_to": "factorio-assistant-1",
+    "status": "ok",
+    "mode": "local",
+    "text": "[事实]\n[A1] 电力满足率 42%，低于阈值 90%。\n1. 增加锅炉和蒸汽机，或降低当前用电负载。",
+    "fallback_reason": "local_mode"
+  }
+}

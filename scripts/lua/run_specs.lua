@@ -101,6 +101,84 @@ function suite.alert(rule_id, force_id, severity, first_seen)
   }
 end
 
+--- Marks the Companion as connected and advisor-capable, which is what
+--- `send_chat_request` requires before it will send anything.
+function suite.online(world)
+  local state = world.state()
+  state.connected = true
+  state.assistant_status = {
+    mode = "local",
+    provider = "local",
+    reason = "spec",
+    privacy = "local-only",
+  }
+  return state
+end
+
+function suite.open_panel(world, player)
+  world.custom_input("factorio-ai-assistant-tab-1", player)
+end
+
+--- Types a question and clicks Send through the real GUI handlers, returning
+--- the message_id the Mod is now waiting on.
+function suite.ask(world, player, question)
+  local input = world.find_by_name(player, "factorio-ai-assistant-chat-input")
+  assert(input ~= nil, "the chat input must be rendered")
+  input.text = question or "what should I do next?"
+  world.click(player, world.find_by_action(player, "send-chat"))
+  local pending = world.state().ui_players[player.index].chat_pending
+  assert(pending ~= nil, "the chat request must be pending")
+  return pending.message_id
+end
+
+--- Delivers one `assistant_response` over the UDP path, so the Mod's own packet
+--- validation decides whether the structured suggestions survive. `payload`
+--- overrides the default successful body field by field.
+function suite.answer(world, player, payload)
+  local pending = world.state().ui_players[player.index].chat_pending
+  assert(pending ~= nil, "there is no pending chat request to answer")
+  local body = {
+    reply_to = pending.message_id,
+    status = "ok",
+    mode = "local",
+    text = "answer text",
+  }
+  for key, value in pairs(payload or {}) do
+    body[key] = value
+  end
+  return world.deliver_packet({
+    protocol_version = 1,
+    schema_version = 2,
+    message_id = "companion-" .. pending.message_id,
+    type = "assistant_response",
+    timestamp = 1,
+    payload = body,
+  })
+end
+
+function suite.suggestion(action_id, text, source)
+  return {
+    action_id = action_id,
+    text = text or ("suggestion " .. action_id),
+    source = source or "guide",
+  }
+end
+
+--- The "Add to todo" buttons of the newest answer, in render order.
+function suite.todo_buttons(world, player)
+  local panel = world.panel(player)
+  if panel == nil then
+    return {}
+  end
+  return world.find_within(panel, function(element)
+    return (element.tags or {}).action == "add-todo"
+  end)
+end
+
+function suite.todos(world, player)
+  return world.state().ui_players[player.index].todos or {}
+end
+
 for _, spec_name in ipairs(SPEC_NAMES) do
   local source = assert(TEST_SOURCES[spec_name], "missing spec " .. spec_name)
   local spec = assert(load(source, "@" .. spec_name .. ".lua", "t", _ENV))()

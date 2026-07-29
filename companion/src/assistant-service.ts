@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import type { ProductionResult } from "@factorio-ai-assistant/calculator";
+import {
+  MAX_SUGGESTED_ACTIONS,
+  MAX_SUGGESTED_ACTION_TEXT_CHARACTERS,
+  type SuggestedAction,
+} from "@factorio-ai-assistant/protocol";
 
 import type { AdvisorEngine } from "./advisor.js";
 import type { CompanionConfig } from "./config.js";
@@ -12,6 +17,7 @@ import {
 import {
   AssistantToolbox,
   formatGroundedAnswer,
+  groundedActionId,
   toAssistantToolModelContext,
   type AssistantGrounding,
 } from "./assistant-tools.js";
@@ -55,6 +61,13 @@ export interface AssistantAnswer {
   provider?: AIProvider["kind"];
   model?: string;
   fallbackReason?: string;
+  /**
+   * Grounded "next step" suggestions the player may adopt as an in-game todo.
+   * Never a raw provider field: every entry is either a deterministic grounded
+   * action or a model line that already passed the same unsafe-command,
+   * citation and numeric reconciliation as the answer text.
+   */
+  suggestedActions: SuggestedAction[];
 }
 
 export interface AssistantServiceOptions {
@@ -188,6 +201,10 @@ export class AssistantService {
           ),
           provider: this.#provider.kind,
           model: response.model,
+          suggestedActions: collectSuggestedActions(
+            grounding,
+            reconciled.lines,
+          ),
         };
       } catch (error: unknown) {
         const providerError =
@@ -265,6 +282,7 @@ export class AssistantService {
       mode: "local",
       text,
       fallbackReason,
+      suggestedActions: collectSuggestedActions(grounding, []),
     };
   }
 }
@@ -315,7 +333,7 @@ function containsDisallowedControl(value: string): boolean {
 }
 
 type ReconciledModelInference =
-  | { kind: "ok"; text: string }
+  | { kind: "ok"; text: string; lines: string[] }
   | {
       kind: "conflict";
       type: "unsafe_command" | "citation" | "numeric" | "format";
@@ -328,7 +346,8 @@ function reconcileModelInference(
   if (containsExecutableInstruction(value)) {
     return { kind: "conflict", type: "unsafe_command" };
   }
-  const text = normalizeModelInference(value);
+  const lines = normalizeModelInferenceLines(value);
+  const text = lines.join("；");
   if (text.length === 0 || text.length > MAX_MODEL_INFERENCE_CHARACTERS) {
     return { kind: "conflict", type: "format" };
   }
@@ -348,7 +367,82 @@ function reconcileModelInference(
   if (containsUnsupportedNumber(text, grounding)) {
     return { kind: "conflict", type: "numeric" };
   }
-  return { kind: "ok", text };
+  return { kind: "ok", text, lines };
+}
+
+/**
+ * Deterministic grounded actions first, then whatever the reconciled model
+ * inference contributed, capped at the protocol maximum. Nothing here comes
+ * from a raw provider field: model lines only reach this point after
+ * `reconcileModelInference` accepted the whole answer.
+ */
+function collectSuggestedActions(
+  grounding: AssistantGrounding,
+  modelLines: string[],
+): SuggestedAction[] {
+  const actions: SuggestedAction[] = [];
+  const seen = new Set<string>();
+
+  const push = (action: SuggestedAction): void => {
+    if (actions.length >= MAX_SUGGESTED_ACTIONS || seen.has(action.action_id)) {
+      return;
+    }
+    seen.add(action.action_id);
+    actions.push(action);
+  };
+
+  for (const action of grounding.actions) {
+    const text = sanitizeSuggestedActionText(action.text);
+    if (text === undefined) {
+      continue;
+    }
+    push({
+      action_id:
+        text === action.text
+          ? action.action_id
+          : groundedActionId(action.source, text),
+      text,
+      source: action.source,
+    });
+  }
+
+  for (const line of modelLines) {
+    const text = sanitizeSuggestedActionText(line);
+    if (text === undefined) {
+      continue;
+    }
+    push({
+      action_id: groundedActionId("model", text),
+      text,
+      source: "model",
+    });
+  }
+
+  return actions;
+}
+
+/**
+ * A suggestion becomes a clickable in-game todo, so it must survive on its own
+ * without the surrounding answer: single line, no citation markers, no control
+ * characters, no executable instruction, and short enough for the protocol.
+ */
+function sanitizeSuggestedActionText(value: string): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const text = value
+    .replace(/\[[A-Z]\d+\]/g, " ")
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (
+    text.length === 0 ||
+    text.length > MAX_SUGGESTED_ACTION_TEXT_CHARACTERS ||
+    containsExecutableInstruction(text)
+  ) {
+    return undefined;
+  }
+  return text;
 }
 
 function containsExecutableInstruction(value: string): boolean {
@@ -357,7 +451,7 @@ function containsExecutableInstruction(value: string): boolean {
   );
 }
 
-function normalizeModelInference(value: string): string {
+function normalizeModelInferenceLines(value: string): string[] {
   return value
     .split(/\r?\n/u)
     .map((line) =>
@@ -365,6 +459,8 @@ function normalizeModelInference(value: string): string {
         .trim()
         .replace(/^#{1,6}\s*/u, "")
         .replace(/^(?:\d{1,2}[.)、]|[-*•])\s*/u, "")
+        .trim()
+        .replace(/\s+/g, " ")
         .trim(),
     )
     .filter(
@@ -374,10 +470,7 @@ function normalizeModelInference(value: string): string {
           line,
         ),
     )
-    .slice(0, 3)
-    .join("；")
-    .replace(/\s+/g, " ")
-    .trim();
+    .slice(0, 3);
 }
 
 function containsUnsupportedNumber(

@@ -7,7 +7,7 @@ import { lauxlib, lua, lualib, to_luastring } from "fengari";
 const modDirectory = new URL("../factorio-mod/", import.meta.url);
 const luaDirectory = new URL("./lua/", import.meta.url);
 
-const SPEC_NAMES = ["pause_spec", "alerts_spec"];
+const SPEC_NAMES = ["pause_spec", "alerts_spec", "todos_spec"];
 
 const modSources = await readLuaDirectory(modDirectory);
 const testSources = await readLuaDirectory(luaDirectory);
