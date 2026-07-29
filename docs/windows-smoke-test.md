@@ -1,6 +1,6 @@
-# Windows 实机冒烟测试（25–40 分钟）
+# Windows 实机冒烟测试（30–50 分钟）
 
-用于 `v0.1.0-rc.3` 的统一实机验收。完整 30 分钟稳定性和 UPS 基线见
+用于 `v0.1.0-rc.4` 的统一实机验收。完整 30 分钟稳定性和 UPS 基线见
 [`performance.md`](performance.md)。
 
 > **Steam 成就警告：** 启用任何 Factorio Mod 都会让该存档不能获得 Steam 成就。
@@ -9,7 +9,7 @@
 ## 测试前（2–4 分钟）
 
 - [ ] Windows 10/11、Node.js 22+、Factorio 2.0.59+。
-- [ ] Mod ZIP 与 Companion ZIP 来自同一个 `v0.1.0-rc.3` bundle；SHA-256 与
+- [ ] Mod ZIP 与 Companion ZIP 来自同一个 `v0.1.0-rc.4` bundle；SHA-256 与
   `SHA256SUMS` 一致。
 - [ ] Steam 启动参数为 `--enable-lua-udp=34198`，修改后已完全退出并重启 Factorio。
 - [ ] 解压 Companion；需要自定义时把 `companion.config.example.json` 复制为
