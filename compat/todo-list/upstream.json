@@ -1,0 +1,42 @@
+{
+  "upstream": {
+    "name": "Todo-List",
+    "repository": "https://github.com/JonasJurczok/factorio-todo-list",
+    "mod_portal": "https://mods.factorio.com/mod/Todo-List",
+    "tag": "v19.15.3",
+    "version": "19.15.3",
+    "commit": "253f6e3d3c884d367f2351af000cc6b6f497554d",
+    "license": "MIT",
+    "license_holder": "Copyright (c) 2018 Jonas Jurczok",
+    "factorio_version": "2.1"
+  },
+  "patched": {
+    "version": "19.16.0",
+    "mod_folder": "Todo-List_19.16.0",
+    "archive": "Todo-List_19.16.0.zip"
+  },
+  "remote_interface": {
+    "name": "todo_list",
+    "api_version": 1,
+    "calls": ["api_version", "add_task"],
+    "errors": [
+      "invalid_payload",
+      "not_initialized",
+      "invalid_player_index",
+      "unknown_player",
+      "invalid_title",
+      "title_too_long",
+      "invalid_description",
+      "description_too_long",
+      "invalid_assignee",
+      "unknown_assignee",
+      "invalid_add_to_top",
+      "internal_error"
+    ]
+  },
+  "patches": ["patches/0001-add-todo-list-remote-interface.patch"],
+  "upstream_contribution": {
+    "status": "not-submitted",
+    "note": "No public fork, pull request, issue or comment may be created against the upstream repository until Charles approves it explicitly."
+  }
+}

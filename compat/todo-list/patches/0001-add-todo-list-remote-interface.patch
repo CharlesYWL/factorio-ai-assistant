@@ -1,0 +1,677 @@
+diff --git a/.luacheckrc b/.luacheckrc
+index 813fb9617d89ae35a0d5911296885fc4182b5468..9765c6b826ba3acc01dbd7d93eb2bd1d9adb1f1f 100644
+--- a/.luacheckrc
++++ b/.luacheckrc
+@@ -1,4 +1,4 @@
+-globals = {"todo", "mod_gui", "script", "game", "defines", "data", "serpent", "settings", "storage"}
++globals = {"todo", "mod_gui", "script", "game", "defines", "data", "serpent", "settings", "storage", "remote"}
+ read_globals = {
+     os = {
+         fields = {
+diff --git a/README.md b/README.md
+index 4963f09f6c8c6b7a328b101824a652fdfaf9edaa..fca6e284cf6100bc39acab601c16f15be6ad7f88 100644
+--- a/README.md
++++ b/README.md
+@@ -92,6 +92,76 @@ screen space?
+ In the settings menu you can disable it. Then you'll only be able to use the
+ hotkey (default shift-t) or the shortcut to show/hide the todo list.
+ 
++## Remote interface for other mods
++
++Other mods can add tasks to the shared list through the `todo_list` remote
++interface. The interface is registered while `control.lua` is loaded, so it is
++available from `on_init` onwards. Nothing else about the mod changes: without a
++`remote.call` the behaviour is exactly the same as before.
++
++Declare Todo List as an optional dependency (`? Todo-List >= 19.16.0`) so that
++your mod still loads when it is not installed, and guard every call:
++
++```lua
++if remote.interfaces["todo_list"] and remote.interfaces["todo_list"]["api_version"] then
++  local version = remote.call("todo_list", "api_version")
++  if version >= 1 then
++    local result = remote.call("todo_list", "add_task", {
++      player_index = player.index,
++      title = "Build 4 more red belt assemblers",
++      description = "Suggested by My Mod, iron gear throughput is the bottleneck.",
++      assignee = player.name,
++      add_to_top = true,
++    })
++
++    if result.created then
++      game.print("Created task " .. result.id)
++    else
++      game.print("Todo List rejected the task: " .. result.error)
++    end
++  end
++end
++```
++
++### `api_version() -> number`
++
++Returns the version of the remote contract, currently `1`. It is only bumped
++when an existing call changes in a breaking way, so `api_version() >= 1` is a
++safe guard. Adding new calls or new optional payload fields keeps it stable.
++
++### `add_task(payload) -> table`
++
++Creates one task in the open list, exactly like the add dialog does, and
++refreshes the list for every player.
++
++| field | type | required | notes |
++| --- | --- | --- | --- |
++| `player_index` | number | yes | index of a valid player, becomes `created_by`/`updated_by` |
++| `title` | string | yes | at most 200 bytes after trimming |
++| `description` | string | no | at most 4000 bytes, `task` is accepted as an alias |
++| `assignee` | string | no | must be the name of an existing player |
++| `add_to_top` | boolean | no | defaults to `false` (append) |
++
++Control characters are stripped from all strings; tabs and line breaks are kept
++in the description. The limits are counted in bytes because Factorio does not
++ship Lua's `utf8` library.
++
++On success the call returns `{ created = true, id = <number> }`. The id is the
++regular task id, so it also shows up in exports. Refreshing the task list is
++best effort: once the task is in the list the call reports success even if a
++GUI update fails, so a caller can never see a failure for a task that exists.
++
++On rejection it returns `{ created = false, error = <string>, message = <string> }`
++instead of raising, so a bad payload can never crash the calling mod or the
++save. The `error` values are `invalid_payload`, `not_initialized`,
++`invalid_player_index`, `unknown_player`, `invalid_title`, `title_too_long`,
++`invalid_description`, `description_too_long`, `invalid_assignee`,
++`unknown_assignee`, `invalid_add_to_top` and `internal_error`. Treat unknown
++values as a generic failure.
++
++The interface deliberately exposes nothing else: there is no way to run
++arbitrary functions, to write to `storage` or to touch GUI elements.
++
+ ## How to contribute?
+ 
+ If you want to contribute feel free to create a [pull request](https://github.com/JonasJurczok/factorio-todo-list/pulls) (with new translations for example).
+diff --git a/changelog.txt b/changelog.txt
+index 094c3ff447434664b5a77545105f2aef6db8a853..4249f0bf716721ea8fabe6f785640624db771417 100644
+--- a/changelog.txt
++++ b/changelog.txt
+@@ -1,4 +1,10 @@
+ ---------------------------------------------------------------------------------------------------
++Version: 19.16.0
++Date: 2026-07-29
++  Features:
++    - Added a "todo_list" remote interface so other mods can add tasks to the shared list.
++    - The interface exposes api_version() and add_task(payload) and validates every input before creating a task.
++---------------------------------------------------------------------------------------------------
+ Version: 19.15.3
+ Date: 2026-06-25
+   Changes:
+diff --git a/spec/remote_interface_spec.lua b/spec/remote_interface_spec.lua
+new file mode 100644
+index 0000000000000000000000000000000000000000..3c5e4344388f5b94e61fd284cdd9eb6277c3696f
+--- /dev/null
++++ b/spec/remote_interface_spec.lua
+@@ -0,0 +1,304 @@
++--[[
++  Tests for the todo_list remote interface.
++
++  The spec is self contained: it stubs the small part of the Factorio API that
++  the interface touches instead of booting a world, so it runs with plain
++  busted from the repository root.
++]]--
++describe("remote interface", function()
++
++  local registered
++  local refreshed
++
++  local save_task_to_open_list
++
++  setup(function()
++    _G.todo = {}
++    dofile("src/todo/features/add_task.lua")
++    dofile("src/todo/features/remote_interface.lua")
++
++    save_task_to_open_list = todo.save_task_to_open_list
++    todo.log = function() end
++
++    -- Verbatim from upstream src/todo/helper.lua.
++    todo.get_task_by_id = function(id)
++      for _, task in pairs(_G.storage.todo.open) do
++        if (task.id == id) then
++          return task
++        end
++      end
++
++      for _, task in pairs(_G.storage.todo.done) do
++        if (task.id == id) then
++          return task
++        end
++      end
++    end
++  end)
++
++  before_each(function()
++    refreshed = 0
++    registered = nil
++
++    todo.save_task_to_open_list = save_task_to_open_list
++    todo.update_export_dialog_button_state = function() end
++    todo.update_main_task_list_for_everyone = function()
++      refreshed = refreshed + 1
++    end
++
++    local players = {}
++    for index, name in ipairs({ "Charles", "Jonas" }) do
++      players[index] = { index = index, name = name, valid = true }
++    end
++
++    _G.storage = { todo = { open = {}, done = {}, settings = {} } }
++    _G.serpent = {
++      block = function()
++        return ""
++      end,
++      dump = function()
++        return ""
++      end,
++    }
++    _G.game = {
++      players = players,
++      -- Mirrors the API: get_player raises instead of returning nil when the
++      -- index is not a uint.
++      get_player = function(index)
++        if type(index) ~= "number" or index ~= index or index % 1 ~= 0
++          or index < 0 or index > 4294967295 then
++          error("Value must be a valid uint")
++        end
++        return players[index]
++      end,
++    }
++    _G.remote = {
++      add_interface = function(name, functions)
++        registered = { name = name, functions = functions }
++      end,
++    }
++  end)
++
++  local function add(payload)
++    return todo.remote_add_task(payload)
++  end
++
++  local function valid_payload(overrides)
++    local payload = {
++      player_index = 1,
++      title = "Build 4 more assemblers",
++      description = "Iron gears are the bottleneck.",
++    }
++    for key, value in pairs(overrides or {}) do
++      payload[key] = value
++    end
++    return payload
++  end
++
++  it("registers exactly the documented calls", function()
++    todo.register_remote_interface()
++
++    assert.is_equal("todo_list", registered.name)
++    assert.is_function(registered.functions.api_version)
++    assert.is_function(registered.functions.add_task)
++
++    local count = 0
++    for _ in pairs(registered.functions) do
++      count = count + 1
++    end
++    assert.is_equal(2, count)
++  end)
++
++  it("reports the api version", function()
++    assert.is_equal(1, todo.remote_api_version())
++  end)
++
++  it("creates a task through the regular code path", function()
++    local result = add(valid_payload({ assignee = "Jonas" }))
++
++    assert.is_true(result.created)
++    assert.is_equal(1, result.id)
++    assert.is_equal(1, #_G.storage.todo.open)
++
++    local task = _G.storage.todo.open[1]
++    assert.is_equal(1, task.id)
++    assert.is_equal("Build 4 more assemblers", task.title)
++    assert.is_equal("Iron gears are the bottleneck.", task.task)
++    assert.is_equal("Jonas", task.assignee)
++    assert.is_equal("Charles", task.created_by)
++    assert.is_equal("Charles", task.updated_by)
++    assert.is_equal(1, refreshed)
++  end)
++
++  it("appends by default and prepends on request", function()
++    add(valid_payload({ title = "first" }))
++    add(valid_payload({ title = "second" }))
++    add(valid_payload({ title = "third", add_to_top = true }))
++
++    assert.is_equal("third", _G.storage.todo.open[1].title)
++    assert.is_equal("first", _G.storage.todo.open[2].title)
++    assert.is_equal("second", _G.storage.todo.open[3].title)
++  end)
++
++  it("accepts task as an alias for description", function()
++    local result = add({ player_index = 1, title = "title", task = "body" })
++
++    assert.is_true(result.created)
++    assert.is_equal("body", _G.storage.todo.open[1].task)
++  end)
++
++  it("defaults the description to an empty string", function()
++    local result = add({ player_index = 1, title = "title" })
++
++    assert.is_true(result.created)
++    assert.is_equal("", _G.storage.todo.open[1].task)
++  end)
++
++  it("strips control characters and trims whitespace", function()
++    add({
++      player_index = 1,
++      title = "  clean\1 title  ",
++      description = "line one\nline two\0",
++    })
++
++    assert.is_equal("clean title", _G.storage.todo.open[1].title)
++    assert.is_equal("line one\nline two", _G.storage.todo.open[1].task)
++  end)
++
++  local rejections = {
++    { name = "a payload that is not a table", payload = "nope", code = "invalid_payload" },
++    { name = "a missing player index", payload = { title = "t" }, code = "invalid_player_index" },
++    {
++      name = "a player index of the wrong type",
++      payload = { player_index = "1", title = "t" },
++      code = "invalid_player_index",
++    },
++    {
++      name = "an unknown player",
++      payload = { player_index = 99, title = "t" },
++      code = "unknown_player",
++    },
++    {
++      name = "a fractional player index",
++      payload = { player_index = 1.5, title = "t" },
++      code = "invalid_player_index",
++    },
++    {
++      name = "a negative player index",
++      payload = { player_index = -1, title = "t" },
++      code = "invalid_player_index",
++    },
++    {
++      name = "a player index of zero",
++      payload = { player_index = 0, title = "t" },
++      code = "invalid_player_index",
++    },
++    {
++      name = "an infinite player index",
++      payload = { player_index = math.huge, title = "t" },
++      code = "invalid_player_index",
++    },
++    {
++      name = "a player index that is not a number at all",
++      payload = { player_index = 0 / 0, title = "t" },
++      code = "invalid_player_index",
++    },
++    { name = "a missing title", payload = { player_index = 1 }, code = "invalid_title" },
++    {
++      name = "a blank title",
++      payload = { player_index = 1, title = "   " },
++      code = "invalid_title",
++    },
++    {
++      name = "a title of the wrong type",
++      payload = { player_index = 1, title = 42 },
++      code = "invalid_title",
++    },
++    {
++      name = "an oversized title",
++      payload = { player_index = 1, title = string.rep("a", 201) },
++      code = "title_too_long",
++    },
++    {
++      name = "a description of the wrong type",
++      payload = { player_index = 1, title = "t", description = {} },
++      code = "invalid_description",
++    },
++    {
++      name = "an oversized description",
++      payload = { player_index = 1, title = "t", description = string.rep("a", 4001) },
++      code = "description_too_long",
++    },
++    {
++      name = "an assignee of the wrong type",
++      payload = { player_index = 1, title = "t", assignee = 7 },
++      code = "invalid_assignee",
++    },
++    {
++      name = "an unknown assignee",
++      payload = { player_index = 1, title = "t", assignee = "Nobody" },
++      code = "unknown_assignee",
++    },
++    {
++      name = "an add_to_top that is not a boolean",
++      payload = { player_index = 1, title = "t", add_to_top = "yes" },
++      code = "invalid_add_to_top",
++    },
++  }
++
++  for _, rejection in ipairs(rejections) do
++    it("rejects " .. rejection.name, function()
++      local result = add(rejection.payload)
++
++      assert.is_false(result.created)
++      assert.is_equal(rejection.code, result.error)
++      assert.is_string(result.message)
++      assert.is_equal(0, #_G.storage.todo.open)
++      assert.is_equal(0, refreshed)
++    end)
++  end
++
++  it("rejects calls before the mod is initialized", function()
++    _G.storage = {}
++
++    local result = add(valid_payload())
++
++    assert.is_false(result.created)
++    assert.is_equal("not_initialized", result.error)
++  end)
++
++  it("still reports success when a gui side effect of saving fails", function()
++    todo.update_export_dialog_button_state = function()
++      error("main frame is half built")
++    end
++
++    local result = add(valid_payload())
++
++    assert.is_true(result.created)
++    assert.is_equal(1, result.id)
++    assert.is_equal(1, #_G.storage.todo.open)
++  end)
++
++  it("still reports success when the list refresh fails", function()
++    todo.update_main_task_list_for_everyone = function()
++      error("gui exploded")
++    end
++
++    local result = add(valid_payload())
++
++    assert.is_true(result.created)
++    assert.is_equal(1, #_G.storage.todo.open)
++  end)
++
++  it("reports an internal error instead of raising when saving fails outright", function()
++    todo.save_task_to_open_list = function()
++      error("disk on fire")
++    end
++
++    local result = add(valid_payload())
++
++    assert.is_false(result.created)
++    assert.is_equal("internal_error", result.error)
++    assert.is_equal(0, #_G.storage.todo.open)
++  end)
++end)
+diff --git a/src/control.lua b/src/control.lua
+index 6b5463b80f6910dd09c922ab5c72d766f21d6254..b54ac474bba260a74a70a01333c9044544653b04 100644
+--- a/src/control.lua
++++ b/src/control.lua
+@@ -2,6 +2,9 @@
+ mod_gui = require("mod-gui")
+ require "todo/todo"
+ 
++-- Remote interfaces have to be registered while control.lua is loaded.
++todo.register_remote_interface()
++
+ -- when creating a new game, initialize data structure
+ script.on_init(todo.mod_init)
+ 
+diff --git a/src/info.json b/src/info.json
+index d6841d8194963e4facb68257e42b4bd9e0346f98..a819c24d122b4b71c22a5b66093401e3a3233703 100644
+--- a/src/info.json
++++ b/src/info.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "Todo-List",
+-  "version": "19.15.3",
++  "version": "19.16.0",
+   "title": "✔ Todo List",
+   "author": "Jason Miles and many others from the community",
+   "contact": "jonasjurczok+factorio@gmail.com",
+diff --git a/src/todo/features/remote_interface.lua b/src/todo/features/remote_interface.lua
+new file mode 100644
+index 0000000000000000000000000000000000000000..bbbd375a03ac5a6f1f0eaf1bc64ffac35df76401
+--- /dev/null
++++ b/src/todo/features/remote_interface.lua
+@@ -0,0 +1,217 @@
++--[[
++  A small, generic remote interface.
++
++  It lets other mods add a task to the shared todo list without reaching into
++  `storage.todo` or the GUI. Everything goes through the same code path the
++  add dialog uses, so a remotely created task is indistinguishable from a task
++  a player typed in.
++
++  The interface is registered from control.lua, which is the only place where
++  `remote.add_interface` may be called.
++]]--
++
++todo.remote_interface_name = "todo_list"
++
++-- Bump on every breaking change to the remote contract. Additive changes keep
++-- the version stable, so callers can guard with `api_version() >= n`.
++local API_VERSION = 1
++
++local MAX_TITLE_LENGTH = 200
++local MAX_DESCRIPTION_LENGTH = 4000
++local MAX_PLAYER_INDEX = 4294967295
++
++local function failure(code, message)
++    return { created = false, error = code, message = message }
++end
++
++--[[
++  Drops control characters a caller should never be able to inject into the
++  GUI and trims surrounding whitespace. Tabs, newlines and carriage returns
++  survive in the description because the details view renders multi line text.
++]]--
++local function sanitize(text, keep_newlines)
++    local forbidden = keep_newlines and "[\0-\8\11\12\14-\31\127]" or "[\0-\31\127]"
++    local cleaned = string.gsub(text, forbidden, "")
++    return (string.match(cleaned, "^%s*(.-)%s*$"))
++end
++
++local function read_string(payload, keys, options)
++    local value
++    for _, key in ipairs(keys) do
++        if payload[key] ~= nil then
++            value = payload[key]
++            break
++        end
++    end
++
++    if value == nil then
++        if options.required then
++            return nil, failure(options.missing_error, options.label .. " is required")
++        end
++        return nil, nil
++    end
++
++    if type(value) ~= "string" then
++        return nil, failure(options.type_error, options.label .. " must be a string")
++    end
++
++    local cleaned = sanitize(value, options.keep_newlines)
++
++    if cleaned == "" then
++        if options.required then
++            return nil, failure(options.missing_error, options.label .. " must not be empty")
++        end
++        return nil, nil
++    end
++
++    -- Factorio ships Lua without the utf8 library, so the budget is in bytes.
++    if string.len(cleaned) > options.max_length then
++        return nil, failure(
++            options.length_error,
++            options.label .. " must be at most " .. options.max_length .. " bytes"
++        )
++    end
++
++    return cleaned, nil
++end
++
++--[[
++  `game.get_player` expects a uint and raises on anything else, so the index is
++  fully validated before it reaches the API. Raising inside a remote call would
++  take the calling mod down with it.
++]]--
++local function read_player(payload)
++    local index = payload.player_index
++    if type(index) ~= "number"
++        or index ~= index
++        or index % 1 ~= 0
++        or index < 1
++        or index > MAX_PLAYER_INDEX then
++        return nil, failure("invalid_player_index", "player_index must be a positive integer")
++    end
++
++    local player = game.get_player(index)
++    if not player or not player.valid then
++        return nil, failure("unknown_player", "player_index does not belong to a valid player")
++    end
++
++    return player, nil
++end
++
++local function read_assignee(payload)
++    local assignee, rejection = read_string(payload, { "assignee" }, {
++        label = "assignee",
++        max_length = MAX_TITLE_LENGTH,
++        type_error = "invalid_assignee",
++        length_error = "invalid_assignee",
++        keep_newlines = false,
++    })
++    if rejection then
++        return nil, rejection
++    end
++    if assignee == nil then
++        return nil, nil
++    end
++
++    for _, player in pairs(game.players) do
++        if player.name == assignee then
++            return assignee, nil
++        end
++    end
++
++    return nil, failure("unknown_assignee", "assignee is not a known player name")
++end
++
++--[[
++  Adds one task to the open list.
++
++  payload:
++    player_index  (number, required)  the player the task is created by
++    title         (string, required)  short task title
++    description   (string, optional)  long text, `task` is accepted as an alias
++    assignee      (string, optional)  name of an existing player
++    add_to_top    (boolean, optional) prepend instead of append
++
++  @return { created = true, id = <number> } on success
++  @return { created = false, error = <string>, message = <string> } otherwise
++]]--
++function todo.remote_add_task(payload)
++    if type(payload) ~= "table" then
++        return failure("invalid_payload", "payload must be a table")
++    end
++
++    if not storage.todo or not storage.todo.open then
++        return failure("not_initialized", "the todo list is not initialized yet")
++    end
++
++    local player, player_rejection = read_player(payload)
++    if player_rejection then
++        return player_rejection
++    end
++
++    local title, title_rejection = read_string(payload, { "title" }, {
++        label = "title",
++        required = true,
++        max_length = MAX_TITLE_LENGTH,
++        missing_error = "invalid_title",
++        type_error = "invalid_title",
++        length_error = "title_too_long",
++        keep_newlines = false,
++    })
++    if title_rejection then
++        return title_rejection
++    end
++
++    local description, description_rejection = read_string(payload, { "description", "task" }, {
++        label = "description",
++        max_length = MAX_DESCRIPTION_LENGTH,
++        type_error = "invalid_description",
++        length_error = "description_too_long",
++        keep_newlines = true,
++    })
++    if description_rejection then
++        return description_rejection
++    end
++
++    local assignee, assignee_rejection = read_assignee(payload)
++    if assignee_rejection then
++        return assignee_rejection
++    end
++
++    if payload.add_to_top ~= nil and type(payload.add_to_top) ~= "boolean" then
++        return failure("invalid_add_to_top", "add_to_top must be a boolean")
++    end
++
++    local assembled, task = pcall(todo.assemble_task, {
++        ["title"] = title,
++        ["task"] = description or "",
++        ["assignee"] = assignee,
++    }, player)
++
++    if not assembled then
++        return failure("internal_error", tostring(task))
++    end
++
++    -- `save_task_to_open_list` inserts the task and only then refreshes the
++    -- export button, so a GUI problem must not be reported as a failed
++    -- creation once the task is already in the list.
++    local saved, save_error = pcall(todo.save_task_to_open_list, task, payload.add_to_top == true)
++    if not saved and todo.get_task_by_id(task.id) == nil then
++        return failure("internal_error", tostring(save_error))
++    end
++
++    pcall(todo.update_main_task_list_for_everyone)
++
++    return { created = true, id = task.id }
++end
++
++function todo.remote_api_version()
++    return API_VERSION
++end
++
++function todo.register_remote_interface()
++    remote.add_interface(todo.remote_interface_name, {
++        api_version = todo.remote_api_version,
++        add_task = todo.remote_add_task,
++    })
++end
+diff --git a/src/todo/todo.lua b/src/todo/todo.lua
+index aceda1c8f26f3d318c93c2ed51b777135c8a1f4b..a6b62ad734c687b7c19e5e66d25a191c1a423abc 100644
+--- a/src/todo/todo.lua
++++ b/src/todo/todo.lua
+@@ -16,6 +16,7 @@ require("todo/features/import_task")
+ require("todo/features/main_ui")
+ require("todo/features/mark_complete")
+ require("todo/features/mark_open")
++require("todo/features/remote_interface")
+ require("todo/features/sort_tasks")
+ require("todo/features/subtasks")
+ require("todo/features/take_task")

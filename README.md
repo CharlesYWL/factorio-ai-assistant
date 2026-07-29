@@ -57,6 +57,7 @@ flowchart LR
 | `packages/guide/` | 版本化的 Factorio 2.0 原版流程指南数据与确定性阶段判定引擎 |
 | `docs/` | Windows 安装、协议、规则阈值、流程指南、排错和实机验证清单 |
 | `scripts/lua/` | Mod 的 Lua 规格测试与最小 Factorio 运行时替身（由 `npm test` 驱动） |
+| `compat/todo-list/` | 为第三方 Todo-List Mod 准备的 `remote` 接口补丁、出处记录与 patched ZIP 构建脚本（非运行时代码） |
 
 ## 游戏内面板
 
