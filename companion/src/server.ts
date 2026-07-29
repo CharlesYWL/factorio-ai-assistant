@@ -440,9 +440,6 @@ async function handleAssistantRequest(
         ...(answer.fallbackReason === undefined
           ? {}
           : { fallback_reason: answer.fallbackReason }),
-        ...(answer.suggestedActions.length === 0
-          ? {}
-          : { suggested_actions: answer.suggestedActions }),
       }),
       remote,
       logger,

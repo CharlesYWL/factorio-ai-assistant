@@ -156,9 +156,8 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
 ```
 
 `question` 最多 2000 字符 / 4096 UTF-8 bytes。`assistant_response.payload.status` 为
-`ok`、`cancelled` 或 `error`；成功时返回 `mode`（`model` / `local`）、`text`、可选
-provider / model / fallback 原因，以及可选的 `suggested_actions`（见下）。取消包只携带
-目标 `request_id`：
+`ok`、`cancelled` 或 `error`；成功时返回 `mode`（`model` / `local`）、`text` 和可选
+provider / model / fallback 原因。取消包只携带目标 `request_id`：
 
 ```json
 {
@@ -170,40 +169,6 @@ provider / model / fallback 原因，以及可选的 `suggested_actions`（见�
   "payload": { "request_id": "factorio-assistant-900-4" }
 }
 ```
-
-### `suggested_actions`（可选，向前兼容）
-
-成功的 `assistant_response` 可以额外携带最多 3 条结构化“下一步建议”，供玩家逐条确认
-后加入 Mod 自己的待办列表：
-
-```json
-{
-  "reply_to": "factorio-assistant-900-4",
-  "status": "ok",
-  "mode": "model",
-  "text": "……",
-  "suggested_actions": [
-    {
-      "action_id": "alert-3f2a19bc",
-      "text": "增加发电或燃料供给，把电力满足率拉回 90% 以上。",
-      "source": "alert"
-    }
-  ]
-}
-```
-
-- `source` 只能是 `guide`、`alert`、`calculation` 或 `model`，分别对应流程指南步骤、
-  活动提醒、确定性产能计算和已通过 grounding 校验的模型推断。
-- `action_id` 由来源与展示文本确定性推导（`<source>-<8 位十六进制>`），同一条建议
-  在不同回答里得到同一个 ID，Mod 据此去重，无需任何服务端状态。
-- `text` 单行、无引用标记（`[A1]`）、无控制字符，最多 320 **字符**（不是字节，中文建议同样按字符计）。
-- 模型建议必须先通过与回答正文相同的 unsafe-command / 引用 / 数字对账；一旦回答
-  回退到本地模式，就不会有任何 `source: "model"` 的建议。
-- 该字段只允许出现在 `status: "ok"` 上，且不允许重复 `action_id`。
-- 字段是可选的：旧 Mod 直接忽略它并照常显示 `text`，旧 Companion 不发送它时新 Mod
-  也只显示 `text`，因此混装安装保持可用。
-- 建议本身没有任何副作用：Companion 和模型都不能创建、完成或删除待办，只有玩家点击
-  “加入待办”才会写入，且待办只保存在 Mod 的存档状态里、按玩家隔离。
 
 ### Calculation（保留兼容，Mod 不再主动发起）
 

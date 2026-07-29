@@ -132,8 +132,8 @@ function suite.ask(world, player, question)
 end
 
 --- Delivers one `assistant_response` over the UDP path, so the Mod's own packet
---- validation decides whether the structured suggestions survive. `payload`
---- overrides the default successful body field by field.
+--- validation runs unchanged. `payload` overrides the default successful body
+--- field by field.
 function suite.answer(world, player, payload)
   local pending = world.state().ui_players[player.index].chat_pending
   assert(pending ~= nil, "there is no pending chat request to answer")
@@ -154,29 +154,6 @@ function suite.answer(world, player, payload)
     timestamp = 1,
     payload = body,
   })
-end
-
-function suite.suggestion(action_id, text, source)
-  return {
-    action_id = action_id,
-    text = text or ("suggestion " .. action_id),
-    source = source or "guide",
-  }
-end
-
---- The "Add to todo" buttons of the newest answer, in render order.
-function suite.todo_buttons(world, player)
-  local panel = world.panel(player)
-  if panel == nil then
-    return {}
-  end
-  return world.find_within(panel, function(element)
-    return (element.tags or {}).action == "add-todo"
-  end)
-end
-
-function suite.todos(world, player)
-  return world.state().ui_players[player.index].todos or {}
 end
 
 for _, spec_name in ipairs(SPEC_NAMES) do

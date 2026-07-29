@@ -185,15 +185,6 @@ for (const transition of [
   "forget_alert",
   "pending_alerts",
   "dismiss_all_alerts",
-  "sanitize_suggested_actions",
-  "add_todo",
-  "has_todo",
-  "set_todo_completed",
-  "delete_todo",
-  "clear_completed_todos",
-  "clear_todos",
-  "open_todo_count",
-  "sorted_todos",
 ]) {
   assert.ok(
     uiStateSource.includes(`function ui_state.${transition}`),
@@ -228,12 +219,6 @@ for (const action of [
   "dismiss-alert",
   "restore-alert",
   "clear-alerts",
-  "add-todo",
-  "complete-todo",
-  "restore-todo",
-  "delete-todo",
-  "clear-completed-todos",
-  "clear-todos",
 ]) {
   assert.ok(
     controlSource.includes(`action == "${action}"`),
@@ -248,54 +233,6 @@ assert.equal(
   countOccurrences(uiSource, 'action = "clear-alerts"'),
   2,
   "Clear-all must be offered both on the Alerts tab and on the persistent card",
-);
-
-// A todo may only ever appear because the player clicked "add to todo": the
-// packet path must stop at storing the suggestion on the chat entry.
-assert.equal(
-  countOccurrences(controlSource, "ui_state.add_todo("),
-  2,
-  "Only adopt_suggested_action and the UI mock may create a todo",
-);
-for (const writer of [
-  "ui_state.set_todo_completed(",
-  "ui_state.delete_todo(",
-  "ui_state.clear_completed_todos(",
-  "ui_state.clear_todos(",
-]) {
-  assert.doesNotMatch(
-    controlSource.slice(
-      0,
-      controlSource.indexOf("local function refresh_todo_views"),
-    ),
-    new RegExp(writer.replace(/[.()]/gu, "\\$&"), "u"),
-    `${writer} must only be reachable from a GUI click handler`,
-  );
-}
-assert.ok(
-  controlSource.includes("payload.suggested_actions ~= nil")
-    && controlSource.includes(
-      'type(payload.suggested_actions) ~= "table"',
-    ),
-  "control.lua must validate the optional suggested_actions field on the wire",
-);
-assert.ok(
-  uiStateSource.includes("local MAX_TODOS")
-    && uiStateSource.includes("#player_state.todos >= MAX_TODOS"),
-  "ui_state.lua must cap the todo list",
-);
-assert.ok(
-  uiStateSource.includes("player_state.todos = player_state.todos or {}"),
-  "ui_state.lua must migrate a save written before todos existed",
-);
-assert.ok(
-  uiSource.includes("ui_state.open_todo_count(player_state)"),
-  "The persistent HUD must surface the open todo count",
-);
-assert.doesNotMatch(
-  uiSource,
-  /open_todos[\s\S]{0,400}ui\.show_toast/u,
-  "Todos must never raise a toast",
 );
 
 // Auto-pause is only correct while exactly one open path and one close path own
@@ -380,27 +317,6 @@ for (const localeKey of [
   "auto-pause-off",
   "auto-pause-multiplayer",
   "factorio-ai-assistant-auto-pause-on-open",
-  "suggested-actions",
-  "add-todo",
-  "add-todo-tooltip",
-  "todo-added",
-  "todo-added-tooltip",
-  "todo-limit-reached",
-  "todos-title",
-  "todos-empty",
-  "todo-meta",
-  "todo-source-guide",
-  "todo-source-alert",
-  "todo-source-calculation",
-  "todo-source-model",
-  "todo-complete",
-  "todo-restore",
-  "todo-delete",
-  "todo-clear-completed",
-  "todo-clear-all",
-  "todos-cleared",
-  "todo-hud-title",
-  "todo-hud-open",
 ]) {
   assert.ok(
     englishLocale.includes(`\n${localeKey}=`),
