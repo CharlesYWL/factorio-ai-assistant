@@ -6,6 +6,8 @@ import {
   PROTOCOL_VERSION,
   STATE_SCHEMA_VERSION,
   decodePacket,
+  type AreaSnapshotPacket,
+  type DynamicSnapshotPacket,
   type StaticDeltaPacket,
   type StaticSnapshotPacket,
 } from "@factorio-ai-assistant/protocol";
@@ -156,6 +158,210 @@ void test("retains the latest validated dynamic snapshot", async () => {
   assert.equal(store.dynamicState?.tick, 3_900);
   assert.equal(store.dynamicState?.payload.forces[0]?.items[0]?.id, "iron-plate");
 });
+
+void test("publishes a chunked sample only once every chunk arrives", () => {
+  const store = new CompanionStateStore();
+  const chunks = chunkedSample(7, 2);
+  const first = chunks[0]!;
+  const second = chunks[1]!;
+
+  store.acceptDynamicSnapshot(first);
+  // A half-assembled sample would understate production, and there is no
+  // retransmission to repair it, so nothing may be published yet.
+  assert.ok(store.dynamicState === undefined);
+
+  store.acceptDynamicSnapshot(second);
+  assert.deepEqual(itemIdsOf(store), ["chunk-0-item", "chunk-1-item"]);
+});
+
+void test("reassembles chunks that arrive out of order", () => {
+  const store = new CompanionStateStore();
+  const chunks = chunkedSample(8, 2);
+  const first = chunks[0]!;
+  const second = chunks[1]!;
+
+  store.acceptDynamicSnapshot(second);
+  assert.ok(store.dynamicState === undefined);
+  store.acceptDynamicSnapshot(first);
+
+  assert.deepEqual(itemIdsOf(store), ["chunk-0-item", "chunk-1-item"]);
+});
+
+void test("drops an incomplete sample instead of mixing it with a newer one", () => {
+  const store = new CompanionStateStore();
+  const staleFirst = chunkedSample(9, 2)[0]!;
+  const fresh = chunkedSample(10, 2);
+  const freshFirst = fresh[0]!;
+  const freshSecond = fresh[1]!;
+
+  // A lost datagram must not leave flows from an older tick to be merged into
+  // the next sample, which would report a state that never existed.
+  store.acceptDynamicSnapshot(staleFirst);
+  store.acceptDynamicSnapshot(freshFirst);
+  store.acceptDynamicSnapshot(freshSecond);
+
+  assert.equal(store.dynamicState?.payload.sample_sequence, 10);
+  const items = itemIdsOf(store);
+  assert.equal(items.length, 2);
+});
+
+void test("ignores a late chunk from a sample already superseded", () => {
+  const store = new CompanionStateStore();
+  const older = chunkedSample(11, 2);
+  const oldFirst = older[0]!;
+  const oldSecond = older[1]!;
+  const newer = chunkedSample(12, 2);
+  const newFirst = newer[0]!;
+  const newSecond = newer[1]!;
+
+  store.acceptDynamicSnapshot(newFirst);
+  store.acceptDynamicSnapshot(newSecond);
+  store.acceptDynamicSnapshot(oldFirst);
+  store.acceptDynamicSnapshot(oldSecond);
+
+  assert.equal(store.dynamicState?.payload.sample_sequence, 12);
+});
+
+void test("still accepts an unchunked sample from an older Mod", () => {
+  const store = new CompanionStateStore();
+  const packet = dynamicChunk(13, undefined, undefined, "solo-item");
+
+  store.acceptDynamicSnapshot(packet);
+
+  assert.equal(store.dynamicState?.payload.sample_sequence, 13);
+  assert.equal(
+    store.dynamicState?.payload.forces[0]?.items[0]?.id,
+    "solo-item",
+  );
+});
+
+void test("reassembles an area selection and keeps machine detail", () => {
+  const store = new CompanionStateStore();
+  const chunks = areaChunks(3, 2);
+
+  store.acceptAreaSnapshot(chunks[0]!);
+  // A partial selection would show fewer machines than the player framed.
+  assert.equal(machineIdsOf(store).length, 0);
+
+  store.acceptAreaSnapshot(chunks[1]!);
+  assert.deepEqual(machineIdsOf(store), ["machine-0", "machine-1"]);
+  assert.equal(
+    store.areaSelection?.payload.entities[0]?.status,
+    "no_ingredients",
+  );
+});
+
+void test("ignores a late chunk from a superseded selection", () => {
+  const store = new CompanionStateStore();
+  const older = areaChunks(4, 2);
+  const newer = areaChunks(5, 2);
+
+  store.acceptAreaSnapshot(newer[0]!);
+  store.acceptAreaSnapshot(newer[1]!);
+  store.acceptAreaSnapshot(older[0]!);
+  store.acceptAreaSnapshot(older[1]!);
+
+  assert.equal(store.areaSelection?.payload.selection_id, 5);
+});
+
+function areaChunks(
+  selectionId: number,
+  count: number,
+): AreaSnapshotPacket[] {
+  return Array.from({ length: count }, (_, index) => ({
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: `factorio-area-${selectionId}-${index}`,
+    type: "area_snapshot" as const,
+    tick: 500,
+    payload: {
+      force_id: "player",
+      selection_id: selectionId,
+      area: { x1: 0, y1: 0, x2: 32, y2: 32 },
+      entities: [
+        {
+          id: `machine-${index}`,
+          x: index,
+          y: 0,
+          recipe: "iron-plate",
+          status: "no_ingredients",
+        },
+      ],
+      groups: index === 0 ? [{ id: "transport-belt", count: 40 }] : [],
+      omitted_entities: 0,
+      truncated: false,
+      ...(count > 1 ? { chunk_index: index, chunk_count: count } : {}),
+    },
+  }));
+}
+
+function machineIdsOf(store: CompanionStateStore): string[] {
+  return (store.areaSelection?.payload.entities ?? []).map(
+    (entity) => entity.id,
+  );
+}
+
+function itemIdsOf(store: CompanionStateStore): string[] {
+  return (store.dynamicState?.payload.forces[0]?.items ?? []).map(
+    (item) => item.id,
+  );
+}
+
+function chunkedSample(
+  sequence: number,
+  count: number,
+): DynamicSnapshotPacket[] {
+  return Array.from({ length: count }, (_, index) =>
+    dynamicChunk(sequence, index, count, `chunk-${index}-item`),
+  );
+}
+
+function dynamicChunk(
+  sequence: number,
+  chunkIndex: number | undefined,
+  chunkCount: number | undefined,
+  itemId: string,
+): DynamicSnapshotPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: `factorio-dynamic-${sequence}-${chunkIndex ?? 0}`,
+    type: "dynamic_snapshot",
+    tick: 100 + sequence,
+    payload: {
+      sample_interval_ticks: 300,
+      sample_sequence: sequence,
+      truncated: false,
+      omitted_forces: 0,
+      omitted_series: 0,
+      ...(chunkIndex === undefined || chunkCount === undefined
+        ? {}
+        : { chunk_index: chunkIndex, chunk_count: chunkCount }),
+      forces: [
+        {
+          id: "player",
+          research: null,
+          items: [
+            {
+              id: itemId,
+              produced_per_minute_1m: 1,
+              consumed_per_minute_1m: 0,
+              produced_per_minute_10m: 1,
+              consumed_per_minute_10m: 0,
+            },
+          ],
+          fluids: [],
+          power: {
+            network_count: 1,
+            generated_watts: 1,
+            consumed_watts: 1,
+            satisfaction_ratio: 1,
+          },
+        },
+      ],
+    },
+  };
+}
 
 async function readStaticFixture(): Promise<StaticSnapshotPacket> {
   const encoded = await readFile(

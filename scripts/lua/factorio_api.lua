@@ -280,6 +280,10 @@ function api.create(sources, options)
     nth_tick_handlers[interval] = handler
   end
 
+  --- Outbound packets, captured so specs can assert on what the Mod actually
+  --- sends. `table_to_json` is the single funnel every send path goes through.
+  local sent_packets = {}
+
   local helpers = {
     send_udp = function()
       return true
@@ -287,7 +291,8 @@ function api.create(sources, options)
     recv_udp = function()
       return true
     end,
-    table_to_json = function()
+    table_to_json = function(packet)
+      table.insert(sent_packets, packet)
       return "{}"
     end,
     json_to_table = function(raw)
@@ -526,6 +531,25 @@ function api.create(sources, options)
   world.settings = settings
   world.defines = defines
   world.env = env
+
+  --- Every packet the Mod handed to `table_to_json`, oldest first.
+  function world.sent_packets(packet_type)
+    if packet_type == nil then
+      return sent_packets
+    end
+    local matching = {}
+    for _, packet in ipairs(sent_packets) do
+      if packet.type == packet_type then
+        table.insert(matching, packet)
+      end
+    end
+    return matching
+  end
+
+  function world.last_sent(packet_type)
+    local matching = world.sent_packets(packet_type)
+    return matching[#matching]
+  end
 
   return world
 end

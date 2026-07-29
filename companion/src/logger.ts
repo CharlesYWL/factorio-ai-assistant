@@ -11,7 +11,10 @@ export interface LogSink {
   write(line: string): void;
 }
 
-const SENSITIVE_FIELD = /(?:api.?key|authorization|context|prompt|question|secret|state|token)/i;
+// `history`, `turn`, and `answer` cover the opt-in conversation payload, which
+// carries player-authored text and must never reach the log.
+const SENSITIVE_FIELD =
+  /(?:api.?key|authorization|answer|context|history|prompt|question|secret|state|token|turns?)/i;
 const SECRET_VALUE_PATTERNS = [
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,
   /\bsk-[A-Za-z0-9_-]{8,}\b/gi,

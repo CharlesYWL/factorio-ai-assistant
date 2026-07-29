@@ -1,4 +1,6 @@
 import type {
+  AreaSnapshotPacket,
+  DynamicForceSummary,
   DynamicSnapshotPacket,
   MachineDescriptor,
   ModuleDescriptor,
@@ -48,6 +50,96 @@ interface ForceState {
   productivityBonuses: Map<string, number>;
 }
 
+/**
+ * Rebuilds one sample from its chunks. Each chunk repeats the force header and
+ * carries a slice of that force's flows, so headers are taken from the first
+ * chunk that mentions a force and the flow lists are concatenated in chunk
+ * order. The result is byte-for-byte reproducible for a given set of chunks.
+ */
+function mergeDynamicChunks(
+  pending: PendingDynamicSample,
+): DynamicSnapshotPacket {
+  const ordered = [...pending.chunks.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, packet]) => packet);
+  const first = ordered[0];
+  if (first === undefined) {
+    throw new Error("A completed dynamic sample must have at least one chunk");
+  }
+
+  const forces = new Map<string, DynamicForceSummary>();
+  let omittedForces = 0;
+  let omittedSeries = 0;
+  let truncated = false;
+
+  for (const packet of ordered) {
+    omittedForces = Math.max(omittedForces, packet.payload.omitted_forces);
+    omittedSeries = Math.max(omittedSeries, packet.payload.omitted_series);
+    truncated = truncated || packet.payload.truncated;
+
+    for (const force of packet.payload.forces) {
+      const existing = forces.get(force.id);
+      if (existing === undefined) {
+        forces.set(force.id, {
+          ...force,
+          items: [...force.items],
+          fluids: [...force.fluids],
+        });
+        continue;
+      }
+      existing.items.push(...force.items);
+      existing.fluids.push(...force.fluids);
+    }
+  }
+
+  return {
+    ...first,
+    payload: {
+      ...first.payload,
+      truncated,
+      omitted_forces: omittedForces,
+      omitted_series: omittedSeries,
+      forces: [...forces.values()],
+    },
+  };
+}
+
+interface PendingAreaSelection {
+  selectionId: number;
+  chunkCount: number;
+  chunks: Map<number, AreaSnapshotPacket>;
+}
+
+/** Rebuilds one selection from its chunks, concatenating entities in order. */
+function mergeAreaChunks(pending: PendingAreaSelection): AreaSnapshotPacket {
+  const ordered = [...pending.chunks.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, packet]) => packet);
+  const first = ordered[0];
+  if (first === undefined) {
+    throw new Error("A completed area selection must have at least one chunk");
+  }
+
+  return {
+    ...first,
+    payload: {
+      ...first.payload,
+      entities: ordered.flatMap((packet) => packet.payload.entities),
+      groups: ordered.flatMap((packet) => packet.payload.groups),
+      omitted_entities: Math.max(
+        ...ordered.map((packet) => packet.payload.omitted_entities),
+      ),
+      truncated: ordered.some((packet) => packet.payload.truncated),
+    },
+  };
+}
+
+interface PendingDynamicSample {
+  sampleSequence: number;
+  chunkCount: number;
+  chunks: Map<number, DynamicSnapshotPacket>;
+}
+
 interface PendingSnapshot {
   revision: number;
   chunkCount: number;
@@ -58,6 +150,11 @@ interface PendingSnapshot {
 
 export class CompanionStateStore {
   readonly #pendingSnapshots = new Map<string, PendingSnapshot>();
+  /** Chunks of the dynamic sample currently being assembled, if any. */
+  #pendingDynamic: PendingDynamicSample | undefined;
+  /** Chunks of the area selection currently being assembled, if any. */
+  #pendingArea: PendingAreaSelection | undefined;
+  #areaSelection: AreaSnapshotPacket | undefined;
   #staticState: StaticState | undefined;
   #dynamicState: DynamicSnapshotPacket | undefined;
 
@@ -71,6 +168,64 @@ export class CompanionStateStore {
 
   public get dynamicState(): DynamicSnapshotPacket | undefined {
     return this.#dynamicState;
+  }
+
+  /** The most recent area the player selected, if any. */
+  public get areaSelection(): AreaSnapshotPacket | undefined {
+    return this.#areaSelection;
+  }
+
+  /**
+   * Accepts one area datagram, reassembling a selection split across several.
+   * Like dynamic samples these are unacked, so an incomplete selection is
+   * discarded rather than shown as a smaller factory than the player selected.
+   */
+  public acceptAreaSnapshot(packet: AreaSnapshotPacket): void {
+    const { chunk_count: chunkCount, chunk_index: chunkIndex } = packet.payload;
+    const selection = packet.payload.selection_id;
+
+    if (
+      this.#areaSelection !== undefined &&
+      selection < this.#areaSelection.payload.selection_id
+    ) {
+      return;
+    }
+
+    if (chunkCount === undefined || chunkIndex === undefined) {
+      this.#pendingArea = undefined;
+      this.#areaSelection = packet;
+      return;
+    }
+
+    if (
+      this.#pendingArea === undefined ||
+      this.#pendingArea.selectionId !== selection
+    ) {
+      if (
+        this.#pendingArea !== undefined &&
+        selection < this.#pendingArea.selectionId
+      ) {
+        return;
+      }
+      this.#pendingArea = {
+        selectionId: selection,
+        chunkCount,
+        chunks: new Map(),
+      };
+    }
+
+    const pending = this.#pendingArea;
+    if (pending.chunkCount !== chunkCount) {
+      this.#pendingArea = undefined;
+      return;
+    }
+    pending.chunks.set(chunkIndex, packet);
+    if (pending.chunks.size < chunkCount) {
+      return;
+    }
+
+    this.#pendingArea = undefined;
+    this.#areaSelection = mergeAreaChunks(pending);
   }
 
   public acceptStaticSnapshotChunk(packet: StaticSnapshotPacket): boolean {
@@ -220,8 +375,62 @@ export class CompanionStateStore {
     };
   }
 
+  /**
+   * Accepts one dynamic datagram. A sample split across several datagrams is
+   * only published once every chunk has arrived: unlike static snapshots there
+   * is no retransmission, so a half-assembled sample would silently understate
+   * production. A newer sample supersedes an incomplete older one.
+   */
   public acceptDynamicSnapshot(packet: DynamicSnapshotPacket): void {
-    this.#dynamicState = packet;
+    const { chunk_count: chunkCount, chunk_index: chunkIndex } = packet.payload;
+    const sequence = packet.payload.sample_sequence;
+
+    // Late datagrams from a sample already replaced would otherwise start a new
+    // pending assembly and overwrite fresher data with older flows.
+    if (
+      this.#dynamicState !== undefined &&
+      sequence < this.#dynamicState.payload.sample_sequence
+    ) {
+      return;
+    }
+
+    if (chunkCount === undefined || chunkIndex === undefined) {
+      this.#pendingDynamic = undefined;
+      this.#dynamicState = packet;
+      return;
+    }
+
+    if (
+      this.#pendingDynamic === undefined ||
+      this.#pendingDynamic.sampleSequence !== sequence
+    ) {
+      // A chunk from a different sample means the previous one will never
+      // complete; drop it rather than mixing samples taken at different ticks.
+      if (
+        this.#pendingDynamic !== undefined &&
+        sequence < this.#pendingDynamic.sampleSequence
+      ) {
+        return;
+      }
+      this.#pendingDynamic = {
+        sampleSequence: sequence,
+        chunkCount,
+        chunks: new Map(),
+      };
+    }
+
+    const pending = this.#pendingDynamic;
+    if (pending.chunkCount !== chunkCount) {
+      this.#pendingDynamic = undefined;
+      return;
+    }
+    pending.chunks.set(chunkIndex, packet);
+    if (pending.chunks.size < chunkCount) {
+      return;
+    }
+
+    this.#pendingDynamic = undefined;
+    this.#dynamicState = mergeDynamicChunks(pending);
   }
 
   #assertConsistentChunk(

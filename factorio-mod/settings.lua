@@ -16,6 +16,15 @@ data:extend({
     order = "a-a",
   },
   {
+    -- Off by default: enabling it sends the player's own recent questions and
+    -- answers to the configured model so follow-up wording can be resolved.
+    type = "bool-setting",
+    name = "factorio-ai-assistant-send-chat-history",
+    setting_type = "runtime-per-user",
+    default_value = false,
+    order = "a-b",
+  },
+  {
     type = "bool-setting",
     name = "factorio-ai-assistant-advisor-quiet-mode",
     setting_type = "runtime-global",
