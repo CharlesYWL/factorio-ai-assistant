@@ -4,7 +4,7 @@ export const LOOPBACK_HOST = "127.0.0.1";
 export const DEFAULT_COMPANION_PORT = 34_197;
 export const DEFAULT_SAMPLING_INTERVAL_MS = 5_000;
 export const DEFAULT_MODEL_TIMEOUT_MS = 4_000;
-export const DEFAULT_CONTEXT_BUDGET_BYTES = 48_000;
+export const DEFAULT_CONTEXT_BUDGET_BYTES = 60_000;
 export const MAX_CONFIG_BYTES = 64 * 1024;
 
 const MIN_SAMPLING_INTERVAL_MS = 1_000;
@@ -12,7 +12,9 @@ const MAX_SAMPLING_INTERVAL_MS = 60_000;
 const MIN_MODEL_TIMEOUT_MS = 250;
 const MAX_MODEL_TIMEOUT_MS = 30_000;
 const MIN_CONTEXT_BUDGET_BYTES = 1_024;
-const MAX_CONTEXT_BUDGET_BYTES = 64 * 1024;
+// The context travels to the model over HTTP, not the 16 KiB UDP link, so this
+// only needs to stay inside a sensible prompt size rather than a packet size.
+const MAX_CONTEXT_BUDGET_BYTES = 512 * 1024;
 const MIN_OUTPUT_TOKENS = 64;
 const MAX_OUTPUT_TOKENS = 4_096;
 const CONFIG_FIELDS = new Set([

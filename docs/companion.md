@@ -37,8 +37,8 @@ npm start
 | `api_key` | `FACTORIO_ASSISTANT_API_KEY` | 无默认值；只从环境或所选本机配置文件读取 |
 | `model_timeout_ms` | `FACTORIO_ASSISTANT_MODEL_TIMEOUT_MS` | 每次尝试 `4000`，范围 `250..30000` |
 | `model_retry_count` | `FACTORIO_ASSISTANT_MODEL_RETRY_COUNT` | `1`；只能是 `0` 或 `1` |
-| `context_budget_bytes` | `FACTORIO_ASSISTANT_CONTEXT_BUDGET_BYTES` | `12000`，范围 `1024..65536` |
-| `max_output_tokens` | `FACTORIO_ASSISTANT_MAX_OUTPUT_TOKENS` | `800`，范围 `64..4096` |
+| `context_budget_bytes` | `FACTORIO_ASSISTANT_CONTEXT_BUDGET_BYTES` | `60000`，范围 `1024..524288`。发给模型走 HTTP，不受 UDP 的 16 KiB 限制 |
+| `max_output_tokens` | `FACTORIO_ASSISTANT_MAX_OUTPUT_TOKENS` | `1600`，范围 `64..4096` |
 | `history_directory` | `FACTORIO_ASSISTANT_HISTORY_DIR` | `history`；每个存档一个 `.jsonl` 文件 |
 
 JSON 配置只接受表中的字段。`provider_url` 必须是绝对 `http(s)` URL，不能携带 URL
