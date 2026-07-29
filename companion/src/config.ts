@@ -183,7 +183,7 @@ export function resolveCompanionConfig(
       file.max_output_tokens,
     ),
     "max_output_tokens",
-    800,
+    1_600,
     MIN_OUTPUT_TOKENS,
     MAX_OUTPUT_TOKENS,
   );

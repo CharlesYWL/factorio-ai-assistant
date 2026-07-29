@@ -18,6 +18,28 @@ Factorio 与 Companion 必须使用两个不同的 UDP 端口：
 | Companion | `127.0.0.1` | `34197` |
 | Factorio Lua UDP | localhost | `34198` |
 
+## 一键安装（推荐）
+
+双击仓库根目录的 `install.cmd`，或在 PowerShell 里运行：
+
+```powershell
+.\install.ps1                    # 装最新 release
+.\install.ps1 -Tag v0.1.0-rc.6   # 装指定版本
+.\install.ps1 -NoStart           # 只安装，不启动 Companion
+.\install.ps1 -FromLocalBuild    # 装本地 npm run package 的产物
+```
+
+它会下载 release、把 Mod 放进 `%APPDATA%\Factorio\mods`（并清理旧版本 zip）、把
+Companion 解压到 `%LOCALAPPDATA%\FactorioAI Assistant\`，然后启动 Companion。
+
+**重复安装不会覆盖 `companion.config.json`**，`logs\` 同样保留；升级到不同版本号时会把
+上一个版本目录里的配置迁移过来。只有首次安装才从示例配置生成一份。
+
+Steam 启动参数仍需自行添加一次（见下一节）。
+
+若检测到 `npm run dev:link` 创建的开发链接，脚本会警告——Factorio 会优先加载链接而不是
+刚装的 zip。
+
 ## 1. 校验并安装同一 release bundle
 
 从私有 `v0.1.0-rc.5` GitHub Release 下载：
