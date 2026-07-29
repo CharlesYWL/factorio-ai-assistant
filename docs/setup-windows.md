@@ -122,6 +122,11 @@ Copy-Item .\companion.config.example.json .\companion.config.json
    默认值。全部默认阈值见 [`advisor.md`](advisor.md)。
 10. 有活动告警时，屏幕左上角会出现常驻提醒卡片。每条卡片可直接“打开顾问”或忽略；
     忽略只隐藏当前这次告警，告警关闭后再次触发会重新出现，规则静音仍是独立开关。
+    常驻卡片和 Alerts 页的 **清理全部** 一次忽略本势力全部活动提醒，语义与逐条忽略
+    相同。
+11. 单人游戏中打开顾问会自动暂停游戏、关闭时恢复。该开关在 **Settings → Mod settings
+    → Per player** 的“打开 AI 顾问时自动暂停”，默认开启；本 Mod 只恢复自己触发的
+    那次暂停，多人游戏不生效，Status 页会显示当前状态。
 
 没有可控存档数据时，可先停止 Companion，再用内置 mock harness 逐一检查关键状态：
 

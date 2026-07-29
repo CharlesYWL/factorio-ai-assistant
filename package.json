@@ -32,6 +32,7 @@
     "@types/node": "^24.10.1",
     "esbuild": "^0.25.12",
     "eslint": "^10.8.0",
+    "fengari": "^0.1.5",
     "globals": "^17.8.0",
     "luaparse": "^0.3.1",
     "typescript": "^5.9.3",

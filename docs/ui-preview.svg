@@ -79,7 +79,7 @@
     <text class="text body" x="20" y="140">“每分钟 100 钢材要几台熔炉？”</text>
     <text class="text body number" x="20" y="170">13.33 台 → 建造 14 台</text>
 
-    <rect x="0" y="210" width="315" height="150" rx="7" fill="#292f34" stroke="#495158"/>
+    <rect x="0" y="210" width="315" height="180" rx="7" fill="#292f34" stroke="#495158"/>
     <text class="text label" x="20" y="238" fill="#ffb33f">顾问提醒（2）· 左上角常驻</text>
     <text class="text small" x="20" y="266" fill="#ff5a4d">[严重] 关键材料缺口</text>
     <text class="text small muted" x="20" y="286">铁板 2400/min 消费 · 900/min 生产</text>
@@ -94,17 +94,20 @@
     <text class="text small" x="262" y="323" fill="#c8d0d6">↗</text>
     <rect x="283" y="308" width="24" height="20" rx="3" fill="#3a4248"/>
     <text class="text small" x="291" y="323" fill="#c8d0d6">✕</text>
+    <rect x="203" y="352" width="104" height="28" rx="4" fill="#3a4248" stroke="#59636b"/>
+    <text class="text small" x="226" y="371" fill="#c8d0d6">清理全部</text>
 
-    <rect x="0" y="380" width="315" height="126" rx="7" fill="#292f34" stroke="#495158"/>
-    <text class="text label" x="20" y="408" fill="#63bfe8">状态</text>
-    <text class="text small" x="20" y="436">Companion     已连接</text>
-    <text class="text small" x="20" y="462">顾问模式       仅本地规则</text>
-    <text class="text small" x="20" y="488">隐私模式       仅本机处理</text>
+    <rect x="0" y="412" width="315" height="148" rx="7" fill="#292f34" stroke="#495158"/>
+    <text class="text label" x="20" y="440" fill="#63bfe8">状态</text>
+    <text class="text small" x="20" y="468">Companion       已连接</text>
+    <text class="text small" x="20" y="492">顾问模式         仅本地规则</text>
+    <text class="text small" x="20" y="516">隐私模式         仅本机处理</text>
+    <text class="text small" x="20" y="540">打开时自动暂停   已开启（单人）</text>
 
-    <rect x="0" y="526" width="315" height="112" rx="7" fill="#20262a" stroke="#3f484f"/>
-    <text class="text small muted" x="20" y="552">可复现 mock harness</text>
-    <text class="text small" x="20" y="578">/factorio-ai-assistant-mock alerts-many</text>
-    <text class="text small muted" x="20" y="600">chat-long · chat-append · chat-cleared</text>
-    <text class="text small muted" x="20" y="622">alerts-none / one / many · alert-close / reopen</text>
+    <rect x="0" y="570" width="315" height="112" rx="7" fill="#20262a" stroke="#3f484f"/>
+    <text class="text small muted" x="20" y="596">可复现 mock harness</text>
+    <text class="text small" x="20" y="622">/factorio-ai-assistant-mock alerts-many</text>
+    <text class="text small muted" x="20" y="644">chat-long · chat-append · chat-cleared</text>
+    <text class="text small muted" x="20" y="666">alerts-none / one / many · alert-close / reopen</text>
   </g>
 </svg>

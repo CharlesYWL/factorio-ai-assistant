@@ -9,6 +9,11 @@
 会重新出现，并且不会影响其它玩家。规则静音（`muted-rules`）是独立开关，静音的规则
 不会出现在常驻卡片中。
 
+常驻卡片和 Alerts 页都提供**清理全部**，一次忽略当前玩家所看到的本势力全部活动提醒。
+它与逐条忽略的语义完全一致：只写当前玩家的忽略记录，不删除 `advisor_alerts`，不改变
+安静模式或 `muted-rules`，同一生命周期内不再出现，告警关闭后重新触发仍会显示。没有
+可忽略的提醒时按钮为灰色。
+
 ## 默认规则
 
 所有速率均为 Factorio 统计提供的每分钟滚动速率。`1m` / `10m` 表示一分钟和十分钟
@@ -55,8 +60,15 @@
 
 ## 可配置项
 
-以下均为 Factorio 的 `runtime-global` Mod 设置，修改后下一次 `hello` 立即同步到
-Companion。
+除自动暂停外，以下均为 Factorio 的 `runtime-global` Mod 设置，修改后下一次 `hello`
+立即同步到 Companion。
+
+| 每玩家设置（`runtime-per-user`） | 默认值 | 作用 |
+| --- | ---: | --- |
+| `factorio-ai-assistant-auto-pause-on-open` | `true` | 单人游戏中打开顾问面板时自动暂停，关闭时只恢复由本 Mod 触发的那次暂停 |
+
+自动暂停不发送给 Companion，多人游戏中永远不生效；Status 页会显示当前状态
+（已开启 / 已关闭 / 多人游戏不可用）。
 
 | 设置名（省略 `factorio-ai-assistant-advisor-` 前缀） | 默认值 | 作用 |
 | --- | ---: | --- |

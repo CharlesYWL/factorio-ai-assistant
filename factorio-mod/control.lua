@@ -1,5 +1,6 @@
 local state_collector = require("state_collector")
 local localization = require("localization")
+local pause = require("pause")
 local ui = require("ui")
 local ui_state = require("ui_state")
 
@@ -266,6 +267,39 @@ local function refresh_all_status()
   for _, player in pairs(game.players) do
     ui.ensure_button(player)
     ui.refresh_status(player, state)
+  end
+end
+
+--- Every way of showing the advisor goes through these three helpers: the top
+--- button, the toggle shortcut, the tab shortcuts, the alert cards and the mock
+--- harness. Auto-pause is only correct while a single open and a single close
+--- path own it.
+local function open_advisor(player)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  local was_open = ui.is_open(player)
+
+  ui.open(player, state, player_state)
+
+  if not was_open and ui.is_open(player) then
+    pause.on_panel_opened(player, player_state)
+  end
+  return player_state
+end
+
+local function close_advisor(player)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+
+  ui.close(player)
+  pause.on_panel_closed(player_state)
+end
+
+local function toggle_advisor(player)
+  if ui.is_open(player) then
+    close_advisor(player)
+  else
+    open_advisor(player)
   end
 end
 
@@ -1122,10 +1156,38 @@ script.on_event(defines.events.on_player_joined_game, function(event)
   end
 end)
 
+script.on_event(defines.events.on_player_left_game, function(event)
+  local player = game.get_player(event.player_index)
+  if player then
+    close_advisor(player)
+  end
+end)
+
+script.on_event(defines.events.on_player_removed, function(event)
+  local state = get_state()
+  local player_state = (state.ui_players or {})[event.player_index]
+  if player_state ~= nil then
+    pause.on_panel_closed(player_state)
+    state.ui_players[event.player_index] = nil
+  end
+  if state.toast_expiry ~= nil then
+    state.toast_expiry[event.player_index] = nil
+  end
+end)
+
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
   if ADVISOR_SETTING_NAMES[event.setting] then
     send_hello()
     refresh_all_ui()
+  elseif event.setting == pause.SETTING_NAME then
+    local player = event.player_index ~= nil
+      and game.get_player(event.player_index)
+      or nil
+    if player ~= nil then
+      refresh_player_ui(player)
+    else
+      refresh_all_ui()
+    end
   end
 end)
 
@@ -1293,6 +1355,24 @@ local function set_alert_dismissed(player, alert_id, dismissed)
   ui.render(player, state, player_state)
 end
 
+--- Batch dismiss of everything the player can currently see. Only this player's
+--- dismissed_alerts change: the alerts themselves, quiet mode and muted rules
+--- stay exactly as they were.
+local function dismiss_all_alerts(player)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  local dismissed =
+    ui_state.dismiss_all_alerts(state, player_state, player.force.name)
+  if dismissed == 0 then
+    return
+  end
+
+  ui.hide_toast(player, state)
+  ui.refresh_alerts_hud(player, state, player_state)
+  ui.render(player, state, player_state)
+  player.print({ "factorio-ai-assistant.alerts-cleared", dismissed })
+end
+
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not element.valid then
@@ -1307,14 +1387,14 @@ script.on_event(defines.events.on_gui_click, function(event)
   local state = get_state()
   local player_state = ui_state.ensure_player(state, player.index)
   if element.name == ui.BUTTON_NAME then
-    ui.toggle(player, state, player_state)
+    toggle_advisor(player)
     return
   end
 
   local tags = element.tags or {}
   local action = tags.action
   if action == "close" then
-    ui.close(player)
+    close_advisor(player)
   elseif action == "resize" then
     ui.save_location(player, player_state)
     ui_state.cycle_size(player_state)
@@ -1327,12 +1407,9 @@ script.on_event(defines.events.on_gui_click, function(event)
       end
     end
   elseif action == "open-alerts" then
-    local toast = player.gui.screen["factorio-ai-assistant-toast"]
-    if toast ~= nil then
-      toast.destroy()
-    end
+    ui.hide_toast(player, state)
     ui_state.set_tab(player_state, "alerts")
-    ui.open(player, state, player_state)
+    open_advisor(player)
   elseif action == "quick-question" then
     local question = quick_question(player, tags.question_key)
     if question ~= nil then
@@ -1348,6 +1425,8 @@ script.on_event(defines.events.on_gui_click, function(event)
     set_alert_dismissed(player, tags.alert_id, true)
   elseif action == "restore-alert" then
     set_alert_dismissed(player, tags.alert_id, false)
+  elseif action == "clear-alerts" then
+    dismiss_all_alerts(player)
   elseif action == "mute-rule" then
     set_rule_muted(player, tags.rule_id, true)
   elseif action == "unmute-rule" then
@@ -1397,7 +1476,7 @@ script.on_event(defines.events.on_gui_closed, function(event)
   then
     local player = game.get_player(event.player_index)
     if player ~= nil then
-      ui.close(player)
+      close_advisor(player)
     end
   end
 end)
@@ -1405,12 +1484,7 @@ end)
 script.on_event("factorio-ai-assistant-toggle-input", function(event)
   local player = game.get_player(event.player_index)
   if player ~= nil then
-    local state = get_state()
-    ui.toggle(
-      player,
-      state,
-      ui_state.ensure_player(state, event.player_index)
-    )
+    toggle_advisor(player)
   end
 end)
 
@@ -1423,7 +1497,7 @@ for index, tab in ipairs({ "chat", "alerts", "status" }) do
       local player_state =
         ui_state.ensure_player(state, event.player_index)
       ui_state.set_tab(player_state, tab_name)
-      ui.open(player, state, player_state)
+      open_advisor(player)
       if tab_name == "chat" then
         ui.focus_chat_input(player)
       end
@@ -1542,9 +1616,12 @@ local function apply_ui_mock(player, mode)
       state.advisor_alerts = backup.advisor_alerts
       state.ui_mock_backup = nil
     end
+    -- Dropping the player state would also drop the auto-pause claim, so close
+    -- the panel through the shared path first.
+    close_advisor(player)
     local player_state = ui_state.reset_player(state, player.index)
     ui.refresh_alerts_hud(player, state, player_state)
-    ui.open(player, state, player_state)
+    open_advisor(player)
     send_hello()
     return
   end
@@ -1572,7 +1649,7 @@ local function apply_ui_mock(player, mode)
       reopen_mock_alerts(player, state)
     end
     ui.refresh_alerts_hud(player, state, player_state)
-    ui.open(player, state, player_state)
+    open_advisor(player)
     return
   end
 
@@ -1591,6 +1668,7 @@ local function apply_ui_mock(player, mode)
     }
   end
 
+  close_advisor(player)
   local player_state = ui_state.reset_player(state, player.index)
   state.companion_version = "mock-0.2.0"
   state.static_revision = 7
@@ -1682,7 +1760,7 @@ local function apply_ui_mock(player, mode)
   end
 
   ui.refresh_alerts_hud(player, state, player_state)
-  ui.open(player, state, player_state)
+  open_advisor(player)
 end
 
 commands.add_command(
@@ -1729,6 +1807,9 @@ end
 local function run_every_second_tasks()
   maybe_send_dynamic_snapshot()
   update_connection_status()
+  -- Reaching this handler means ticks are running again, so a pause the Mod
+  -- still claims to own was lifted by the player.
+  pause.reconcile(get_state())
 end
 
 if UDP_AVAILABLE then
