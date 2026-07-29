@@ -305,6 +305,12 @@ export interface DynamicSnapshotPacket {
   payload: {
     sample_interval_ticks: number;
     sample_sequence: number;
+    /**
+     * Stable per-save identifier, generated once when the Mod initializes and
+     * kept in the save. History is keyed on it so two saves never share a
+     * timeline, and so reloading an earlier point rewinds rather than appends.
+     */
+    save_id?: string;
     truncated: boolean;
     omitted_forces: number;
     omitted_series: number;
@@ -1158,6 +1164,9 @@ function decodeDynamicSnapshot(
         payload.sample_sequence,
         "payload.sample_sequence",
       ),
+      ...(payload.save_id === undefined
+        ? {}
+        : { save_id: readNonEmptyString(payload.save_id, "payload.save_id", 64) }),
       truncated: readBoolean(payload.truncated, "payload.truncated"),
       omitted_forces: readNonNegativeInteger(
         payload.omitted_forces,

@@ -6,6 +6,7 @@ import type {
 } from "@factorio-ai-assistant/protocol";
 
 import { IDENTIFIER_NAMES, type LocalizedNameLookup } from "./localization.js";
+import type { TrendSummary } from "./history.js";
 import { buildRecipeContext, type RecipeContext } from "./recipe-context.js";
 import type { StaticState } from "./state-store.js";
 
@@ -22,6 +23,8 @@ export interface ContextSources {
   forceId?: string;
   /** What the player last framed with the inspector tool. */
   areaSelection?: AreaSnapshotPacket;
+  /** How production has moved recently, when history is available. */
+  trend?: TrendSummary;
 }
 
 export type CompactModelContext = Record<string, unknown>;
@@ -64,6 +67,12 @@ export function buildCompactContext(
     fit(context, "recipes", recipeContext, budgetBytes, (value) =>
       shrinkRecipeContext(value as RecipeContext),
     );
+  }
+
+  // Trend answers "when did this start" and "did my change help", which a
+  // snapshot cannot. It is small and sits above the live flow list.
+  if (sources.trend !== undefined) {
+    fit(context, "recent_trend", sources.trend, budgetBytes);
   }
 
   const force = sources.dynamicForce;

@@ -40,6 +40,7 @@ import {
 import type { AIProvider } from "./providers.js";
 import { ProviderError } from "./providers.js";
 import { LocalizedNameStore } from "./localization.js";
+import { ProductionHistory } from "./history.js";
 import { CompanionStateStore, StateSyncError } from "./state-store.js";
 
 export { DEFAULT_COMPANION_PORT, LOOPBACK_HOST, parseCompanionPort };
@@ -60,6 +61,7 @@ export interface CompanionServerOptions {
   config?: CompanionConfig;
   provider?: AIProvider;
   localization?: LocalizedNameStore;
+  history?: ProductionHistory;
 }
 
 export interface CompanionServer {
@@ -87,12 +89,16 @@ export async function startCompanionServer(
   const advisor =
     options.advisor ?? new AdvisorEngine(undefined, config.language);
   advisor.useLocalizedNames(localization);
+  const history =
+    options.history ??
+    new ProductionHistory({ directory: config.historyDirectory });
   const assistant = new AssistantService({
     config,
     stateStore,
     advisor,
     logger,
     localization,
+    history,
     ...(options.provider === undefined ? {} : { provider: options.provider }),
   });
   const calculation = new CalculationService(stateStore);
@@ -114,6 +120,7 @@ export async function startCompanionServer(
       recentRequests,
       inFlightAssistantRequests,
       localization,
+      history,
     ).catch((error: unknown) => {
       logger.error("udp_handler_error", {
         remote_address: remote.address,
@@ -177,6 +184,7 @@ async function handleDatagram(
   recentRequests: RecentRequestCache,
   inFlightAssistantRequests: Map<string, AbortController>,
   localization: LocalizedNameStore,
+  history: ProductionHistory,
 ): Promise<void> {
   if (remote.address !== LOOPBACK_HOST) {
     logger.warn("udp_non_loopback_packet_rejected", {
@@ -335,6 +343,15 @@ async function handleDatagram(
       return;
     case "dynamic_snapshot":
       stateStore.acceptDynamicSnapshot(packet);
+      void history.record(packet).then((recorded: boolean) => {
+        if (recorded) {
+          logger.info("history_point_recorded", {
+            save_id: packet.payload.save_id ?? null,
+            tick: packet.tick,
+            points: history.points.length,
+          });
+        }
+      });
       for (const event of advisor.evaluate(packet, stateStore.staticState)) {
         sendPacket(
           socket,

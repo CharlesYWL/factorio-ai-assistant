@@ -28,6 +28,7 @@ const CONFIG_FIELDS = new Set([
   "model_retry_count",
   "context_budget_bytes",
   "max_output_tokens",
+  "history_directory",
 ]);
 
 export type AssistantLanguage = "zh-CN" | "en";
@@ -47,6 +48,8 @@ export interface CompanionConfig {
   modelRetryCount: 0 | 1;
   contextBudgetBytes: number;
   maxOutputTokens: number;
+  /** Where per-save production history is kept. */
+  historyDirectory: string;
 }
 
 export interface LoadCompanionConfigOptions {
@@ -184,6 +187,15 @@ export function resolveCompanionConfig(
     MIN_OUTPUT_TOKENS,
     MAX_OUTPUT_TOKENS,
   );
+  const historyDirectory = readStringSetting(
+    environmentOrFile(
+      env,
+      "FACTORIO_ASSISTANT_HISTORY_DIR",
+      file.history_directory,
+    ),
+    "history_directory",
+    "history",
+  );
 
   return {
     host: LOOPBACK_HOST,
@@ -199,6 +211,7 @@ export function resolveCompanionConfig(
     modelRetryCount,
     contextBudgetBytes,
     maxOutputTokens,
+    historyDirectory,
   };
 }
 

@@ -6,6 +6,7 @@ import type { AdvisorEngine } from "./advisor.js";
 import type { CompanionConfig } from "./config.js";
 import { isLoopbackUrl } from "./config.js";
 import { buildCompactContext, type ContextSources } from "./context.js";
+import { ProductionHistory, summarizeTrend } from "./history.js";
 import type { CompanionLogger } from "./logger.js";
 import {
   IDENTIFIER_NAMES,
@@ -58,6 +59,7 @@ export interface AssistantServiceOptions {
   logger: CompanionLogger;
   provider?: AIProvider;
   localization?: LocalizedNameLookup;
+  history?: ProductionHistory;
 }
 
 /**
@@ -78,6 +80,7 @@ export class AssistantService {
   readonly #provider: AIProvider | undefined;
   readonly #executor: ProviderExecutor | undefined;
   readonly #names: LocalizedNameLookup;
+  readonly #history: ProductionHistory | undefined;
 
   public constructor(options: AssistantServiceOptions) {
     this.#config = options.config;
@@ -85,6 +88,7 @@ export class AssistantService {
     this.#advisor = options.advisor;
     this.#logger = options.logger;
     this.#names = options.localization ?? IDENTIFIER_NAMES;
+    this.#history = options.history;
     this.#provider =
       options.provider ?? createConfiguredProvider(options.config);
     this.#executor =
@@ -191,6 +195,10 @@ export class AssistantService {
         : this.#advisor.activeAlerts.filter(
             (alert) => alert.force_id === forceId,
           );
+    const trend =
+      this.#history === undefined
+        ? undefined
+        : summarizeTrend(this.#history.points);
 
     return {
       ...(this.#stateStore.staticState === undefined
@@ -201,6 +209,7 @@ export class AssistantService {
       ...(this.#stateStore.areaSelection === undefined
         ? {}
         : { areaSelection: this.#stateStore.areaSelection }),
+      ...(trend === undefined ? {} : { trend }),
       alerts: [...alerts],
       ...(request.history === undefined || request.history.length === 0
         ? {}

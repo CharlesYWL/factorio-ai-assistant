@@ -39,6 +39,7 @@ npm start
 | `model_retry_count` | `FACTORIO_ASSISTANT_MODEL_RETRY_COUNT` | `1`；只能是 `0` 或 `1` |
 | `context_budget_bytes` | `FACTORIO_ASSISTANT_CONTEXT_BUDGET_BYTES` | `12000`，范围 `1024..65536` |
 | `max_output_tokens` | `FACTORIO_ASSISTANT_MAX_OUTPUT_TOKENS` | `800`，范围 `64..4096` |
+| `history_directory` | `FACTORIO_ASSISTANT_HISTORY_DIR` | `history`；每个存档一个 `.jsonl` 文件 |
 
 JSON 配置只接受表中的字段。`provider_url` 必须是绝对 `http(s)` URL，不能携带 URL
 用户名、密码、query 或 fragment。不要把含 `api_key` 的实际配置提交到仓库；`.env`
@@ -130,6 +131,22 @@ Assistant 在调用模型前先按问题执行受限的本地工具，模型不�
   真正出现且已翻译的 ID，最多 96 条，超出 budget 时逐条丢弃。
 - 仅当提问玩家自行开启「追问时发送最近对话」时，附带 `recent_turns`：该玩家本人最近
   最多 4 轮问答原文，最旧的先被 budget 挤掉。默认关闭。
+- `recent_trend`：最近约 10 分钟的产量变化摘要（下降 / 上升 / 停产 / 新增各最多 6 项，
+  以及电力满足率的前后对比）。它由本地历史计算得出，只发送结论而不是原始时间序列。
+
+## 生产历史
+
+Companion 每游戏分钟记录一个数据点，存在 `history_directory` 下、按存档 ID 命名的
+`.jsonl` 文件里，用于回答「产量什么时候开始掉的」「刚才的改动有效果吗」这类问题。
+
+- **降采样**：动态快照每 5 秒一次，但历史每分钟才存一点。原样存储约需 1.4 GB / 100 小时，
+  降采样后约 27 MB。趋势类问题不需要更细的分辨率。
+- **按存档隔离**：Mod 在初始化时生成一个随机 `save_id` 存进存档，历史以它为键。不同存档
+  的时间线不会混，Companion 也永远看不到存档文件名或路径。
+- **读档回滚**：`tick` 倒退说明玩家读了更早的存档，晚于该 tick 的历史会被丢弃——那描述的
+  是一个不再发生的未来。
+- **上限**：默认保留 6,000 个点（约 100 小时游戏时间），超出后丢弃最旧的。
+- 旧版 Mod 不发送 `save_id`，此时不记录历史：两个存档共用一条时间线比没有历史更糟。
 
 地图、坐标、玩家名称、存档、完整 prototype 表和 API Key 都不进入模型上下文。
 聊天内容默认同样不进入；只有玩家在 Mod 设置里主动开启「追问时发送最近对话」后，

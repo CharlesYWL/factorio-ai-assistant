@@ -21,6 +21,17 @@ local function ensure_collector_state(state)
   collector_state.sample_sequence = collector_state.sample_sequence or 0
   collector_state.last_sample_log_signature =
     collector_state.last_sample_log_signature or ""
+  -- Identifies this save for the whole of its life. Stored in `storage`, so it
+  -- travels with the save and lets the Companion keep one timeline per save
+  -- without ever seeing a file name or path.
+  if collector_state.save_id == nil then
+    collector_state.save_id = string.format(
+      "%x-%x-%x",
+      game.tick,
+      math.random(0, 0x7FFFFFFF),
+      math.random(0, 0x7FFFFFFF)
+    )
+  end
 
   return collector_state
 end
@@ -883,6 +894,7 @@ local function dynamic_packet(state, sample_interval_ticks, forces, sequence)
     payload = {
       sample_interval_ticks = sample_interval_ticks,
       sample_sequence = sequence,
+      save_id = collector_state.save_id,
       truncated = false,
       omitted_forces = 0,
       omitted_series = 0,
