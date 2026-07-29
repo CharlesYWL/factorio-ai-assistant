@@ -159,6 +159,57 @@ void test("encodes state-aware hello acknowledgements", () => {
   assert.deepEqual(decodePacket(encodePacket(withoutNames)), withoutNames);
 });
 
+void test("round-trips optional conversation turns and rejects bad ones", () => {
+  const withoutHistory = createAssistantRequestPacket({
+    messageId: "factorio-assistant-plain",
+    tick: 600,
+    forceId: "player",
+    question: "现在最大的瓶颈是什么？",
+  });
+  // Opting out must leave the field off the wire entirely, not send an empty
+  // array, so an unchanged player sends exactly what it sent before.
+  assert.equal("history" in withoutHistory.payload, false);
+  assert.deepEqual(decodePacket(encodePacket(withoutHistory)), withoutHistory);
+
+  const withHistory = createAssistantRequestPacket({
+    messageId: "factorio-assistant-history",
+    tick: 601,
+    forceId: "player",
+    question: "那铜板呢？",
+    history: [{ question: "每分钟60个绿板要多少铜线", answer: "需要 1 台。" }],
+  });
+  assert.deepEqual(decodePacket(encodePacket(withHistory)), withHistory);
+
+  // An empty history is equivalent to opting out.
+  const emptyHistory = createAssistantRequestPacket({
+    messageId: "factorio-assistant-empty",
+    tick: 602,
+    forceId: "player",
+    question: "那铜板呢？",
+    history: [],
+  });
+  assert.equal("history" in emptyHistory.payload, false);
+
+  for (const history of [
+    [{ question: "", answer: "a" }],
+    [{ question: "q", answer: "" }],
+    [{ question: "q" }],
+    [{ question: "q", answer: "a".repeat(2_001) }],
+    Array.from({ length: 5 }, () => ({ question: "q", answer: "a" })),
+    "not-an-array",
+  ]) {
+    const malformed = {
+      ...withHistory,
+      payload: { ...withHistory.payload, history },
+    };
+    assert.throws(
+      () => decodePacket(Buffer.from(JSON.stringify(malformed), "utf8")),
+      ProtocolError,
+      `history ${JSON.stringify(history)} must be rejected`,
+    );
+  }
+});
+
 void test("encodes assistant and calculation UI packets", () => {
     const assistantRequest = createAssistantRequestPacket({
       messageId: "factorio-assistant-1",

@@ -308,7 +308,66 @@ export interface DynamicSnapshotPacket {
     truncated: boolean;
     omitted_forces: number;
     omitted_series: number;
+    /**
+     * Position of this datagram within the sample, when a sample is split
+     * across several. Absent means a single-datagram sample, so an older Mod
+     * stays compatible. `sample_sequence` identifies the sample the chunks
+     * belong to; unlike static snapshots there is no retransmission, so an
+     * incomplete sample is discarded rather than reassembled partially.
+     */
+    chunk_index?: number;
+    chunk_count?: number;
     forces: DynamicForceSummary[];
+  };
+}
+
+/** One production building inside a player's selection, reported individually. */
+export interface AreaEntity {
+  /** Prototype name, e.g. `electric-furnace`. */
+  id: string;
+  /** Tile position, so the answer can point at a specific machine. */
+  x: number;
+  y: number;
+  /** Recipe currently set, when the entity crafts. */
+  recipe?: string;
+  /**
+   * Factorio's `entity.status` name, e.g. `no_ingredients`, `full_output`.
+   * This is what makes "why is this stalled" answerable at all.
+   */
+  status?: string;
+  /** Installed modules as `id x count`. */
+  modules?: Array<[string, number]>;
+  /** Notable inventory contents as `id x count`. */
+  contents?: Array<[string, number]>;
+  /** Fluid contents as `id x amount`, rounded. */
+  fluids?: Array<[string, number]>;
+}
+
+/** Entities reported as a count rather than individually, such as belts. */
+export interface AreaEntityGroup {
+  id: string;
+  count: number;
+}
+
+export interface AreaSnapshotPacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "area_snapshot";
+  tick: number;
+  payload: {
+    force_id: string;
+    /** Identifies one selection; every chunk of it repeats this value. */
+    selection_id: number;
+    /** Selected rectangle in tiles. */
+    area: { x1: number; y1: number; x2: number; y2: number };
+    entities: AreaEntity[];
+    groups: AreaEntityGroup[];
+    /** Entities dropped because the selection exceeded the packet budget. */
+    omitted_entities: number;
+    truncated: boolean;
+    chunk_index?: number;
+    chunk_count?: number;
   };
 }
 
@@ -359,6 +418,14 @@ export interface AdvisorUpdatePacket {
   };
 }
 
+/** One prior exchange, supplied by the Mod so pronouns can be resolved. */
+export interface AssistantHistoryTurn {
+  question: string;
+  answer: string;
+}
+
+export const MAX_ASSISTANT_HISTORY_TURNS = 4;
+
 export interface AssistantRequestPacket {
   protocol_version: typeof PROTOCOL_VERSION;
   schema_version: typeof STATE_SCHEMA_VERSION;
@@ -368,6 +435,13 @@ export interface AssistantRequestPacket {
   payload: {
     force_id: string;
     question: string;
+    /**
+     * Recent turns of this player's own conversation, oldest first. The Mod owns
+     * the transcript, so the Companion stays stateless and one player's history
+     * can never reach another player's request. Absent unless the player opted
+     * in, and never treated as evidence.
+     */
+    history?: AssistantHistoryTurn[];
   };
 }
 
@@ -486,6 +560,7 @@ export type ProtocolPacket =
   | StaticSnapshotPacket
   | StaticDeltaPacket
   | DynamicSnapshotPacket
+  | AreaSnapshotPacket
   | StateAckPacket
   | ResyncRequestPacket
   | AdvisorUpdatePacket
@@ -540,6 +615,7 @@ interface AssistantRequestPacketInput {
   tick: number;
   forceId: string;
   question: string;
+  history?: AssistantHistoryTurn[];
 }
 
 interface AssistantCancelPacketInput {
@@ -675,6 +751,9 @@ export function createAssistantRequestPacket(
     payload: {
       force_id: input.forceId,
       question: input.question,
+      ...(input.history === undefined || input.history.length === 0
+        ? {}
+        : { history: input.history }),
     },
   };
 }
@@ -842,6 +921,8 @@ export function decodePacket(input: string | Uint8Array): ProtocolPacket {
       return decodeStaticDelta(packet, payload, messageId);
     case "dynamic_snapshot":
       return decodeDynamicSnapshot(packet, payload, messageId);
+    case "area_snapshot":
+      return decodeAreaSnapshot(packet, payload, messageId);
     case "state_ack":
       return decodeStateAck(packet, payload, messageId);
     case "resync_request":
@@ -1086,6 +1167,7 @@ function decodeDynamicSnapshot(
         payload.omitted_series,
         "payload.omitted_series",
       ),
+      ...readDynamicChunking(payload),
       forces: readArray(
         payload.forces,
         "payload.forces",
@@ -1094,6 +1176,136 @@ function decodeDynamicSnapshot(
       ),
     },
   };
+}
+
+/**
+ * Chunk position for a split dynamic sample. Both fields must appear together
+ * and be consistent, so a malformed pair cannot be mistaken for a whole sample.
+ */
+function readDynamicChunking(
+  payload: Record<string, unknown>,
+): { chunk_index?: number; chunk_count?: number } {
+  const hasIndex = payload.chunk_index !== undefined;
+  const hasCount = payload.chunk_count !== undefined;
+  if (!hasIndex && !hasCount) {
+    return {};
+  }
+  if (hasIndex !== hasCount) {
+    throw invalidPacket(
+      "payload.chunk_index and payload.chunk_count must be sent together",
+    );
+  }
+
+  const chunkCount = readPositiveInteger(
+    payload.chunk_count,
+    "payload.chunk_count",
+  );
+  const chunkIndex = readNonNegativeInteger(
+    payload.chunk_index,
+    "payload.chunk_index",
+  );
+  if (chunkIndex >= chunkCount) {
+    throw invalidPacket(
+      `payload.chunk_index ${chunkIndex} is outside chunk_count ${chunkCount}`,
+    );
+  }
+  return { chunk_index: chunkIndex, chunk_count: chunkCount };
+}
+
+function decodeAreaSnapshot(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): AreaSnapshotPacket {
+  readStateSchemaVersion(packet);
+  const area = readRecord(payload.area, "payload.area");
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "area_snapshot",
+    tick: readNonNegativeInteger(packet.tick, "tick"),
+    payload: {
+      force_id: readNonEmptyString(payload.force_id, "payload.force_id"),
+      selection_id: readNonNegativeInteger(
+        payload.selection_id,
+        "payload.selection_id",
+      ),
+      area: {
+        x1: readFiniteNumber(area.x1, "payload.area.x1"),
+        y1: readFiniteNumber(area.y1, "payload.area.y1"),
+        x2: readFiniteNumber(area.x2, "payload.area.x2"),
+        y2: readFiniteNumber(area.y2, "payload.area.y2"),
+      },
+      entities: readArray(
+        payload.entities,
+        "payload.entities",
+        readAreaEntity,
+        512,
+      ),
+      groups: readArray(
+        payload.groups,
+        "payload.groups",
+        readAreaEntityGroup,
+        128,
+      ),
+      omitted_entities: readNonNegativeInteger(
+        payload.omitted_entities,
+        "payload.omitted_entities",
+      ),
+      truncated: readBoolean(payload.truncated, "payload.truncated"),
+      ...readDynamicChunking(payload),
+    },
+  };
+}
+
+function readAreaEntity(value: unknown, path: string): AreaEntity {
+  const entity = readRecord(value, path);
+  const optionalPairs = (
+    field: unknown,
+    fieldPath: string,
+  ): Array<[string, number]> | undefined =>
+    field === undefined
+      ? undefined
+      : readArray(field, fieldPath, readIdCountPair, 32);
+
+  const modules = optionalPairs(entity.modules, `${path}.modules`);
+  const contents = optionalPairs(entity.contents, `${path}.contents`);
+  const fluids = optionalPairs(entity.fluids, `${path}.fluids`);
+
+  return {
+    id: readNonEmptyString(entity.id, `${path}.id`),
+    x: readFiniteNumber(entity.x, `${path}.x`),
+    y: readFiniteNumber(entity.y, `${path}.y`),
+    ...(entity.recipe === undefined
+      ? {}
+      : { recipe: readNonEmptyString(entity.recipe, `${path}.recipe`) }),
+    ...(entity.status === undefined
+      ? {}
+      : { status: readNonEmptyString(entity.status, `${path}.status`) }),
+    ...(modules === undefined ? {} : { modules }),
+    ...(contents === undefined ? {} : { contents }),
+    ...(fluids === undefined ? {} : { fluids }),
+  };
+}
+
+function readAreaEntityGroup(value: unknown, path: string): AreaEntityGroup {
+  const group = readRecord(value, path);
+  return {
+    id: readNonEmptyString(group.id, `${path}.id`),
+    count: readNonNegativeInteger(group.count, `${path}.count`),
+  };
+}
+
+function readIdCountPair(value: unknown, path: string): [string, number] {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw invalidPacket(`${path} must be an [id, count] pair`);
+  }
+  return [
+    readNonEmptyString(value[0], `${path}[0]`),
+    readFiniteNumber(value[1], `${path}[1]`),
+  ];
 }
 
 function decodeStateAck(
@@ -1181,7 +1393,28 @@ function decodeAssistantRequest(
     payload: {
       force_id: readNonEmptyString(payload.force_id, "payload.force_id"),
       question: readNonEmptyString(payload.question, "payload.question", 2_000),
+      ...(payload.history === undefined
+        ? {}
+        : {
+            history: readArray(
+              payload.history,
+              "payload.history",
+              readAssistantHistoryTurn,
+              MAX_ASSISTANT_HISTORY_TURNS,
+            ),
+          }),
     },
+  };
+}
+
+function readAssistantHistoryTurn(
+  value: unknown,
+  path: string,
+): AssistantHistoryTurn {
+  const turn = readRecord(value, path);
+  return {
+    question: readNonEmptyString(turn.question, `${path}.question`, 2_000),
+    answer: readNonEmptyString(turn.answer, `${path}.answer`, 2_000),
   };
 }
 

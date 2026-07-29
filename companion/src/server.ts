@@ -279,6 +279,17 @@ async function handleDatagram(
         return;
       }
 
+      if (completed) {
+        const assembled = stateStore.staticState;
+        logger.info("static_snapshot_state", {
+          revision: assembled?.revision ?? null,
+          truncated: assembled?.truncated ?? null,
+          omitted_records: assembled?.omittedRecords ?? null,
+          recipes: assembled?.recipes.length ?? null,
+          machines: assembled?.machines.length ?? null,
+        });
+      }
+
       acknowledgeStatePacket(
         socket,
         remote,
@@ -346,6 +357,18 @@ async function handleDatagram(
           omitted_series: packet.payload.omitted_series,
         });
       }
+      recentRequests.remember(remote, packet.message_id, digest, null);
+      return;
+    case "area_snapshot":
+      stateStore.acceptAreaSnapshot(packet);
+      logger.info("area_snapshot_accepted", {
+        selection_id: packet.payload.selection_id,
+        entities: packet.payload.entities.length,
+        groups: packet.payload.groups.length,
+        omitted_entities: packet.payload.omitted_entities,
+        chunk_index: packet.payload.chunk_index ?? null,
+        chunk_count: packet.payload.chunk_count ?? null,
+      });
       recentRequests.remember(remote, packet.message_id, digest, null);
       return;
     case "assistant_request":
@@ -422,6 +445,9 @@ async function handleAssistantRequest(
     const answer = await assistant.answer({
       question: packet.payload.question,
       forceId: packet.payload.force_id,
+      ...(packet.payload.history === undefined
+        ? {}
+        : { history: packet.payload.history }),
       signal: controller.signal,
     });
     sendResponsePacket(

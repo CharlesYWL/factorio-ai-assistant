@@ -155,6 +155,25 @@ Companion 返回 datagram 的源端口，并声明当前已完整组装的静态
 }
 ```
 
+玩家在 Mod 设置里开启「追问时发送最近对话」后，`payload` 会额外携带 `history`：
+
+```json
+{
+  "payload": {
+    "force_id": "player",
+    "question": "那铜板呢？",
+    "history": [
+      { "question": "每分钟 60 个绿板要多少铜线", "answer": "需要 1 台组装机。" }
+    ]
+  }
+}
+```
+
+`history` 是可选字段，最多 4 项，按时间正序（最旧在前），每项的 `question` 与
+`answer` 各自最多 2000 字符。它只包含**提问玩家本人**的对话：Mod 从该玩家自己的
+`chat_history` 读取，Companion 不保存任何会话状态，因此同势力其他玩家的内容不会
+混入。默认关闭时该字段完全不出现在包里。
+
 `question` 最多 2000 字符 / 4096 UTF-8 bytes。`assistant_response.payload.status` 为
 `ok`、`cancelled` 或 `error`；成功时返回 `mode`（`model` / `local`）、`text` 和可选
 provider / model / fallback 原因。取消包只携带目标 `request_id`：
@@ -517,6 +536,8 @@ prototype ID。
 - 同一 schema 下的未知字段被忽略，从而允许发送方增加字段；未知
   `protocol_version`、`schema_version` 或 `type` 明确拒绝，不按 v1 猜测。
 - 只发送 prototype / force / Mod ID、版本、滚动聚合数值和协议元数据。
-- 不发送地图 tile / entity 布局、坐标、玩家名称、玩家聊天、存档内容或密钥。
+- 不发送地图 tile / entity 布局、坐标、玩家名称、存档内容或密钥。
+- 玩家聊天默认不发送；只有提问玩家自行开启「追问时发送最近对话」后，`assistant_request`
+  才携带他本人最近最多 4 轮问答，且只发给已配置的模型端点。
 - `helpers.send_udp` 只能发送到 localhost；Companion 固定绑定 `127.0.0.1`，没有
   可配置 host，也不应通过代理转发到局域网或公网。

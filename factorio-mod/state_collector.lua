@@ -865,9 +865,14 @@ local function research_summary(force)
   }
 end
 
-local function dynamic_packet(state, sample_interval_ticks, forces)
+local function dynamic_packet(state, sample_interval_ticks, forces, sequence)
   local collector_state = ensure_collector_state(state)
-  collector_state.sample_sequence = collector_state.sample_sequence + 1
+  -- Every chunk of one sample must share its sequence number, or the Companion
+  -- cannot tell which datagrams belong together.
+  if sequence == nil then
+    collector_state.sample_sequence = collector_state.sample_sequence + 1
+    sequence = collector_state.sample_sequence
+  end
 
   return {
     protocol_version = 1,
@@ -877,7 +882,7 @@ local function dynamic_packet(state, sample_interval_ticks, forces)
     tick = game.tick,
     payload = {
       sample_interval_ticks = sample_interval_ticks,
-      sample_sequence = collector_state.sample_sequence,
+      sample_sequence = sequence,
       truncated = false,
       omitted_forces = 0,
       omitted_series = 0,
@@ -895,6 +900,7 @@ function collector.build_dynamic_snapshot(state, sample_interval_ticks)
   end
 
   local force_summaries = {}
+  local summary_by_force = {}
   local candidates = {}
   local omitted_series = 0
 
@@ -913,6 +919,7 @@ function collector.build_dynamic_snapshot(state, sample_interval_ticks)
 
     omitted_series = omitted_series + omitted_items + omitted_fluids
     table.insert(force_summaries, summary)
+    summary_by_force[force.name] = summary
 
     for _, candidate in ipairs(item_metrics) do
       candidate.force_id = force.name
@@ -941,47 +948,398 @@ function collector.build_dynamic_snapshot(state, sample_interval_ticks)
     return left.metric.id < right.metric.id
   end)
 
-  local packet = dynamic_packet(state, sample_interval_ticks, force_summaries)
-  local accepted = {}
+  -- Flows that do not fit one datagram continue in the next chunk rather than
+  -- being dropped, so a large factory still reports its full production.
+  local chunks = {}
+  local sample_sequence = ensure_collector_state(state).sample_sequence + 1
+  ensure_collector_state(state).sample_sequence = sample_sequence
+  local chunk_packet = dynamic_packet(
+    state,
+    sample_interval_ticks,
+    force_summaries,
+    sample_sequence
+  )
+  local pending = 0
+
+  local function reset_flow_lists()
+    for _, summary in ipairs(force_summaries) do
+      summary.items = {}
+      summary.fluids = {}
+    end
+    for _, candidate in ipairs(candidates) do
+      local summary = summary_by_force[candidate.force_id]
+      candidate.target = candidate.kind == "item" and summary.items
+        or summary.fluids
+    end
+  end
+
+  local function take_snapshot_of_lists()
+    local copy = {}
+    for _, summary in ipairs(force_summaries) do
+      table.insert(copy, {
+        id = summary.id,
+        research = summary.research,
+        power = summary.power,
+        items = summary.items,
+        fluids = summary.fluids,
+      })
+    end
+    return copy
+  end
 
   for _, candidate in ipairs(candidates) do
     table.insert(candidate.target, candidate.metric)
 
-    if #helpers.table_to_json(packet) > PACKET_TARGET_BYTES then
+    if #helpers.table_to_json(chunk_packet) > PACKET_TARGET_BYTES then
       table.remove(candidate.target)
-      omitted_series = omitted_series + 1
+
+      if pending == 0 then
+        -- A single flow that cannot fit even alone is unrepresentable.
+        omitted_series = omitted_series + 1
+      else
+        table.insert(chunks, take_snapshot_of_lists())
+        reset_flow_lists()
+        pending = 0
+        local retry_target = candidate.kind == "item"
+            and summary_by_force[candidate.force_id].items
+          or summary_by_force[candidate.force_id].fluids
+        table.insert(retry_target, candidate.metric)
+        if #helpers.table_to_json(chunk_packet) > PACKET_TARGET_BYTES then
+          table.remove(retry_target)
+          omitted_series = omitted_series + 1
+        else
+          pending = pending + 1
+        end
+      end
     else
-      table.insert(accepted, candidate)
+      pending = pending + 1
     end
   end
 
-  packet.payload.omitted_forces = omitted_forces
-  packet.payload.omitted_series = omitted_series
-  packet.payload.truncated = omitted_forces > 0 or omitted_series > 0
+  table.insert(chunks, take_snapshot_of_lists())
 
-  local encoded = helpers.table_to_json(packet)
+  local packets = {}
+  local chunk_count = #chunks
 
-  while #encoded > MAX_PACKET_BYTES and #accepted > 0 do
-    local candidate = table.remove(accepted)
-    table.remove(candidate.target)
-    omitted_series = omitted_series + 1
+  for index, chunk_forces in ipairs(chunks) do
+    local packet = dynamic_packet(
+      state,
+      sample_interval_ticks,
+      chunk_forces,
+      sample_sequence
+    )
+    packet.payload.omitted_forces = omitted_forces
     packet.payload.omitted_series = omitted_series
-    packet.payload.truncated = true
-    encoded = helpers.table_to_json(packet)
+    packet.payload.truncated = omitted_forces > 0 or omitted_series > 0
+    if chunk_count > 1 then
+      packet.payload.chunk_index = index - 1
+      packet.payload.chunk_count = chunk_count
+    end
+
+    local encoded = helpers.table_to_json(packet)
+    if #encoded > MAX_PACKET_BYTES then
+      log(
+        "[factorio-ai-assistant] Dynamic chunk exceeds hard limit; "
+          .. "sample was not sent"
+      )
+      return nil
+    end
+
+    table.insert(packets, { encoded = encoded, packet = packet })
   end
 
-  if #encoded > MAX_PACKET_BYTES then
-    log(
-      "[factorio-ai-assistant] Dynamic packet base exceeds hard limit; "
-        .. "sample was not sent"
-    )
+  local first = packets[1]
+  if first == nil then
     return nil
   end
 
   return {
-    encoded = encoded,
-    packet = packet,
+    encoded = first.encoded,
+    packet = first.packet,
+    packets = packets,
   }
+end
+
+-- Entity types reported one by one: these are what a "why is this stalled"
+-- question is actually about. Everything else is counted by type, because a
+-- selection easily contains hundreds of belts whose individual positions add
+-- nothing but bytes.
+local DETAILED_ENTITY_TYPES = {
+  ["assembling-machine"] = true,
+  ["furnace"] = true,
+  ["rocket-silo"] = true,
+  ["mining-drill"] = true,
+  ["lab"] = true,
+  ["boiler"] = true,
+  ["generator"] = true,
+  ["reactor"] = true,
+  ["offshore-pump"] = true,
+  ["pump"] = true,
+  ["container"] = true,
+  ["logistic-container"] = true,
+  ["storage-tank"] = true,
+  ["beacon"] = true,
+}
+
+local MAX_DETAILED_ENTITIES = 240
+local MAX_ENTITY_GROUPS = 64
+local MAX_CONTENT_ENTRIES = 8
+
+--- Names of `defines.entity_status` values, resolved once per call.
+local function status_name(entity)
+  local status = entity.status
+  if status == nil then
+    return nil
+  end
+  for name, value in pairs(defines.entity_status) do
+    if value == status then
+      return name
+    end
+  end
+  return nil
+end
+
+--- Reads an inventory into sorted `{name, count}` pairs, capped for size.
+local function contents_pairs(inventories)
+  local counts = {}
+  local order = {}
+
+  for _, inventory in ipairs(inventories) do
+    if inventory ~= nil and inventory.valid then
+      for _, stack in pairs(inventory.get_contents()) do
+        local name = stack.name or stack[1]
+        local count = stack.count or stack[2]
+        if name ~= nil and count ~= nil then
+          if counts[name] == nil then
+            table.insert(order, name)
+          end
+          counts[name] = (counts[name] or 0) + count
+        end
+      end
+    end
+  end
+
+  if #order == 0 then
+    return nil
+  end
+
+  table.sort(order)
+  local result = {}
+  for _, name in ipairs(order) do
+    if #result >= MAX_CONTENT_ENTRIES then
+      break
+    end
+    table.insert(result, { name, counts[name] })
+  end
+  return result
+end
+
+local function module_pairs(entity)
+  return contents_pairs({ entity.get_module_inventory() })
+end
+
+local function inventory_pairs(entity)
+  local inventories = {}
+  for _, index in ipairs({
+    defines.inventory.chest,
+    defines.inventory.furnace_source,
+    defines.inventory.furnace_result,
+    defines.inventory.assembling_machine_input,
+    defines.inventory.assembling_machine_output,
+  }) do
+    if index ~= nil then
+      table.insert(inventories, entity.get_inventory(index))
+    end
+  end
+  return contents_pairs(inventories)
+end
+
+local function fluid_pairs(entity)
+  local count = entity.fluids_count
+  if count == nil or count == 0 then
+    return nil
+  end
+
+  local result = {}
+  for index = 1, math.min(count, MAX_CONTENT_ENTRIES) do
+    local fluid = entity.get_fluid(index)
+    if fluid ~= nil and fluid.amount ~= nil and fluid.amount > 0 then
+      table.insert(result, { fluid.name, rounded(fluid.amount, 1) })
+    end
+  end
+  return #result > 0 and result or nil
+end
+
+local function describe_area_entity(entity)
+  local descriptor = {
+    id = entity.name,
+    x = rounded(entity.position.x, 1),
+    y = rounded(entity.position.y, 1),
+  }
+
+  local recipe_ok, recipe = pcall(function()
+    return entity.get_recipe()
+  end)
+  if recipe_ok and recipe ~= nil then
+    descriptor.recipe = recipe.name
+  end
+
+  local status = status_name(entity)
+  if status ~= nil then
+    descriptor.status = status
+  end
+
+  local modules_ok, modules = pcall(module_pairs, entity)
+  if modules_ok and modules ~= nil then
+    descriptor.modules = modules
+  end
+
+  local contents_ok, contents = pcall(inventory_pairs, entity)
+  if contents_ok and contents ~= nil then
+    descriptor.contents = contents
+  end
+
+  local fluids_ok, fluids = pcall(fluid_pairs, entity)
+  if fluids_ok and fluids ~= nil then
+    descriptor.fluids = fluids
+  end
+
+  return descriptor
+end
+
+local function area_packet(state, force_id, selection_id, area, entities, groups)
+  return {
+    protocol_version = 1,
+    schema_version = STATE_SCHEMA_VERSION,
+    message_id = next_message_id(state, "area"),
+    type = "area_snapshot",
+    tick = game.tick,
+    payload = {
+      force_id = force_id,
+      selection_id = selection_id,
+      area = area,
+      entities = entities,
+      groups = groups,
+      omitted_entities = 0,
+      truncated = false,
+    },
+  }
+end
+
+--- Collects what the player selected. This is a bounded, player-initiated scan
+--- over `event.entities`, not a map-wide sweep, so it never runs on a timer.
+function collector.build_area_snapshot(state, force_id, selection_id, area, entities)
+  local collector_state = ensure_collector_state(state)
+  local detailed = {}
+  local group_counts = {}
+  local group_order = {}
+  local omitted = 0
+
+  for _, entity in pairs(entities) do
+    if entity.valid then
+      if DETAILED_ENTITY_TYPES[entity.type] then
+        if #detailed < MAX_DETAILED_ENTITIES then
+          table.insert(detailed, describe_area_entity(entity))
+        else
+          omitted = omitted + 1
+        end
+      else
+        if group_counts[entity.name] == nil then
+          if #group_order < MAX_ENTITY_GROUPS then
+            table.insert(group_order, entity.name)
+            group_counts[entity.name] = 0
+          else
+            omitted = omitted + 1
+          end
+        end
+        if group_counts[entity.name] ~= nil then
+          group_counts[entity.name] = group_counts[entity.name] + 1
+        end
+      end
+    end
+  end
+
+  table.sort(detailed, function(left, right)
+    if left.id ~= right.id then
+      return left.id < right.id
+    end
+    if left.x ~= right.x then
+      return left.x < right.x
+    end
+    return left.y < right.y
+  end)
+  table.sort(group_order)
+
+  local groups = {}
+  for _, name in ipairs(group_order) do
+    table.insert(groups, { id = name, count = group_counts[name] })
+  end
+
+  -- Split across datagrams the same way dynamic samples do: detailed entities
+  -- move to the next chunk instead of being dropped.
+  local chunks = {}
+  local current = {}
+  local probe = area_packet(
+    state,
+    force_id,
+    selection_id,
+    area,
+    current,
+    groups
+  )
+
+  for _, descriptor in ipairs(detailed) do
+    table.insert(current, descriptor)
+    if #helpers.table_to_json(probe) > PACKET_TARGET_BYTES then
+      table.remove(current)
+      if #current == 0 then
+        omitted = omitted + 1
+      else
+        table.insert(chunks, current)
+        current = { descriptor }
+        probe.payload.entities = current
+        if #helpers.table_to_json(probe) > PACKET_TARGET_BYTES then
+          current = {}
+          probe.payload.entities = current
+          omitted = omitted + 1
+        end
+      end
+    end
+  end
+  table.insert(chunks, current)
+
+  local packets = {}
+  local chunk_count = #chunks
+
+  for index, chunk_entities in ipairs(chunks) do
+    local packet = area_packet(
+      state,
+      force_id,
+      selection_id,
+      area,
+      chunk_entities,
+      index == 1 and groups or {}
+    )
+    packet.payload.omitted_entities = omitted
+    packet.payload.truncated = omitted > 0
+    if chunk_count > 1 then
+      packet.payload.chunk_index = index - 1
+      packet.payload.chunk_count = chunk_count
+    end
+
+    local encoded = helpers.table_to_json(packet)
+    if #encoded > MAX_PACKET_BYTES then
+      log(
+        "[factorio-ai-assistant] Area chunk exceeds hard limit; "
+          .. "selection was not sent"
+      )
+      return nil
+    end
+    table.insert(packets, { encoded = encoded, packet = packet })
+  end
+
+  collector_state.last_selection_id = selection_id
+  return { packets = packets, detailed_count = #detailed, omitted = omitted }
 end
 
 function collector.should_log_sample(state, packet)

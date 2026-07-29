@@ -291,6 +291,10 @@ local function close_advisor(player)
   local state = get_state()
   local player_state = ui_state.ensure_player(state, player.index)
 
+  -- Save on the way out too: dragging fires on_gui_location_changed, but a
+  -- resize can shift the frame without that event, and the player expects the
+  -- panel to reopen where they last left it.
+  ui.save_location(player, player_state)
   ui.close(player)
   pause.on_panel_closed(player_state)
 end
@@ -362,6 +366,59 @@ local function utf8_length(value)
   return count
 end
 
+local CHAT_HISTORY_SETTING = "factorio-ai-assistant-send-chat-history"
+local MAX_HISTORY_TURNS = 4
+local MAX_HISTORY_TEXT = 2000
+
+-- Opt-in only. The Mod owns the transcript, so history is read from this
+-- player's own state and can never carry another player's questions.
+local function collect_chat_history(player, player_state)
+  local player_settings = settings.get_player_settings(player)
+  local setting = player_settings ~= nil
+    and player_settings[CHAT_HISTORY_SETTING]
+    or nil
+  if setting == nil or setting.value ~= true then
+    return nil
+  end
+
+  local entries = player_state.chat_history or {}
+  local turns = {}
+
+  -- Walk backwards pairing each assistant answer with the question above it,
+  -- then reverse so the model sees the exchanges oldest first.
+  local index = #entries
+  while index > 1 and #turns < MAX_HISTORY_TURNS do
+    local answer = entries[index]
+    local question = entries[index - 1]
+    if answer.role == "assistant" and question.role == "user" then
+      local question_text = question.text
+      local answer_text = answer.text
+      if type(question_text) == "string"
+        and type(answer_text) == "string"
+        and question_text ~= ""
+        and answer_text ~= ""
+        and utf8_length(question_text) <= MAX_HISTORY_TEXT
+        and utf8_length(answer_text) <= MAX_HISTORY_TEXT
+      then
+        table.insert(turns, { question = question_text, answer = answer_text })
+      end
+      index = index - 2
+    else
+      index = index - 1
+    end
+  end
+
+  if #turns == 0 then
+    return nil
+  end
+
+  local ordered = {}
+  for position = #turns, 1, -1 do
+    table.insert(ordered, turns[position])
+  end
+  return ordered
+end
+
 local function send_chat_request(player, question)
   local state = get_state()
   local player_state = ui_state.ensure_player(state, player.index)
@@ -407,6 +464,10 @@ local function send_chat_request(player, question)
       question = question,
     },
   }
+  local history = collect_chat_history(player, player_state)
+  if history ~= nil then
+    packet.payload.history = history
+  end
   if not send_ui_packet(packet, "assistant request") then
     ui_state.append_system(player_state, "chat-offline", game.tick)
     ui.render(player, state, player_state)
@@ -586,11 +647,21 @@ local function send_dynamic_snapshot()
     return
   end
 
-  for _, force_summary in ipairs(result.packet.payload.forces) do
-    localization.register_force_summary(state, force_summary)
+  -- A sample may span several datagrams; every chunk must go out or the
+  -- Companion discards the incomplete sample.
+  local chunks = result.packets or { result }
+
+  for _, chunk in ipairs(chunks) do
+    for _, force_summary in ipairs(chunk.packet.payload.forces) do
+      localization.register_force_summary(state, force_summary)
+    end
   end
 
-  send_udp_payload(result.encoded, "dynamic snapshot send")
+  local total_bytes = 0
+  for _, chunk in ipairs(chunks) do
+    send_udp_payload(chunk.encoded, "dynamic snapshot send")
+    total_bytes = total_bytes + #chunk.encoded
+  end
 
   if state_collector.should_log_sample(state, result.packet) then
     log(
@@ -599,13 +670,59 @@ local function send_dynamic_snapshot()
         .. " ticks, duration="
         .. tostring(profiler)
         .. ", bytes="
-        .. #result.encoded
+        .. total_bytes
+        .. ", chunks="
+        .. #chunks
         .. ", omitted_forces="
         .. result.packet.payload.omitted_forces
         .. ", omitted_series="
         .. result.packet.payload.omitted_series
     )
   end
+end
+
+local function send_area_snapshot(player, area, entities)
+  local state = get_state()
+
+  if not UDP_AVAILABLE or not state.connected then
+    return false
+  end
+
+  state.selection_sequence = (state.selection_sequence or 0) + 1
+  local selection_id = state.selection_sequence
+  local profiler = game.create_profiler()
+  local result = state_collector.build_area_snapshot(
+    state,
+    player.force.name,
+    selection_id,
+    area,
+    entities
+  )
+  profiler.stop()
+
+  if result == nil then
+    return false
+  end
+
+  -- Every chunk must arrive or the Companion discards the selection, the same
+  -- contract dynamic samples use.
+  for _, chunk in ipairs(result.packets) do
+    if not send_udp_payload(chunk.encoded, "area snapshot send") then
+      return false
+    end
+  end
+
+  log(
+    "[factorio-ai-assistant] Area selection: entities="
+      .. result.detailed_count
+      .. ", omitted="
+      .. result.omitted
+      .. ", chunks="
+      .. #result.packets
+      .. ", duration="
+      .. tostring(profiler)
+  )
+  return true
 end
 
 local function maybe_send_dynamic_snapshot()
@@ -910,11 +1027,20 @@ local function handle_assistant_response(packet, event)
   if player_index ~= nil then
     local player = game.get_player(player_index)
     if player ~= nil then
-      ui.render(
-        player,
-        state,
-        ui_state.ensure_player(state, player_index)
-      )
+      local player_state = ui_state.ensure_player(state, player_index)
+      -- A question asked with /ai is answered in chat, because the player who
+      -- used the command may not have the panel open at all.
+      if state.chat_command_requests ~= nil
+        and state.chat_command_requests[payload.reply_to]
+      then
+        state.chat_command_requests[payload.reply_to] = nil
+        if payload.status == "ok" and payload.text ~= nil then
+          player.print(payload.text)
+        elseif payload.status == "error" then
+          player.print({ "factorio-ai-assistant.ai-command-failed" })
+        end
+      end
+      ui.render(player, state, player_state)
     end
   end
 end
@@ -1399,6 +1525,11 @@ script.on_event(defines.events.on_gui_click, function(event)
     ui.save_location(player, player_state)
     ui_state.cycle_size(player_state)
     ui.render(player, state, player_state)
+  elseif action == "toggle-mini" then
+    ui.save_location(player, player_state)
+    ui_state.toggle_mini(player_state)
+    ui.render(player, state, player_state)
+    ui.focus_chat_input(player)
   elseif action == "tab" then
     if ui_state.set_tab(player_state, tags.tab) then
       ui.render(player, state, player_state)
@@ -1487,6 +1618,46 @@ script.on_event("factorio-ai-assistant-toggle-input", function(event)
     toggle_advisor(player)
   end
 end)
+
+local function handle_selected_area(event)
+  if event.item ~= "factorio-ai-assistant-inspector" then
+    return
+  end
+
+  local player = game.get_player(event.player_index)
+  if player == nil then
+    return
+  end
+
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  local area = {
+    x1 = event.area.left_top.x,
+    y1 = event.area.left_top.y,
+    x2 = event.area.right_bottom.x,
+    y2 = event.area.right_bottom.y,
+  }
+
+  local sent = send_area_snapshot(player, area, event.entities or {})
+  ui_state.set_selection(
+    player_state,
+    sent and {
+      count = #(event.entities or {}),
+      tick = event.tick,
+    } or nil
+  )
+  if not sent then
+    ui_state.append_system(player_state, "chat-offline", game.tick)
+  end
+
+  ui_state.set_tab(player_state, "chat")
+  -- Opening through open_advisor keeps the single open path that the auto-pause
+  -- claim depends on.
+  open_advisor(player)
+end
+
+script.on_event(defines.events.on_player_selected_area, handle_selected_area)
+script.on_event(defines.events.on_player_alt_selected_area, handle_selected_area)
 
 for index, tab in ipairs({ "chat", "alerts", "status" }) do
   local tab_name = tab
@@ -1774,6 +1945,37 @@ commands.add_command(
       return
     end
     apply_ui_mock(player, trim(command.parameter or "ready"))
+  end
+)
+
+commands.add_command(
+  "ai",
+  { "factorio-ai-assistant.ai-command-help" },
+  function(command)
+    local player = command.player_index
+      and game.get_player(command.player_index)
+    if player == nil then
+      return
+    end
+
+    local question = trim(command.parameter or "")
+    if question == "" then
+      player.print({ "factorio-ai-assistant.ai-command-usage" })
+      return
+    end
+
+    local state = get_state()
+    local player_state = ui_state.ensure_player(state, player.index)
+    send_chat_request(player, question)
+
+    local pending = player_state.chat_pending
+    if pending == nil then
+      -- send_chat_request already appended a system entry explaining why.
+      return
+    end
+    state.chat_command_requests = state.chat_command_requests or {}
+    state.chat_command_requests[pending.message_id] = true
+    player.print({ "factorio-ai-assistant.ai-command-sent" })
   end
 )
 

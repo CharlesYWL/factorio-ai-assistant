@@ -7,6 +7,9 @@ local VALID_TABS = {
   status = true,
 }
 local SIZES = { "compact", "normal", "large" }
+--- Mini is a separate mode rather than a step in the resize cycle: it changes
+--- what is shown, not just how large it is, and has its own toggle.
+local MINI_SIZE = "mini"
 local valid_size
 local append_chat
 local touch_chat
@@ -69,6 +72,13 @@ function ui_state.set_tab(player_state, tab)
   return false
 end
 
+--- Remembers what the player last selected with the inspector, so the panel can
+--- show it and the Companion answer can be read in that context.
+function ui_state.set_selection(player_state, selection)
+  player_state.selection = selection
+  touch_chat(player_state)
+end
+
 function ui_state.cycle_size(player_state)
   local index = 1
   for candidate_index, size in ipairs(SIZES) do
@@ -78,6 +88,35 @@ function ui_state.cycle_size(player_state)
     end
   end
   player_state.size = SIZES[index % #SIZES + 1]
+  return player_state.size
+end
+
+--- The most recent assistant answer, which is all mini mode shows.
+function ui_state.last_answer(player_state)
+  local history = player_state.chat_history or {}
+  for index = #history, 1, -1 do
+    local entry = history[index]
+    if entry.role == "assistant" then
+      return entry
+    end
+  end
+  return nil
+end
+
+function ui_state.is_mini(player_state)
+  return player_state.size == MINI_SIZE
+end
+
+--- Switches between mini and the size the player was using before, so leaving
+--- mini restores their layout rather than resetting it.
+function ui_state.toggle_mini(player_state)
+  if player_state.size == MINI_SIZE then
+    player_state.size = valid_size(player_state.size_before_mini)
+    player_state.size_before_mini = nil
+  else
+    player_state.size_before_mini = player_state.size
+    player_state.size = MINI_SIZE
+  end
   return player_state.size
 end
 
@@ -349,6 +388,9 @@ touch_chat = function(player_state)
 end
 
 valid_size = function(size)
+  if size == MINI_SIZE then
+    return size
+  end
   for _, candidate in ipairs(SIZES) do
     if candidate == size then
       return size

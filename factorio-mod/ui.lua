@@ -32,6 +32,7 @@ local QUICK_PROMPT_COUNT = 4
 local QUICK_PROMPT_COLUMNS = 2
 
 local SIZE_DIMENSIONS = {
+  mini = { width = 460, height = 260 },
   compact = { width = 540, height = 620 },
   normal = { width = 700, height = 720 },
   large = { width = 860, height = 820 },
@@ -49,6 +50,7 @@ local SEVERITY_COLORS = {
 }
 local apply_frame_size
 local ensure_shell
+local render_mini
 local add_notice
 local add_tabs
 local update_tabs
@@ -131,6 +133,13 @@ function ui.open(player, state, player_state)
   })
   titlebar.add({
     type = "sprite-button",
+    sprite = "utility/search",
+    style = "frame_action_button",
+    tooltip = { "factorio-ai-assistant.mini-tooltip" },
+    tags = { action = "toggle-mini" },
+  })
+  titlebar.add({
+    type = "sprite-button",
     sprite = "utility/expand",
     style = "frame_action_button",
     tooltip = { "factorio-ai-assistant.resize-tooltip" },
@@ -192,6 +201,14 @@ function ui.render(player, state, player_state)
   refresh_header_status(frame, state)
 
   local content = frame[CONTENT_NAME]
+
+  -- Mini mode replaces the tabbed shell entirely: only the latest answer and an
+  -- input box, for asking without covering the factory.
+  if ui_state.is_mini(player_state) then
+    render_mini(content, state, player_state)
+    return
+  end
+
   ensure_shell(content, player_state)
   local body = content[BODY_NAME]
 
@@ -407,6 +424,80 @@ function ui.save_location(player, player_state)
       y = math.max(0, math.floor(frame.location.y)),
     }
   end
+end
+
+local MINI_BODY_NAME = "factorio-ai-assistant-mini-body"
+local MINI_ANSWER_NAME = "factorio-ai-assistant-mini-answer"
+
+--- Mini mode: the last answer in a scrollable box plus an input row. Answers
+--- are often long, so the box scrolls rather than clipping the text.
+render_mini = function(content, state, player_state)
+  local signature = tostring(player_state.chat_revision)
+    .. ":"
+    .. tostring(state.connected)
+  local tags = content.tags or {}
+
+  if tags.view ~= "mini" then
+    content.clear()
+    local scroll = content.add({
+      type = "scroll-pane",
+      name = MINI_BODY_NAME,
+      direction = "vertical",
+      vertical_scroll_policy = "auto",
+    })
+    scroll.style.horizontally_stretchable = true
+    scroll.style.vertically_stretchable = true
+
+    local row = content.add({
+      type = "flow",
+      direction = "horizontal",
+    })
+    local input = row.add({
+      type = "textfield",
+      name = ui.CHAT_INPUT_NAME,
+    })
+    input.style.horizontally_stretchable = true
+    row.add({
+      type = "button",
+      caption = { "factorio-ai-assistant.send" },
+      tags = { action = "send-chat" },
+    })
+    tags = { view = "mini", mini_signature = nil }
+  end
+
+  if tags.mini_signature ~= signature then
+    local scroll = content[MINI_BODY_NAME]
+    scroll.clear()
+
+    local pending = player_state.chat_pending ~= nil
+    local answer = ui_state.last_answer(player_state)
+    local caption
+    if pending then
+      caption = { "factorio-ai-assistant.chat-thinking" }
+    elseif answer ~= nil then
+      caption = answer.text
+    else
+      caption = { "factorio-ai-assistant.mini-empty" }
+    end
+
+    local label = scroll.add({
+      type = "label",
+      name = MINI_ANSWER_NAME,
+      caption = caption,
+    })
+    label.style.single_line = false
+    label.style.maximal_width = SIZE_DIMENSIONS.mini.width - 60
+    scroll.scroll_to_top()
+
+    -- Match the main panel: a request already in flight must not be resubmitted.
+    local input = find_element(content, ui.CHAT_INPUT_NAME)
+    if input ~= nil then
+      input.enabled = not pending
+    end
+    tags.mini_signature = signature
+  end
+
+  content.tags = tags
 end
 
 apply_frame_size = function(frame, player_state)
