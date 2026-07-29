@@ -118,8 +118,42 @@ export interface GroundingEvidence {
 }
 
 export interface GroundedAction {
+  action_id: string;
   text: string;
   evidence_id: string;
+  source: GroundedActionSource;
+}
+
+export type GroundedActionSource = "guide" | "alert" | "calculation";
+
+/**
+ * Stable id for a deterministic suggestion: the same grounded recommendation
+ * always produces the same id, so the Mod can dedupe a todo the player already
+ * adopted without keeping any server-side state.
+ */
+export function groundedActionId(
+  source: GroundedActionSource | "model",
+  text: string,
+): string {
+  let hash = 0x811c9dc5;
+  for (const byte of Buffer.from(text.normalize("NFC"), "utf8")) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${source}-${hash.toString(16).padStart(8, "0")}`;
+}
+
+function groundedAction(
+  source: GroundedActionSource,
+  text: string,
+  evidenceId: string,
+): GroundedAction {
+  return {
+    action_id: groundedActionId(source, text),
+    text,
+    evidence_id: evidenceId,
+    source,
+  };
 }
 
 export interface AssistantGrounding {
@@ -246,16 +280,15 @@ export class AssistantToolbox {
     const actions: GroundedAction[] = [];
     for (const step of plan.steps) {
       if (step.origin === "bottleneck") {
-        actions.push({
-          text: localizeGuideText(
-            step.objective[this.#language],
-            this.#names,
-          ),
-          evidence_id:
+        actions.push(
+          groundedAction(
+            "alert",
+            localizeGuideText(step.objective[this.#language], this.#names),
             (step.alert_id === undefined
               ? undefined
               : alertEvidenceIds.get(step.alert_id)) ?? "G1",
-        });
+          ),
+        );
         continue;
       }
       const evidenceId = `G${guideEvidence.length + 1}`;
@@ -264,13 +297,13 @@ export class AssistantToolbox {
         category: "guide",
         text: ruleEvidenceText(this.#language, step, this.#names),
       });
-      actions.push({
-        text: localizeGuideText(
-          step.objective[this.#language],
-          this.#names,
+      actions.push(
+        groundedAction(
+          "guide",
+          localizeGuideText(step.objective[this.#language], this.#names),
+          evidenceId,
         ),
-        evidence_id: evidenceId,
-      });
+      );
     }
 
     const noAdvisorEvidence = missingAdvisorEvidence(
@@ -527,13 +560,13 @@ export class AssistantToolbox {
       recipe === undefined
         ? []
         : [
-            {
-              text:
-                this.#language === "zh-CN"
-                  ? `按满负载上限准备 ${recipe.machines.rounded_up} 台 ${machineName}；若允许非满负载，精确需求为 ${formatNumber(recipe.machines.exact)} 台。`
-                  : `Plan for ${recipe.machines.rounded_up} ${machineName} at full-load capacity; the exact fractional requirement is ${formatNumber(recipe.machines.exact)}.`,
-              evidence_id: "C1",
-            },
+            groundedAction(
+              "calculation",
+              this.#language === "zh-CN"
+                ? `按满负载上限准备 ${recipe.machines.rounded_up} 台 ${machineName}；若允许非满负载，精确需求为 ${formatNumber(recipe.machines.exact)} 台。`
+                : `Plan for ${recipe.machines.rounded_up} ${machineName} at full-load capacity; the exact fractional requirement is ${formatNumber(recipe.machines.exact)}.`,
+              "C1",
+            ),
           ];
 
     return {
@@ -594,10 +627,9 @@ export class AssistantToolbox {
     if (dynamicForce !== undefined) {
       evidence.push(...synchronizedStateEvidence(this.#language, dynamicForce));
     }
-    const actions = alerts.map((alert, index) => ({
-      text: alert.recommendation,
-      evidence_id: `A${index + 1}`,
-    }));
+    const actions = alerts.map((alert, index) =>
+      groundedAction("alert", alert.recommendation, `A${index + 1}`),
+    );
     const missingData: string[] = [];
 
     if (dynamicForce === undefined) {

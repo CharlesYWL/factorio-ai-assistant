@@ -876,6 +876,10 @@ local function handle_assistant_response(packet, event)
         or not is_optional_string(payload.provider, 256)
         or not is_optional_string(payload.model, 256)
         or not is_optional_string(payload.fallback_reason, 128)
+        or (
+          payload.suggested_actions ~= nil
+          and type(payload.suggested_actions) ~= "table"
+        )
         or payload.error_code ~= nil
         or payload.error_message ~= nil
       )
@@ -885,6 +889,7 @@ local function handle_assistant_response(packet, event)
       and (
         payload.mode ~= nil
         or payload.text ~= nil
+        or payload.suggested_actions ~= nil
         or payload.error_code ~= nil
         or payload.error_message ~= nil
       )
@@ -896,6 +901,7 @@ local function handle_assistant_response(packet, event)
         or not is_non_empty_string(payload.error_message, 1024)
         or payload.mode ~= nil
         or payload.text ~= nil
+        or payload.suggested_actions ~= nil
       )
     )
   then
@@ -1373,6 +1379,83 @@ local function dismiss_all_alerts(player)
   player.print({ "factorio-ai-assistant.alerts-cleared", dismissed })
 end
 
+local function refresh_todo_views(player, state, player_state)
+  ui.refresh_alerts_hud(player, state, player_state)
+  ui.render(player, state, player_state)
+end
+
+--- Adopts one structured suggestion of one answer. The suggestion is read back
+--- out of the stored chat entry rather than from the click, so only a
+--- suggestion the Companion actually delivered can ever become a todo, and only
+--- a player click can create one.
+local function adopt_suggested_action(player, chat_seq, action_index)
+  if type(chat_seq) ~= "number" or type(action_index) ~= "number" then
+    return
+  end
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+
+  local action
+  for _, entry in ipairs(player_state.chat_history) do
+    if entry.seq == chat_seq then
+      action = (entry.suggested_actions or {})[action_index]
+      break
+    end
+  end
+  if action == nil then
+    return
+  end
+
+  local outcome = ui_state.add_todo(player_state, action, game.tick)
+  if outcome == "limit" then
+    player.print({ "factorio-ai-assistant.todo-limit-reached" })
+    return
+  end
+  if outcome ~= "added" then
+    return
+  end
+  refresh_todo_views(player, state, player_state)
+end
+
+local function set_todo_completed(player, todo_id, completed)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  if not ui_state.set_todo_completed(
+    player_state,
+    todo_id,
+    completed,
+    game.tick
+  ) then
+    return
+  end
+  refresh_todo_views(player, state, player_state)
+end
+
+local function delete_todo(player, todo_id)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  if not ui_state.delete_todo(player_state, todo_id) then
+    return
+  end
+  refresh_todo_views(player, state, player_state)
+end
+
+local function clear_todos(player, scope)
+  local state = get_state()
+  local player_state = ui_state.ensure_player(state, player.index)
+  local removed
+  if scope == "completed" then
+    removed = ui_state.clear_completed_todos(player_state)
+  else
+    removed = ui_state.clear_todos(player_state)
+  end
+  if removed == 0 then
+    return
+  end
+  refresh_todo_views(player, state, player_state)
+  player.print({ "factorio-ai-assistant.todos-cleared", removed })
+end
+
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not element.valid then
@@ -1427,6 +1510,18 @@ script.on_event(defines.events.on_gui_click, function(event)
     set_alert_dismissed(player, tags.alert_id, false)
   elseif action == "clear-alerts" then
     dismiss_all_alerts(player)
+  elseif action == "add-todo" then
+    adopt_suggested_action(player, tags.chat_seq, tags.action_index)
+  elseif action == "complete-todo" then
+    set_todo_completed(player, tags.todo_id, true)
+  elseif action == "restore-todo" then
+    set_todo_completed(player, tags.todo_id, false)
+  elseif action == "delete-todo" then
+    delete_todo(player, tags.todo_id)
+  elseif action == "clear-completed-todos" then
+    clear_todos(player, "completed")
+  elseif action == "clear-todos" then
+    clear_todos(player, "all")
   elseif action == "mute-rule" then
     set_rule_muted(player, tags.rule_id, true)
   elseif action == "unmute-rule" then
@@ -1515,6 +1610,26 @@ local function copy_table(value)
   end
   return result
 end
+
+--- The mock harness ships the same shape the Companion sends, so the UI mock
+--- and the screenshots exercise the real "add to todo" path.
+local MOCK_SUGGESTED_ACTIONS = {
+  {
+    action_id = "calculation-7c41e0d5",
+    text = "按满负载上限准备 8 台组装机 3；若允许非满负载，精确需求为 7.2 台。",
+    source = "calculation",
+  },
+  {
+    action_id = "alert-3f2a19bc",
+    text = "增加发电或燃料供给，把电力满足率拉回 90% 以上。",
+    source = "alert",
+  },
+  {
+    action_id = "guide-1d90b42f",
+    text = "补齐化学科技包产线，为下一阶段科技做准备。",
+    source = "guide",
+  },
+}
 
 local function mock_alert(player, rule_id, severity, evidence, recommendation, age)
   return {
@@ -1736,7 +1851,7 @@ local function apply_ui_mock(player, mode)
     state.advisor_alerts =
       mock_alert_set(player, string.sub(mode, 8))
     ui_state.set_tab(player_state, "alerts")
-  elseif mode == "ready" then
+  elseif mode == "ready" or mode == "todos" then
     state.connected = true
     ui_state.append_mock_message(
       player_state,
@@ -1751,9 +1866,22 @@ local function apply_ui_mock(player, mode)
         .. "[C1] 化学科技包 45/min：组装机 3 精确 7.2 台，向上取整 8 台。\n"
         .. "[推断]\n机器数量直接采用确定性计算结果，不由模型估算。\n"
         .. "[假设]\n无插件，机器数向上取整。",
-      game.tick - 120
+      game.tick - 120,
+      MOCK_SUGGESTED_ACTIONS
     )
     state.advisor_alerts = mock_alert_set(player, "one")
+    if mode == "todos" then
+      for index, action in ipairs(MOCK_SUGGESTED_ACTIONS) do
+        ui_state.add_todo(player_state, action, game.tick - 60 * index)
+      end
+      ui_state.set_todo_completed(
+        player_state,
+        MOCK_SUGGESTED_ACTIONS[3].action_id,
+        true,
+        game.tick
+      )
+      ui_state.set_tab(player_state, "alerts")
+    end
   else
     player.print({ "factorio-ai-assistant.mock-invalid-mode" })
     return

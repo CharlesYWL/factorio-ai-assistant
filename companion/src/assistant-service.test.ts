@@ -324,6 +324,85 @@ void test("rejects malicious or oversized input before calling a provider", asyn
   assert.equal(calls, 0);
 });
 
+void test("caps and sanitizes the suggestions a model answer may offer", async () => {
+  const provider: AIProvider = {
+    kind: "openai-compatible",
+    complete() {
+      return Promise.resolve({
+        text:
+          "建议：\n" +
+          "1. 优先扩大上游供给 [C1]\n" +
+          "2.   检查   输入是否连续 [C1]\n" +
+          "3. 暂缓无关扩建 [C1]\n" +
+          "4. 这条应被丢弃 [C1]",
+        model: "suggestion-list-model",
+      });
+    },
+  };
+  const service = createService(
+    resolveCompanionConfig(
+      { provider: "openclaw", model_retry_count: 0 },
+      {},
+    ),
+    provider,
+  );
+
+  const answer = await service.answer({
+    question: "下一步应该扩建什么？",
+    calculation: productionResult(),
+  });
+
+  assert.equal(answer.mode, "model");
+  assert.equal(answer.suggestedActions.length, 3);
+  assert.deepEqual(
+    answer.suggestedActions.map(({ source }) => source),
+    ["calculation", "model", "model"],
+  );
+  assert.deepEqual(
+    answer.suggestedActions.slice(1).map(({ text }) => text),
+    ["优先扩大上游供给", "检查 输入是否连续"],
+  );
+  for (const action of answer.suggestedActions) {
+    assert.doesNotMatch(action.text, /\[C1\]/u);
+  }
+  assert.equal(
+    answer.suggestedActions.some(({ text }) => text.includes("这条应被丢弃")),
+    false,
+  );
+});
+
+void test("a local answer still offers its deterministic suggestions", async () => {
+  const service = createService(resolveCompanionConfig({}, {}));
+
+  const answer = await service.answer({
+    question: "45 蓝瓶每分钟需要多少机器？",
+    calculation: productionResult(),
+  });
+
+  assert.equal(answer.mode, "local");
+  assert.equal(answer.suggestedActions.length, 1);
+  const [action] = answer.suggestedActions;
+  assert.ok(action !== undefined);
+  assert.equal(action.source, "calculation");
+  assert.match(action.action_id, /^calculation-[0-9a-f]{8}$/u);
+  assert.match(action.text, /4 台 assembling-machine-2/);
+
+  const repeated = await service.answer({
+    question: "45 蓝瓶每分钟需要多少机器？",
+    calculation: productionResult(),
+  });
+  assert.deepEqual(repeated.suggestedActions, answer.suggestedActions);
+});
+
+void test("an answer without grounded evidence offers no suggestion", async () => {
+  const service = createService(resolveCompanionConfig({}, {}));
+
+  const answer = await service.answer({ question: "现在有什么问题？" });
+
+  assert.equal(answer.mode, "local");
+  assert.deepEqual(answer.suggestedActions, []);
+});
+
 function createService(
   config: ReturnType<typeof resolveCompanionConfig>,
   provider?: AIProvider,

@@ -66,6 +66,22 @@ assert.match(controlSource, /#question > 4096/u);
 assert.match(controlSource, /utf8_length\(question\) > 2000/u);
 assert.match(serverSource, /MAX_ASSISTANT_RESPONSE_BYTES = 8_000/u);
 
+// Suggestions become clickable in-game todos, so they may never be a raw
+// provider field: only reconciled model lines and deterministic grounded
+// actions reach the wire, and both are re-checked for length and safety.
+assert.match(
+  assistantSource,
+  /function sanitizeSuggestedActionText[\s\S]*?MAX_SUGGESTED_ACTION_TEXT_CHARACTERS[\s\S]*?containsExecutableInstruction\(text\)/u,
+);
+assert.match(
+  assistantSource,
+  /collectSuggestedActions\(\s*grounding,\s*reconciled\.lines,\s*\)/u,
+);
+assert.match(assistantSource, /collectSuggestedActions\(grounding, \[\]\)/u);
+assert.match(protocolSource, /MAX_SUGGESTED_ACTIONS = 3/u);
+assert.match(protocolSource, /MAX_SUGGESTED_ACTION_TEXT_CHARACTERS = 320/u);
+assert.match(controlSource, /type\(payload\.suggested_actions\) ~= "table"/u);
+
 console.log(
   "Security/privacy checks passed (loopback bind, credential handling, redaction, and message limits).",
 );

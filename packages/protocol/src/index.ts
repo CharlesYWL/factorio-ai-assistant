@@ -18,6 +18,20 @@ export const ADVISOR_EVENT_TYPES = ["opened", "reminder", "closed"] as const;
 export const ASSISTANT_MODES = ["local", "local-model", "remote-model"] as const;
 export const ASSISTANT_RESPONSE_MODES = ["local", "model"] as const;
 export const ASSISTANT_RESPONSE_STATUSES = ["ok", "cancelled", "error"] as const;
+export const SUGGESTED_ACTION_SOURCES = [
+  "guide",
+  "alert",
+  "calculation",
+  "model",
+] as const;
+export const MAX_SUGGESTED_ACTIONS = 3;
+export const MAX_SUGGESTED_ACTION_ID_CHARACTERS = 64;
+/**
+ * Suggestion text is measured in characters on both sides of the wire. The
+ * shipped progression guide has objectives past 250 characters, so a tighter
+ * cap would silently drop the most useful "next step" of all.
+ */
+export const MAX_SUGGESTED_ACTION_TEXT_CHARACTERS = 320;
 export const CALCULATION_RESPONSE_STATUSES = ["ok", "error"] as const;
 export const RESOURCE_KINDS = ["item", "fluid"] as const;
 export const PRIVACY_MODES = ["local-only", "remote-provider"] as const;
@@ -41,6 +55,7 @@ export type AssistantResponseStatus =
 export type CalculationResponseStatus =
   (typeof CALCULATION_RESPONSE_STATUSES)[number];
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
+export type SuggestedActionSource = (typeof SUGGESTED_ACTION_SOURCES)[number];
 export type PrivacyMode = (typeof PRIVACY_MODES)[number];
 export type LocalizedNameKind = (typeof LOCALIZED_NAME_KINDS)[number];
 
@@ -382,6 +397,12 @@ export interface AssistantCancelPacket {
   };
 }
 
+export interface SuggestedAction {
+  action_id: string;
+  text: string;
+  source: SuggestedActionSource;
+}
+
 export interface AssistantResponsePayload {
   reply_to: string;
   status: AssistantResponseStatus;
@@ -392,6 +413,12 @@ export interface AssistantResponsePayload {
   fallback_reason?: string;
   error_code?: string;
   error_message?: string;
+  /**
+   * Optional structured "next step" suggestions the player may adopt as an
+   * in-game todo. Older Mods ignore the field and still render `text`, so a
+   * mixed Mod/Companion install keeps working.
+   */
+  suggested_actions?: SuggestedAction[];
 }
 
 export interface AssistantResponsePacket {
@@ -719,6 +746,15 @@ export function createAssistantResponsePacket(
       ...(input.error_message === undefined
         ? {}
         : { error_message: input.error_message }),
+      ...(input.suggested_actions === undefined ||
+      input.suggested_actions.length === 0
+        ? {}
+        : {
+            suggested_actions: input.suggested_actions.slice(
+              0,
+              MAX_SUGGESTED_ACTIONS,
+            ),
+          }),
     },
   };
 }
@@ -1245,6 +1281,13 @@ function decodeAssistantResponse(
     "payload.error_message",
     1_024,
   );
+  const suggestedActions =
+    payload.suggested_actions === undefined
+      ? undefined
+      : readSuggestedActions(
+          payload.suggested_actions,
+          "payload.suggested_actions",
+        );
 
   if (
     (status === "ok" && (mode === undefined || text === undefined)) ||
@@ -1252,7 +1295,8 @@ function decodeAssistantResponse(
     (status === "error" &&
       (errorCode === undefined || errorMessage === undefined)) ||
     (status !== "error" &&
-      (errorCode !== undefined || errorMessage !== undefined))
+      (errorCode !== undefined || errorMessage !== undefined)) ||
+    (status !== "ok" && suggestedActions !== undefined)
   ) {
     throw invalidPacket(
       "assistant response fields are inconsistent with payload.status",
@@ -1277,7 +1321,62 @@ function decodeAssistantResponse(
         : { fallback_reason: fallbackReason }),
       ...(errorCode === undefined ? {} : { error_code: errorCode }),
       ...(errorMessage === undefined ? {} : { error_message: errorMessage }),
+      ...(suggestedActions === undefined
+        ? {}
+        : { suggested_actions: suggestedActions }),
     },
+  };
+}
+
+/**
+ * Suggestions are player-facing todo candidates, so the wire format stays
+ * narrow: at most three entries, unique stable ids, and short single-line text.
+ */
+function readSuggestedActions(
+  value: unknown,
+  path: string,
+): SuggestedAction[] {
+  const actions = readArray(
+    value,
+    path,
+    readSuggestedAction,
+    MAX_SUGGESTED_ACTIONS,
+  );
+  const seen = new Set<string>();
+  for (const action of actions) {
+    if (seen.has(action.action_id)) {
+      throw invalidPacket(`${path} must not repeat an action_id`);
+    }
+    seen.add(action.action_id);
+  }
+  return actions;
+}
+
+function readSuggestedAction(value: unknown, path: string): SuggestedAction {
+  const record = readRecord(value, path);
+  const actionId = readNonEmptyString(
+    record.action_id,
+    `${path}.action_id`,
+    MAX_SUGGESTED_ACTION_ID_CHARACTERS,
+  );
+  if (!/^[A-Za-z0-9_-]+$/u.test(actionId)) {
+    throw invalidPacket(
+      `${path}.action_id must only contain letters, digits, "-" and "_"`,
+    );
+  }
+  const text = readNonEmptyString(
+    record.text,
+    `${path}.text`,
+    MAX_SUGGESTED_ACTION_TEXT_CHARACTERS,
+  );
+  if (/[\p{Cc}\p{Cf}]/u.test(text)) {
+    throw invalidPacket(`${path}.text must not contain control characters`);
+  }
+
+  return {
+    action_id: actionId,
+    text,
+    source: readEnum(record.source, `${path}.source`, SUGGESTED_ACTION_SOURCES),
   };
 }
 

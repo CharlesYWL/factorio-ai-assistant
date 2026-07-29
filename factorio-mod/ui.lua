@@ -30,6 +30,7 @@ local HUD_MAX_ALERTS = 4
 local HUD_TEXT_WIDTH = 250
 local QUICK_PROMPT_COUNT = 4
 local QUICK_PROMPT_COLUMNS = 2
+local TODO_ACTION_BUTTON_WIDTH = 120
 
 local SIZE_DIMENSIONS = {
   compact = { width = 540, height = 620 },
@@ -58,6 +59,9 @@ local chat_signature
 local sync_chat_entries
 local update_chat_controls
 local render_chat_entry
+local render_suggested_actions
+local refresh_todo_buttons
+local render_todos
 local render_alerts
 local collect_force_alerts
 local compare_alerts
@@ -77,6 +81,7 @@ local auto_pause_caption
 local format_last_response
 local panel_text_width
 local find_element
+local find_all_within
 local localization_summary
 
 function ui.ensure_button(player)
@@ -300,14 +305,15 @@ function ui.refresh_alerts_hud(player, state, player_state)
   local frame_flow = mod_gui.get_frame_flow(player)
   local existing = frame_flow[ALERT_HUD_NAME]
   local alerts = hud_alerts(state, player_state, player.force.name)
-  if #alerts == 0 then
+  local open_todos = ui_state.open_todo_count(player_state)
+  if #alerts == 0 and open_todos == 0 then
     if existing ~= nil then
       existing.destroy()
     end
     return
   end
 
-  local signature = hud_signature(alerts)
+  local signature = hud_signature(alerts) .. "\ntodos:" .. open_todos
   if existing ~= nil then
     if (existing.tags or {}).signature == signature then
       return
@@ -319,7 +325,9 @@ function ui.refresh_alerts_hud(player, state, player_state)
     type = "frame",
     name = ALERT_HUD_NAME,
     direction = "vertical",
-    caption = { "factorio-ai-assistant.alert-hud-title", #alerts },
+    caption = #alerts > 0
+      and { "factorio-ai-assistant.alert-hud-title", #alerts }
+      or { "factorio-ai-assistant.todo-hud-title" },
     tags = { signature = signature },
   })
   hud.style.maximal_width = 360
@@ -383,13 +391,26 @@ function ui.refresh_alerts_hud(player, state, player_state)
     })
   end
 
-  hud.add({
-    type = "button",
-    name = ui.HUD_CLEAR_ALERTS_NAME,
-    caption = { "factorio-ai-assistant.clear-alerts" },
-    tooltip = { "factorio-ai-assistant.clear-alerts-tooltip" },
-    tags = { action = "clear-alerts" },
-  })
+  -- The open todo count is a quiet HUD line: it never raises a toast, it only
+  -- links to the Alerts tab where the list itself lives.
+  if open_todos > 0 then
+    hud.add({
+      type = "button",
+      caption = { "factorio-ai-assistant.todo-hud-open", open_todos },
+      tooltip = { "factorio-ai-assistant.todo-hud-open-tooltip" },
+      tags = { action = "open-alerts" },
+    })
+  end
+
+  if #alerts > 0 then
+    hud.add({
+      type = "button",
+      name = ui.HUD_CLEAR_ALERTS_NAME,
+      caption = { "factorio-ai-assistant.clear-alerts" },
+      tooltip = { "factorio-ai-assistant.clear-alerts-tooltip" },
+      tags = { action = "clear-alerts" },
+    })
+  end
 end
 
 function ui.clear_alerts_hud(player)
@@ -641,6 +662,9 @@ sync_chat_entries = function(history, player_state)
       render_chat_entry(history, entry, player_state, name)
     end
   end
+  -- Entry cards are only built once, so the "add to todo" buttons of older
+  -- answers are refreshed in place after every todo change.
+  refresh_todo_buttons(history, player_state)
 
   local loading = history[CHAT_LOADING_NAME]
   if loading ~= nil then
@@ -712,6 +736,7 @@ render_chat_entry = function(parent, entry, player_state, name)
   add_wrapped_label(card, caption, panel_text_width(player_state))
 
   if entry.role == "assistant" and entry.text ~= nil then
+    render_suggested_actions(card, entry, player_state)
     if entry.mode ~= nil then
       local mode = card.add({
         type = "label",
@@ -724,6 +749,69 @@ render_chat_entry = function(parent, entry, player_state, name)
       })
       mode.style.font_color = { r = 0.65, g = 0.67, b = 0.7 }
     end
+  end
+end
+
+--- Structured suggestions of one answer, each with its own confirm button. The
+--- Companion never writes a todo: the player adopts a suggestion one click at a
+--- time, and an answer without structured actions simply renders nothing here.
+render_suggested_actions = function(card, entry, player_state)
+  local actions = entry.suggested_actions
+  if type(actions) ~= "table" or #actions == 0 then
+    return
+  end
+
+  local heading = card.add({
+    type = "label",
+    caption = { "factorio-ai-assistant.suggested-actions" },
+  })
+  heading.style.font = "default-bold"
+  heading.style.font_color = { r = 0.65, g = 0.67, b = 0.7 }
+
+  local text_width =
+    math.max(180, panel_text_width(player_state) - TODO_ACTION_BUTTON_WIDTH - 24)
+  for index, action in ipairs(actions) do
+    local row = card.add({ type = "flow", direction = "horizontal" })
+    row.style.horizontally_stretchable = true
+    row.style.vertical_align = "center"
+    add_wrapped_label(row, action.text, text_width)
+    local spacer = row.add({ type = "empty-widget" })
+    spacer.style.horizontally_stretchable = true
+    local added = ui_state.has_todo(player_state, action.action_id)
+    local button = row.add({
+      type = "button",
+      caption = {
+        "factorio-ai-assistant." .. (added and "todo-added" or "add-todo"),
+      },
+      tooltip = {
+        "factorio-ai-assistant."
+          .. (added and "todo-added-tooltip" or "add-todo-tooltip"),
+      },
+      tags = {
+        action = "add-todo",
+        chat_seq = entry.seq,
+        action_index = index,
+        todo_id = action.action_id,
+      },
+    })
+    button.style.minimal_width = TODO_ACTION_BUTTON_WIDTH
+    button.enabled = not added
+  end
+end
+
+refresh_todo_buttons = function(history, player_state)
+  for _, button in ipairs(find_all_within(history, function(element)
+    return (element.tags or {}).action == "add-todo"
+  end)) do
+    local added = ui_state.has_todo(player_state, (button.tags or {}).todo_id)
+    button.caption = {
+      "factorio-ai-assistant." .. (added and "todo-added" or "add-todo"),
+    }
+    button.tooltip = {
+      "factorio-ai-assistant."
+        .. (added and "todo-added-tooltip" or "add-todo-tooltip"),
+    }
+    button.enabled = not added
   end
 end
 
@@ -924,6 +1012,100 @@ render_alerts = function(parent, state, player_state, force_id)
         },
       })
     end
+  end
+
+  render_todos(scroll, player_state)
+end
+
+--- The todo list lives inside the Alerts tab rather than behind a fourth tab:
+--- alerts and adopted next steps are the same "what should I do now" surface.
+render_todos = function(scroll, player_state)
+  local todos = ui_state.sorted_todos(player_state)
+  local completed = 0
+  for _, todo in ipairs(todos) do
+    if todo.completed then
+      completed = completed + 1
+    end
+  end
+
+  scroll.add({ type = "line", direction = "horizontal" })
+  local header = scroll.add({ type = "flow", direction = "horizontal" })
+  header.style.horizontally_stretchable = true
+  header.style.vertical_align = "center"
+  local heading = header.add({
+    type = "label",
+    caption = {
+      "factorio-ai-assistant.todos-title",
+      #todos - completed,
+      #todos,
+    },
+  })
+  heading.style.font = "default-bold"
+  local header_spacer = header.add({ type = "empty-widget" })
+  header_spacer.style.horizontally_stretchable = true
+  local clear_completed = header.add({
+    type = "button",
+    caption = { "factorio-ai-assistant.todo-clear-completed" },
+    tooltip = { "factorio-ai-assistant.todo-clear-completed-tooltip" },
+    tags = { action = "clear-completed-todos" },
+  })
+  clear_completed.enabled = completed > 0
+  local clear_all = header.add({
+    type = "button",
+    caption = { "factorio-ai-assistant.todo-clear-all" },
+    tooltip = { "factorio-ai-assistant.todo-clear-all-tooltip" },
+    tags = { action = "clear-todos" },
+  })
+  clear_all.enabled = #todos > 0
+
+  if #todos == 0 then
+    add_wrapped_label(scroll, { "factorio-ai-assistant.todos-empty" }, 650)
+    return
+  end
+
+  for _, todo in ipairs(todos) do
+    local card = scroll.add({
+      type = "frame",
+      direction = "vertical",
+      style = "inside_shallow_frame",
+    })
+    card.style.horizontally_stretchable = true
+    local text = add_wrapped_label(card, todo.text, 650)
+    if todo.completed then
+      text.style.font_color = { r = 0.6, g = 0.62, b = 0.65 }
+    end
+    local meta = card.add({
+      type = "label",
+      caption = {
+        "factorio-ai-assistant.todo-meta",
+        { "factorio-ai-assistant.todo-source-" .. todo.source },
+      },
+    })
+    meta.style.font = "default-small"
+    meta.style.font_color = { r = 0.6, g = 0.62, b = 0.65 }
+
+    local actions = card.add({ type = "flow", direction = "horizontal" })
+    actions.add({
+      type = "button",
+      caption = {
+        "factorio-ai-assistant."
+          .. (todo.completed and "todo-restore" or "todo-complete"),
+      },
+      tooltip = {
+        "factorio-ai-assistant."
+          .. (todo.completed and "todo-restore-tooltip" or "todo-complete-tooltip"),
+      },
+      tags = {
+        action = todo.completed and "restore-todo" or "complete-todo",
+        todo_id = todo.id,
+      },
+    })
+    actions.add({
+      type = "button",
+      caption = { "factorio-ai-assistant.todo-delete" },
+      tooltip = { "factorio-ai-assistant.todo-delete-tooltip" },
+      tags = { action = "delete-todo", todo_id = todo.id },
+    })
   end
 end
 
@@ -1184,6 +1366,20 @@ find_element = function(root, name)
     end
   end
   return nil
+end
+
+find_all_within = function(root, predicate, found)
+  found = found or {}
+  if root == nil then
+    return found
+  end
+  if predicate(root) then
+    table.insert(found, root)
+  end
+  for _, child in ipairs(root.children or {}) do
+    find_all_within(child, predicate, found)
+  end
+  return found
 end
 
 return ui

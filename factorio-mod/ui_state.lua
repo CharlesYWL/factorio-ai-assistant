@@ -1,6 +1,24 @@
 local ui_state = {}
 
 local MAX_CHAT_HISTORY = 30
+--- Todos are a short, player-curated list, not a log: a hard cap keeps the save
+--- small and the Alerts tab readable, and a full list rejects new adds instead
+--- of silently evicting something the player chose to keep.
+local MAX_TODOS = 25
+--- Character limit, matched to the protocol's `MAX_SUGGESTED_ACTION_TEXT_CHARACTERS`.
+--- Counting bytes here would silently drop suggestions in Chinese, where the
+--- shipped guide objectives are well past 240 UTF-8 bytes. The byte guard is a
+--- separate, deliberately loose safety net for a hostile sender.
+local MAX_TODO_TEXT = 320
+local MAX_TODO_TEXT_BYTES = MAX_TODO_TEXT * 4
+local MAX_TODO_ID = 64
+local MAX_SUGGESTED_ACTIONS = 3
+local TODO_SOURCES = {
+  guide = true,
+  alert = true,
+  calculation = true,
+  model = true,
+}
 local VALID_TABS = {
   chat = true,
   alerts = true,
@@ -10,6 +28,8 @@ local SIZES = { "compact", "normal", "large" }
 local valid_size
 local append_chat
 local touch_chat
+local find_todo
+local utf8_length
 
 function ui_state.ensure_player(state, player_index)
   state.ui_players = state.ui_players or {}
@@ -24,6 +44,8 @@ function ui_state.ensure_player(state, player_index)
       chat_sequence = 0,
       chat_revision = 0,
       dismissed_alerts = {},
+      todos = {},
+      todo_sequence = 0,
       -- Protocol-compatibility holder only: the calculator form was removed and
       -- chat drives calculations, but a legacy in-flight request must still be
       -- able to resolve without crashing a mixed Mod/Companion install.
@@ -44,6 +66,9 @@ function ui_state.ensure_player(state, player_index)
   player_state.chat_sequence = player_state.chat_sequence or 0
   player_state.chat_revision = player_state.chat_revision or 0
   player_state.dismissed_alerts = player_state.dismissed_alerts or {}
+  -- Saves written before the todo feature existed simply have no list yet.
+  player_state.todos = player_state.todos or {}
+  player_state.todo_sequence = player_state.todo_sequence or 0
   for _, entry in ipairs(player_state.chat_history) do
     if entry.seq == nil then
       player_state.chat_sequence = player_state.chat_sequence + 1
@@ -141,6 +166,8 @@ function ui_state.complete_chat(state, reply_to, payload, tick)
           provider = payload.provider,
           model = payload.model,
           fallback_reason = payload.fallback_reason,
+          suggested_actions =
+            ui_state.sanitize_suggested_actions(payload.suggested_actions),
           tick = tick,
         })
       elseif payload.status == "cancelled" then
@@ -311,12 +338,181 @@ function ui_state.forget_alert(state, alert_id)
   end
 end
 
-function ui_state.append_mock_message(player_state, role, text, tick)
+function ui_state.append_mock_message(player_state, role, text, tick, actions)
   append_chat(player_state, {
     role = role,
     text = text,
     tick = tick,
+    suggested_actions = ui_state.sanitize_suggested_actions(actions),
   })
+end
+
+--- Narrow validation of the optional `suggested_actions` field. A malformed or
+--- oversized list is dropped instead of rejecting the whole answer, so a mixed
+--- Mod/Companion install still shows the text. Returns nil when nothing usable
+--- survives, so callers can treat "no structured actions" as one case.
+function ui_state.sanitize_suggested_actions(value)
+  if type(value) ~= "table" then
+    return nil
+  end
+
+  local actions = {}
+  local seen = {}
+  for _, entry in ipairs(value) do
+    if #actions >= MAX_SUGGESTED_ACTIONS then
+      break
+    end
+    if type(entry) == "table"
+      and type(entry.action_id) == "string"
+      and #entry.action_id > 0
+      and #entry.action_id <= MAX_TODO_ID
+      and string.match(entry.action_id, "^[%w_%-]+$") ~= nil
+      and type(entry.text) == "string"
+      and #entry.text > 0
+      and #entry.text <= MAX_TODO_TEXT_BYTES
+      and utf8_length(entry.text) <= MAX_TODO_TEXT
+      and string.find(entry.text, "[%c]") == nil
+      and TODO_SOURCES[entry.source]
+      and not seen[entry.action_id]
+    then
+      seen[entry.action_id] = true
+      table.insert(actions, {
+        action_id = entry.action_id,
+        text = entry.text,
+        source = entry.source,
+      })
+    end
+  end
+
+  if #actions == 0 then
+    return nil
+  end
+  return actions
+end
+
+--- Adopts one suggestion as a todo. Only ever called from a GUI click handler:
+--- neither the Companion nor a model may create, complete or delete a todo.
+--- Returns "added", "duplicate", "limit" or "invalid".
+function ui_state.add_todo(player_state, action, tick)
+  local sanitized = ui_state.sanitize_suggested_actions({ action })
+  if sanitized == nil then
+    return "invalid"
+  end
+  local entry = sanitized[1]
+
+  player_state.todos = player_state.todos or {}
+  if find_todo(player_state, entry.action_id) ~= nil then
+    return "duplicate"
+  end
+  if #player_state.todos >= MAX_TODOS then
+    return "limit"
+  end
+
+  player_state.todo_sequence = (player_state.todo_sequence or 0) + 1
+  table.insert(player_state.todos, {
+    id = entry.action_id,
+    text = entry.text,
+    source = entry.source,
+    created_tick = tick or 0,
+    order = player_state.todo_sequence,
+    completed = false,
+  })
+  return "added"
+end
+
+function ui_state.has_todo(player_state, todo_id)
+  return find_todo(player_state, todo_id) ~= nil
+end
+
+function ui_state.set_todo_completed(player_state, todo_id, completed, tick)
+  local todo = find_todo(player_state, todo_id)
+  if todo == nil or todo.completed == (completed and true or false) then
+    return false
+  end
+  todo.completed = completed and true or false
+  todo.completed_tick = todo.completed and (tick or 0) or nil
+  return true
+end
+
+function ui_state.delete_todo(player_state, todo_id)
+  if type(todo_id) ~= "string" or player_state.todos == nil then
+    return false
+  end
+  for index, todo in ipairs(player_state.todos) do
+    if todo.id == todo_id then
+      table.remove(player_state.todos, index)
+      return true
+    end
+  end
+  return false
+end
+
+function ui_state.clear_completed_todos(player_state)
+  local removed = 0
+  local kept = {}
+  for _, todo in ipairs(player_state.todos or {}) do
+    if todo.completed then
+      removed = removed + 1
+    else
+      table.insert(kept, todo)
+    end
+  end
+  player_state.todos = kept
+  return removed
+end
+
+function ui_state.clear_todos(player_state)
+  local removed = #(player_state.todos or {})
+  player_state.todos = {}
+  return removed
+end
+
+function ui_state.open_todo_count(player_state)
+  local open = 0
+  for _, todo in ipairs(player_state.todos or {}) do
+    if not todo.completed then
+      open = open + 1
+    end
+  end
+  return open
+end
+
+--- Display order: open todos first, oldest first inside each group. `order` is
+--- a per-player counter rather than the tick, so two todos adopted on the same
+--- tick still sort deterministically.
+function ui_state.sorted_todos(player_state)
+  local todos = {}
+  for _, todo in ipairs(player_state.todos or {}) do
+    table.insert(todos, todo)
+  end
+  table.sort(todos, function(left, right)
+    if left.completed ~= right.completed then
+      return not left.completed
+    end
+    if (left.order or 0) ~= (right.order or 0) then
+      return (left.order or 0) < (right.order or 0)
+    end
+    return left.id < right.id
+  end)
+  return todos
+end
+
+find_todo = function(player_state, todo_id)
+  if type(todo_id) ~= "string" then
+    return nil
+  end
+  for _, todo in ipairs(player_state.todos or {}) do
+    if todo.id == todo_id then
+      return todo
+    end
+  end
+  return nil
+end
+
+--- Counts UTF-8 code points, not bytes: continuation bytes are 0x80..0xBF.
+utf8_length = function(value)
+  local _, count = string.gsub(value, "[^\128-\191]", "")
+  return count
 end
 
 function ui_state.append_system(player_state, locale, tick, error_code)
