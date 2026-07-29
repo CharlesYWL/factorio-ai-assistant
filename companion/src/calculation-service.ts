@@ -26,11 +26,18 @@ const DEFAULT_SOURCE_RESOURCES = [
 
 export class CalculationServiceError extends Error {
   public readonly code: string;
+  /** Structured context from the solver, such as the ambiguous recipe ids. */
+  public readonly details: Record<string, unknown>;
 
-  public constructor(code: string, message: string) {
+  public constructor(
+    code: string,
+    message: string,
+    details: Record<string, unknown> = {},
+  ) {
     super(message);
     this.name = "CalculationServiceError";
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -132,7 +139,11 @@ function runCalculation(
     return calculateProduction(catalog, request);
   } catch (error: unknown) {
     if (error instanceof ProductionError) {
-      throw new CalculationServiceError(error.code, error.message);
+      throw new CalculationServiceError(
+        error.code,
+        error.message,
+        error.details,
+      );
     }
     throw error;
   }

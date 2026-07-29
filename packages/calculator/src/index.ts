@@ -115,18 +115,37 @@ export function calculateProduction(
       }
       return undefined;
     }
-    if (candidates.length > 1) {
+    // Unbarrelling recipes "produce" a fluid only by consuming a barrel that
+    // nothing but the matching barrelling recipe makes, so they are storage
+    // round-trips rather than production routes. They are filtered only to
+    // break a tie: a genuine single-candidate result is never changed.
+    const productionCandidates =
+      candidates.length > 1
+        ? candidates.filter(
+            (recipe) =>
+              !isRepackagingRecipe(
+                recipe,
+                key,
+                recipesByProduct,
+                availableRecipes,
+                sourceResources,
+              ),
+          )
+        : candidates;
+    const effectiveCandidates =
+      productionCandidates.length === 0 ? candidates : productionCandidates;
+    if (effectiveCandidates.length > 1) {
       throw new ProductionError(
         "AMBIGUOUS_RECIPE",
         `Multiple recipes produce ${key}; choose one explicitly`,
         {
           resource: key,
-          recipe_ids: candidates.map((recipe) => recipe.id).sort(),
+          recipe_ids: effectiveCandidates.map((recipe) => recipe.id).sort(),
         },
       );
     }
 
-    const selected = candidates[0];
+    const selected = effectiveCandidates[0];
     if (selected === undefined) {
       throw new Error("Recipe candidate disappeared");
     }
@@ -978,6 +997,47 @@ function aggregateTargets(request: ProductionRequest): Map<string, Rational> {
     result.set(key, (result.get(key) ?? Rational.ZERO).add(rate));
   }
   return result;
+}
+
+/**
+ * True when a recipe only recovers `key` from a container that nothing but a
+ * recipe consuming `key` can make, as with Factorio's barrelling pair. Such a
+ * recipe cannot originate new supply, so it is never a real production route.
+ */
+function isRepackagingRecipe(
+  recipe: RecipeDescriptor,
+  key: string,
+  recipesByProduct: Map<string, RecipeDescriptor[]>,
+  availableRecipes: Set<string> | undefined,
+  sourceResources: Set<string>,
+): boolean {
+  const ingredients = recipe.ingredients.filter(
+    (ingredient) => ingredient.amount > 0,
+  );
+  if (ingredients.length === 0) {
+    return false;
+  }
+
+  return ingredients.every((ingredient) => {
+    const ingredientKey = resourceKey(ingredient);
+    if (ingredientKey === key || sourceResources.has(ingredientKey)) {
+      return false;
+    }
+    const producers = (recipesByProduct.get(ingredientKey) ?? []).filter(
+      (producer) =>
+        producer.id !== recipe.id &&
+        (availableRecipes === undefined || availableRecipes.has(producer.id)),
+    );
+    // An ingredient nothing can make is a dead end, not a round trip.
+    if (producers.length === 0) {
+      return false;
+    }
+    return producers.every((producer) =>
+      producer.ingredients.some(
+        (input) => input.amount > 0 && resourceKey(input) === key,
+      ),
+    );
+  });
 }
 
 function indexRecipesByProduct(

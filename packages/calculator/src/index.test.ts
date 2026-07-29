@@ -245,6 +245,55 @@ void test("requires explicit alternatives and honors the selected recipe", async
   assert.ok(result.recipes.some((entry) => entry.recipe_id === "iron-plate-alternative"));
 });
 
+void test("ignores barrelling round trips when picking a fluid route", () => {
+  // Factorio's barrelling pair makes an unbarrelling recipe look like a second
+  // producer of a fluid, but it only returns fluid that was already barrelled,
+  // so it must never contest a real production route.
+  const catalog = syntheticCatalog([
+    recipe(
+      "acid-production",
+      [{ kind: "item", id: "ore", amount: 1 }],
+      [{ kind: "fluid", id: "acid", amount: 10 }],
+    ),
+    recipe(
+      "fill-acid-barrel",
+      [
+        { kind: "fluid", id: "acid", amount: 50 },
+        { kind: "item", id: "barrel", amount: 1 },
+      ],
+      [{ kind: "item", id: "acid-barrel", amount: 1 }],
+    ),
+    recipe(
+      "empty-acid-barrel",
+      [{ kind: "item", id: "acid-barrel", amount: 1 }],
+      [
+        { kind: "fluid", id: "acid", amount: 50 },
+        { kind: "item", id: "barrel", amount: 1 },
+      ],
+    ),
+    recipe(
+      "ore-mining",
+      [],
+      [{ kind: "item", id: "ore", amount: 1 }],
+    ),
+    recipe(
+      "barrel-making",
+      [],
+      [{ kind: "item", id: "barrel", amount: 1 }],
+    ),
+  ]);
+
+  const result = calculateProduction(catalog, {
+    targets: [{ kind: "fluid", id: "acid", rate: 10 }],
+  });
+
+  assert.equal(result.assumptions.recipe_selections["fluid:acid"], "acid-production");
+  assert.ok(
+    !result.recipes.some((entry) => entry.recipe_id === "empty-acid-barrel"),
+    "an unbarrelling recipe must not be chosen as the production route",
+  );
+});
+
 void test("ignores zero-probability producers and clamps negative force bonuses", () => {
   const catalog = syntheticCatalog([
     recipe(
