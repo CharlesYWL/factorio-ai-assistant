@@ -32,6 +32,7 @@ if (!existsSync(compilerPath)) {
 let companionProcess = null;
 let restartTimer = null;
 let restarting = false;
+let restartPending = false;
 let shuttingDown = false;
 
 log(`config: ${configPath ?? "(none — defaults + environment only)"}`);
@@ -91,17 +92,28 @@ function scheduleRestart() {
 }
 
 async function restartCompanion() {
-  if (shuttingDown || restarting) return;
+  if (shuttingDown) return;
+  // A rebuild touches several output directories at once, so restarts can be
+  // requested while one is already running. Remember that another is due and
+  // run it after, rather than dropping it or starting a second companion that
+  // would collide on the port.
+  if (restarting) {
+    restartPending = true;
+    return;
+  }
   restarting = true;
 
   try {
-    await stopCompanion();
-    if (shuttingDown) return;
-    if (!existsSync(entryPath)) {
-      log("waiting for the first successful compile…");
-      return;
-    }
-    startCompanion();
+    do {
+      restartPending = false;
+      await stopCompanion();
+      if (shuttingDown) return;
+      if (!existsSync(entryPath)) {
+        log("waiting for the first successful compile…");
+        return;
+      }
+      startCompanion();
+    } while (restartPending && !shuttingDown);
   } finally {
     restarting = false;
   }
