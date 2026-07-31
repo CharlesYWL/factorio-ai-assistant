@@ -59,6 +59,15 @@ npm run dev
 
 日志直接打到终端（不写 `logs/`）。`Ctrl+C` 会一并结束编译器与 companion。
 
+若 watcher 被强制中断（例如终端窗口关闭），companion 子进程可能成为孤儿并继续占用
+34197，导致下次启动报 `EADDRINUSE`。用以下命令清理：
+
+```bash
+npm run dev:stop
+```
+
+它按命令行精确匹配 companion 进程，不会误伤机器上其他 Node 程序。
+
 ## 3. 不进游戏直接提问
 
 ```bash

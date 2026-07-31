@@ -12,6 +12,7 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "dev": "node scripts/dev-companion.mjs",
+    "dev:stop": "node scripts/stop-companions.mjs",
     "dev:link": "node scripts/dev-link-mod.mjs",
     "dev:unlink": "node scripts/dev-link-mod.mjs --unlink",
     "start": "npm run start --workspace @factorio-ai-assistant/companion",
