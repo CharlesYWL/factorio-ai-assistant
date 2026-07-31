@@ -12,7 +12,12 @@ export interface ProviderExecutorOptions {
   totalTimeoutMs?: number;
 }
 
-export const MAX_PROVIDER_TOTAL_WAIT_MS = 30_000;
+/**
+ * Ceiling on the whole request, retries included. It has to exceed two
+ * per-attempt timeouts plus the delay between them, or a configured retry
+ * would be cut short by the budget rather than being given a real second try.
+ */
+export const MAX_PROVIDER_TOTAL_WAIT_MS = 45_000;
 
 export class ProviderExecutor {
   readonly #provider: AIProvider;
