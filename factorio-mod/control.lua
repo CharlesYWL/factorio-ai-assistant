@@ -1667,6 +1667,11 @@ for index, tab in ipairs({ "chat", "alerts", "status" }) do
       local state = get_state()
       local player_state =
         ui_state.ensure_player(state, event.player_index)
+      -- Asking for a specific tab means the player wants the tabbed panel;
+      -- mini has no tabs to show.
+      if ui_state.is_mini(player_state) then
+        ui_state.toggle_mini(player_state)
+      end
       ui_state.set_tab(player_state, tab_name)
       open_advisor(player)
       if tab_name == "chat" then

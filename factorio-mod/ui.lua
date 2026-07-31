@@ -202,9 +202,18 @@ function ui.render(player, state, player_state)
 
   local content = frame[CONTENT_NAME]
 
-  -- Mini mode replaces the tabbed shell entirely: only the latest answer and an
-  -- input box, for asking without covering the factory.
-  if ui_state.is_mini(player_state) then
+  -- Mini mode and the tabbed panel build different children into the same
+  -- container, so a switch either way has to clear it. Leaving that to each
+  -- renderer let both layouts end up stacked in one window.
+  local wantsMini = ui_state.is_mini(player_state)
+  local tags = content.tags or {}
+  local wasMini = tags.view == "mini"
+  if wantsMini ~= wasMini then
+    content.clear()
+    content.tags = {}
+  end
+
+  if wantsMini then
     render_mini(content, state, player_state)
     return
   end

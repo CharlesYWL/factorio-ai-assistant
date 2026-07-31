@@ -16,6 +16,7 @@ local ELEMENT_METHODS = {
   clear = true,
   focus = true,
   scroll_to_bottom = true,
+  scroll_to_top = true,
 }
 
 local ELEMENT_FIELDS = {
@@ -108,6 +109,10 @@ create_element = function(spec, parent)
 
   methods.scroll_to_bottom = function()
     data.scrolled_to_bottom = data.scrolled_to_bottom + 1
+  end
+
+  methods.scroll_to_top = function()
+    data.scrolled_to_top = (data.scrolled_to_top or 0) + 1
   end
 
   setmetatable(element, {
