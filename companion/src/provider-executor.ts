@@ -13,11 +13,11 @@ export interface ProviderExecutorOptions {
 }
 
 /**
- * Ceiling on the whole request, retries included. It has to exceed two
- * per-attempt timeouts plus the delay between them, or a configured retry
- * would be cut short by the budget rather than being given a real second try.
+ * Ceiling on the whole request, retries included. Generous because a model
+ * writing several hundred words of reasoning legitimately takes tens of
+ * seconds, and the player would rather wait than get the local fallback.
  */
-export const MAX_PROVIDER_TOTAL_WAIT_MS = 45_000;
+export const MAX_PROVIDER_TOTAL_WAIT_MS = 120_000;
 
 export class ProviderExecutor {
   readonly #provider: AIProvider;
@@ -53,7 +53,13 @@ export class ProviderExecutor {
         );
       } catch (error: unknown) {
         const providerError = normalizeProviderError(error, signal);
-        if (!providerError.retryable || attempt === this.#retryCount) {
+        // A timeout means this request is genuinely slow, so a second attempt
+        // would most likely time out too and double the wait. Retries exist for
+        // transient failures — a refused connection or a 5xx — which fail fast
+        // and usually succeed straight away.
+        const worthRetrying =
+          providerError.retryable && providerError.code !== "timeout";
+        if (!worthRetrying || attempt === this.#retryCount) {
           throw providerError;
         }
         const retryBudgetMs = deadline - Date.now();

@@ -35,7 +35,7 @@ npm start
 | `model` | `FACTORIO_ASSISTANT_MODEL` | compatible 默认 `gpt-4o-mini`；Ollama 默认 `llama3.2` |
 | `provider_url` | `FACTORIO_ASSISTANT_PROVIDER_URL` | OpenClaw-compatible 默认 `http://127.0.0.1:18789/v1`；Ollama 默认 `http://127.0.0.1:11434` |
 | `api_key` | `FACTORIO_ASSISTANT_API_KEY` | 无默认值；只从环境或所选本机配置文件读取 |
-| `model_timeout_ms` | `FACTORIO_ASSISTANT_MODEL_TIMEOUT_MS` | 每次尝试 `12000`，范围 `250..20000`。上限低于 45 秒总预算，确保重试有实际执行空间 |
+| `model_timeout_ms` | `FACTORIO_ASSISTANT_MODEL_TIMEOUT_MS` | 每次尝试 `30000`，范围 `250..90000`。开放式问题（如「油电还是蒸汽」）需要生成数百字推理，实测本地端点约 17 秒，云端更慢 |
 | `model_retry_count` | `FACTORIO_ASSISTANT_MODEL_RETRY_COUNT` | `1`；只能是 `0` 或 `1` |
 | `context_budget_bytes` | `FACTORIO_ASSISTANT_CONTEXT_BUDGET_BYTES` | `60000`，范围 `1024..524288`。发给模型走 HTTP，不受 UDP 的 16 KiB 限制 |
 | `max_output_tokens` | `FACTORIO_ASSISTANT_MAX_OUTPUT_TOKENS` | `1600`，范围 `64..4096` |

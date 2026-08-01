@@ -20,7 +20,7 @@ void test("uses safe local defaults when no key or provider is configured", () =
   assert.equal(config.samplingIntervalTicks, 300);
   assert.equal(config.provider, "local");
   assert.equal(config.apiKey, undefined);
-  assert.equal(config.modelTimeoutMs, 12_000);
+  assert.equal(config.modelTimeoutMs, 30_000);
   assert.equal(config.modelRetryCount, 1);
 });
 
