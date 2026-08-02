@@ -87,13 +87,24 @@ assert.ok(
   controlSource.includes("game.create_profiler()"),
   "Dynamic sampling must record collection duration",
 );
+// The point is that periodic work shares one handler rather than each feature
+// registering its own timer, not the exact order of calls inside it.
+const everySecondBody = controlSource.match(
+  /local function run_every_second_tasks\(\)\n([\s\S]*?)\nend\n/u,
+)?.[1];
 assert.ok(
-  controlSource.includes("local function run_every_second_tasks()")
-    && controlSource.includes("maybe_send_dynamic_snapshot()\n  update_connection_status()")
+  everySecondBody !== undefined
+    && everySecondBody.includes("maybe_send_dynamic_snapshot()")
+    && everySecondBody.includes("update_connection_status()")
     && controlSource.includes(
       "script.on_nth_tick(UI_REFRESH_INTERVAL_TICKS, run_every_second_tasks)",
     ),
   "Dynamic sampling and UI refresh must share the single 60-tick handler",
+);
+assert.equal(
+  (controlSource.match(/script\.on_nth_tick\(/gu) ?? []).length,
+  3,
+  "Periodic work must stay on the existing timers rather than adding new ones",
 );
 for (const packetType of [
   "assistant_request",
@@ -227,7 +238,7 @@ assert.equal(
 // the claim, so control.lua must funnel every entry point through its helpers.
 for (const helper of ["open_advisor", "close_advisor", "toggle_advisor"]) {
   assert.ok(
-    controlSource.includes(`local function ${helper}(player)`),
+    new RegExp(`local function ${helper}\\(player[,)]`, "u").test(controlSource),
     `control.lua must define ${helper}`,
   );
 }

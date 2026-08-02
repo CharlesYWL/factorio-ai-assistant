@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import {
   ProtocolError,
   createAdvisorUpdatePacket,
+  createHighlightPacket,
   createAssistantResponsePacket,
   createCalculationResponsePacket,
   createHelloAckPacket,
@@ -46,11 +47,13 @@ import { CompanionStateStore, StateSyncError } from "./state-store.js";
 export { DEFAULT_COMPANION_PORT, LOOPBACK_HOST, parseCompanionPort };
 export type { CompanionLogger } from "./logger.js";
 export const COMPANION_VERSION = "0.1.0";
-export const COMPANION_BUILD = "v0.1.0-rc.6";
+export const COMPANION_BUILD = "v0.1.0-rc.7";
 
 const RECENT_REQUEST_TTL_MS = 60_000;
 const MAX_RECENT_REQUESTS = 1_024;
 const MAX_ASSISTANT_RESPONSE_BYTES = 8_000;
+/** Markers persist until cleared; this only satisfies the wire contract. */
+const HIGHLIGHT_DURATION_SECONDS = 0;
 
 export interface CompanionServerOptions {
   port?: number;
@@ -388,6 +391,15 @@ async function handleDatagram(
       });
       recentRequests.remember(remote, packet.message_id, digest, null);
       return;
+    case "resource_snapshot":
+      stateStore.acceptResourceSnapshot(packet);
+      logger.info("resource_snapshot_accepted", {
+        force_id: packet.payload.force_id,
+        patches: packet.payload.patches.length,
+        omitted_patches: packet.payload.omitted_patches,
+      });
+      recentRequests.remember(remote, packet.message_id, digest, null);
+      return;
     case "assistant_request":
       recentRequests.remember(remote, packet.message_id, digest, null);
       await handleAssistantRequest(
@@ -491,6 +503,23 @@ async function handleAssistantRequest(
       digest,
       "assistant_response_sent",
     );
+
+    // Markers travel separately so the answer text is never delayed by them.
+    if (answer.markers !== undefined && answer.markers.length > 0) {
+      sendPacket(
+        socket,
+        createHighlightPacket({
+          messageId: `companion-${randomUUID()}`,
+          timestamp: Date.now(),
+          requestId: answer.requestId,
+          durationSeconds: HIGHLIGHT_DURATION_SECONDS,
+          markers: answer.markers,
+        }),
+        remote,
+        logger,
+        "highlight_sent",
+      );
+    }
   } catch (error: unknown) {
     if (error instanceof ProviderError && error.code === "cancelled") {
       sendResponsePacket(

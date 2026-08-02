@@ -1091,11 +1091,28 @@ local DETAILED_ENTITY_TYPES = {
   ["logistic-container"] = true,
   ["storage-tank"] = true,
   ["beacon"] = true,
+  -- Inserters are where "why is this machine not fed" is usually answered:
+  -- they carry the only cheap source of who-feeds-whom in the selection.
+  ["inserter"] = true,
 }
 
 local MAX_DETAILED_ENTITIES = 240
 local MAX_ENTITY_GROUPS = 64
 local MAX_CONTENT_ENTRIES = 8
+
+--- Names of `defines.direction` values, so the model reads north, not 0.
+local function direction_name(entity)
+  local direction = entity.direction
+  if direction == nil then
+    return nil
+  end
+  for name, value in pairs(defines.direction) do
+    if value == direction then
+      return name
+    end
+  end
+  return nil
+end
 
 --- Names of `defines.entity_status` values, resolved once per call.
 local function status_name(entity)
@@ -1182,12 +1199,51 @@ local function fluid_pairs(entity)
   return #result > 0 and result or nil
 end
 
+--- Identifies what an inserter takes from and gives to, when both are known.
+-- This is the only adjacency the snapshot carries: without it the model can see
+-- that a machine is starved but never which upstream entity starved it.
+local function inserter_link(entity)
+  if entity.type ~= "inserter" then
+    return nil
+  end
+
+  local link
+  local pickup_ok, pickup = pcall(function()
+    return entity.pickup_target
+  end)
+  if pickup_ok and pickup ~= nil and pickup.valid then
+    link = { from = pickup.unit_number, from_id = pickup.name }
+  end
+
+  local drop_ok, drop = pcall(function()
+    return entity.drop_target
+  end)
+  if drop_ok and drop ~= nil and drop.valid then
+    link = link or {}
+    link.to = drop.unit_number
+    link.to_id = drop.name
+  end
+
+  return link
+end
+
 local function describe_area_entity(entity)
   local descriptor = {
     id = entity.name,
     x = rounded(entity.position.x, 1),
     y = rounded(entity.position.y, 1),
   }
+
+  -- A stable handle, so the model can point at one specific machine and so
+  -- links below can reference an entity rather than repeat its position.
+  if entity.unit_number ~= nil then
+    descriptor.unit = entity.unit_number
+  end
+
+  local direction = direction_name(entity)
+  if direction ~= nil then
+    descriptor.facing = direction
+  end
 
   local recipe_ok, recipe = pcall(function()
     return entity.get_recipe()
@@ -1199,6 +1255,11 @@ local function describe_area_entity(entity)
   local status = status_name(entity)
   if status ~= nil then
     descriptor.status = status
+  end
+
+  local link_ok, link = pcall(inserter_link, entity)
+  if link_ok and link ~= nil then
+    descriptor.link = link
   end
 
   local modules_ok, modules = pcall(module_pairs, entity)
@@ -1352,6 +1413,161 @@ function collector.build_area_snapshot(state, force_id, selection_id, area, enti
 
   collector_state.last_selection_id = selection_id
   return { packets = packets, detailed_count = #detailed, omitted = omitted }
+end
+
+--- Ore patches the force has charted, aggregated so the model can answer
+-- "where should I mine next" without ever seeing individual ore tiles.
+--
+-- Cost matters here: this runs on the game thread, and a mid-game map holds
+-- tens of thousands of ore entities. So it only visits charted chunks, asks for
+-- one entity per chunk per resource to learn what is there, and derives the
+-- amount from that chunk's total rather than reading every tile.
+local MAX_RESOURCE_CHUNKS = 2048
+local MAX_RESOURCE_PATCHES = 40
+
+--- Groups charted chunks into patches of the same resource.
+local function collect_resource_patches(surface, force)
+  local by_chunk = {}
+  local visited = 0
+
+  for chunk in surface.get_chunks() do
+    if visited >= MAX_RESOURCE_CHUNKS then
+      break
+    end
+    if force.is_chunk_charted(surface, chunk) then
+      visited = visited + 1
+      local resources = surface.find_entities_filtered({
+        area = chunk.area,
+        type = "resource",
+      })
+      if #resources > 0 then
+        local totals = {}
+        for _, resource in pairs(resources) do
+          if resource.valid then
+            local name = resource.name
+            local entry = totals[name]
+            if entry == nil then
+              totals[name] = { amount = resource.amount, tiles = 1 }
+            else
+              entry.amount = entry.amount + resource.amount
+              entry.tiles = entry.tiles + 1
+            end
+          end
+        end
+        for name, entry in pairs(totals) do
+          by_chunk[name] = by_chunk[name] or {}
+          table.insert(by_chunk[name], {
+            x = chunk.x,
+            y = chunk.y,
+            amount = entry.amount,
+            tiles = entry.tiles,
+          })
+        end
+      end
+    end
+  end
+
+  return by_chunk
+end
+
+--- Merges chunks of one resource that touch into a single patch.
+local function merge_chunks_into_patches(chunks)
+  local index = {}
+  for _, chunk in ipairs(chunks) do
+    index[chunk.x .. ":" .. chunk.y] = chunk
+  end
+
+  local seen = {}
+  local patches = {}
+  for _, chunk in ipairs(chunks) do
+    local key = chunk.x .. ":" .. chunk.y
+    if not seen[key] then
+      -- Flood fill across the four neighbours, so one ore field is reported
+      -- once rather than as a scatter of 32x32 squares.
+      local queue = { chunk }
+      seen[key] = true
+      local amount = 0
+      local tiles = 0
+      local min_x, max_x = chunk.x, chunk.x
+      local min_y, max_y = chunk.y, chunk.y
+
+      while #queue > 0 do
+        local current = table.remove(queue)
+        amount = amount + current.amount
+        tiles = tiles + current.tiles
+        min_x = math.min(min_x, current.x)
+        max_x = math.max(max_x, current.x)
+        min_y = math.min(min_y, current.y)
+        max_y = math.max(max_y, current.y)
+
+        for _, offset in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+          local neighbour_key = (current.x + offset[1])
+            .. ":"
+            .. (current.y + offset[2])
+          if index[neighbour_key] ~= nil and not seen[neighbour_key] then
+            seen[neighbour_key] = true
+            table.insert(queue, index[neighbour_key])
+          end
+        end
+      end
+
+      table.insert(patches, {
+        -- Chunk coordinates are 32 tiles wide; report the centre in tiles so
+        -- the model can hand the position straight to a map marker.
+        x = rounded((min_x + max_x + 1) * 16, 1),
+        y = rounded((min_y + max_y + 1) * 16, 1),
+        amount = math.floor(amount),
+        tiles = tiles,
+      })
+    end
+  end
+
+  return patches
+end
+
+function collector.build_resource_snapshot(state, force_id)
+  local force = game.forces[force_id]
+  local surface = game.surfaces[1]
+  if force == nil or not force.valid or surface == nil then
+    return nil
+  end
+
+  local by_chunk = collect_resource_patches(surface, force)
+  local patches = {}
+  for name, chunks in pairs(by_chunk) do
+    for _, patch in ipairs(merge_chunks_into_patches(chunks)) do
+      patch.id = name
+      table.insert(patches, patch)
+    end
+  end
+
+  -- Biggest first: a depleted corner of a patch is far less useful to know
+  -- about than the field worth building an outpost on.
+  table.sort(patches, function(left, right)
+    if left.amount ~= right.amount then
+      return left.amount > right.amount
+    end
+    return left.id < right.id
+  end)
+
+  local omitted = math.max(#patches - MAX_RESOURCE_PATCHES, 0)
+  while #patches > MAX_RESOURCE_PATCHES do
+    table.remove(patches)
+  end
+
+  return {
+    protocol_version = 1,
+    schema_version = STATE_SCHEMA_VERSION,
+    message_id = next_message_id(state, "resource"),
+    type = "resource_snapshot",
+    tick = game.tick,
+    payload = {
+      force_id = force_id,
+      patches = patches,
+      omitted_patches = omitted,
+      truncated = omitted > 0,
+    },
+  }
 end
 
 function collector.should_log_sample(state, packet)

@@ -14,9 +14,15 @@ local DEFAULT_SAMPLE_INTERVAL_TICKS = 300
 local MIN_SAMPLE_INTERVAL_TICKS = 60
 local MAX_SAMPLE_INTERVAL_TICKS = 3600
 local STATIC_RETRY_INTERVAL_TICKS = 300
+-- Ore fields do not move, and scanning every charted chunk is expensive, so
+-- refresh them rarely: once every two game minutes.
+local RESOURCE_INTERVAL_TICKS = 7200
 local CONNECTION_TIMEOUT_TICKS = 600
 local PENDING_TIMEOUT_TICKS = 1200
-local UI_REQUEST_TIMEOUT_TICKS = 2400
+-- The Companion may need several model round trips for one question: it looks
+-- recipes up, decides what to mark, then writes the answer. Waiting well past
+-- its own budget is better than discarding an answer that is about to arrive.
+local UI_REQUEST_TIMEOUT_TICKS = 14400
 
 local ADVISOR_RULE_IDS = {
   ["research-idle"] = true,
@@ -101,6 +107,8 @@ local function get_state()
     unsupported_version_logged = false,
     ui_players = {},
     toast_expiry = {},
+    highlights = {},
+    highlight_tags = {},
   }
 
   local state = storage.factorio_ai_assistant
@@ -108,6 +116,8 @@ local function get_state()
   state.pending = state.pending or {}
   state.static_pending = state.static_pending or {}
   state.advisor_alerts = state.advisor_alerts or {}
+  state.highlights = state.highlights or {}
+  state.highlight_tags = state.highlight_tags or {}
   state.sampling_interval_ticks =
     state.sampling_interval_ticks or DEFAULT_SAMPLE_INTERVAL_TICKS
   state.receive_error_logged = state.receive_error_logged or false
@@ -274,14 +284,17 @@ end
 --- button, the toggle shortcut, the tab shortcuts, the alert cards and the mock
 --- harness. Auto-pause is only correct while a single open and a single close
 --- path own it.
-local function open_advisor(player)
+--- Opens the panel. `claim_pause` is false when the panel opens by itself
+-- rather than because the player asked for it: freezing the game because an
+-- answer happened to arrive would interrupt whatever they walked off to do.
+local function open_advisor(player, claim_pause)
   local state = get_state()
   local player_state = ui_state.ensure_player(state, player.index)
   local was_open = ui.is_open(player)
 
   ui.open(player, state, player_state)
 
-  if not was_open and ui.is_open(player) then
+  if claim_pause ~= false and not was_open and ui.is_open(player) then
     pause.on_panel_opened(player, player_state)
   end
   return player_state
@@ -725,6 +738,50 @@ local function send_area_snapshot(player, area, entities)
   return true
 end
 
+--- Sends the charted ore fields, so the model knows where things are.
+-- Scanning walks every charted chunk, which is far too expensive for the 5s
+-- sample loop, but ore does not move: a slow refresh is entirely adequate.
+local function maybe_send_resource_snapshot()
+  local state = get_state()
+  if state.last_resource_tick ~= nil
+    and game.tick - state.last_resource_tick < RESOURCE_INTERVAL_TICKS
+  then
+    return
+  end
+
+  local player = game.players[1]
+  local force_name = player ~= nil and player.force.name or "player"
+  local profiler = game.create_profiler()
+  local ok, packet = pcall(
+    state_collector.build_resource_snapshot,
+    state,
+    force_name
+  )
+  profiler.stop()
+  if not ok or packet == nil then
+    -- Try again next cycle rather than never: a transient failure here should
+    -- not silently disable map awareness for the rest of the session.
+    state.last_resource_tick = game.tick
+    return
+  end
+
+  state.last_resource_tick = game.tick
+  local encoded = helpers.table_to_json(packet)
+  if #encoded > MAX_PACKET_BYTES then
+    log("[factorio-ai-assistant] Resource snapshot too large; skipped")
+    return
+  end
+  send_udp_payload(encoded, "resource snapshot send")
+  log(
+    "[factorio-ai-assistant] Resource scan: patches="
+      .. #packet.payload.patches
+      .. ", omitted="
+      .. packet.payload.omitted_patches
+      .. ", duration="
+      .. tostring(profiler)
+  )
+end
+
 local function maybe_send_dynamic_snapshot()
   local state = get_state()
   if state.last_dynamic_tick ~= nil
@@ -975,6 +1032,160 @@ local function handle_advisor_update(packet, event)
   refresh_all_ui()
 end
 
+local HIGHLIGHT_SEVERITIES = {
+  problem = { 1, 0.25, 0.2 },
+  warning = { 1, 0.75, 0.15 },
+  info = { 0.4, 0.75, 1 },
+}
+local MAX_HIGHLIGHT_MARKERS = 12
+local MAX_HIGHLIGHT_DURATION_SECONDS = 300
+
+--- Removes every marker drawn for an earlier answer, including its map tag.
+local function clear_highlights(state)
+  for _, id in ipairs(state.highlights or {}) do
+    local object = rendering.get_object_by_id(id)
+    if object ~= nil and object.valid then
+      object.destroy()
+    end
+  end
+  state.highlights = {}
+
+  -- Map tags belong to a force rather than to the rendering system, so they
+  -- have to be looked up and destroyed separately. Group by force and surface
+  -- so the tag list is scanned once rather than once per marker.
+  local wanted = {}
+  for _, record in ipairs(state.highlight_tags or {}) do
+    local key = record.force .. "\0" .. record.surface
+    local group = wanted[key]
+    if group == nil then
+      group = { force = record.force, surface = record.surface, numbers = {} }
+      wanted[key] = group
+    end
+    group.numbers[record.number] = true
+  end
+
+  for _, group in pairs(wanted) do
+    local force = game.forces[group.force]
+    if force ~= nil and force.valid then
+      local found_ok, tags = pcall(force.find_chart_tags, group.surface)
+      if found_ok and tags ~= nil then
+        for _, tag in ipairs(tags) do
+          if tag.valid and group.numbers[tag.tag_number] then
+            tag.destroy()
+          end
+        end
+      end
+    end
+  end
+  state.highlight_tags = {}
+end
+
+--- Clears every marker and tells the player, when there was something to clear.
+local function clear_highlights_for(player)
+  local state = get_state()
+  local removed = #(state.highlights or {}) + #(state.highlight_tags or {})
+  clear_highlights(state)
+  if removed > 0 then
+    player.print({ "factorio-ai-assistant.highlights-cleared" })
+  end
+end
+
+--- Draws a box, a label and a map tag on each marked entity.
+-- Markers persist until the player clears them: a timer that expires while
+-- they are still walking over is worse than one stale box.
+local function handle_highlight(packet, event)
+  local payload = packet.payload
+  if packet.schema_version ~= STATE_SCHEMA_VERSION
+    or not is_non_negative_integer(packet.timestamp)
+    or not is_non_empty_string(payload.request_id, 256)
+    or not is_non_negative_integer(payload.duration_seconds)
+    or payload.duration_seconds > MAX_HIGHLIGHT_DURATION_SECONDS
+    or type(payload.markers) ~= "table"
+    or #payload.markers == 0
+    or #payload.markers > MAX_HIGHLIGHT_MARKERS
+  then
+    return
+  end
+
+  local state = get_state()
+  state.connected = true
+  state.last_response_tick = event.tick
+
+  -- A new answer replaces the previous set rather than stacking on it.
+  clear_highlights(state)
+
+  -- Map tags belong to a force. The selection came from the player's force, so
+  -- that is who should see the tags.
+  local force = game.forces.player
+
+  for _, marker in ipairs(payload.markers) do
+    local colour = type(marker) == "table"
+      and HIGHLIGHT_SEVERITIES[marker.severity]
+      or nil
+    if colour ~= nil and is_non_empty_string(marker.text, 60) then
+      local entity = nil
+      if is_non_negative_integer(marker.unit) then
+        local found_ok, found = pcall(
+          game.get_entity_by_unit_number,
+          marker.unit
+        )
+        if found_ok and found ~= nil and found.valid then
+          entity = found
+        end
+      end
+
+      -- Prefer the entity, so the box sits where it actually is; fall back to
+      -- the position the Companion recorded when the entity is gone.
+      local surface = entity ~= nil and entity.surface or game.surfaces[1]
+      local position = entity ~= nil and entity.position or nil
+      if position == nil
+        and type(marker.x) == "number"
+        and type(marker.y) == "number"
+      then
+        position = { x = marker.x, y = marker.y }
+      end
+
+      if position ~= nil and surface ~= nil then
+        local box = rendering.draw_rectangle({
+          color = colour,
+          width = 3,
+          filled = false,
+          left_top = { position.x - 0.6, position.y - 0.6 },
+          right_bottom = { position.x + 0.6, position.y + 0.6 },
+          surface = surface,
+        })
+        table.insert(state.highlights, box.id)
+
+        local label = rendering.draw_text({
+          text = marker.text,
+          surface = surface,
+          target = { position.x, position.y - 1.1 },
+          color = colour,
+          scale = 1.2,
+          alignment = "center",
+        })
+        table.insert(state.highlights, label.id)
+
+        -- The world markers are only visible on screen, so mirror each one as a
+        -- map tag: that is what makes a marked machine findable from the map.
+        if force ~= nil and force.valid then
+          local tag_ok, tag = pcall(force.add_chart_tag, surface, {
+            position = position,
+            text = marker.text,
+          })
+          if tag_ok and tag ~= nil and tag.valid then
+            table.insert(state.highlight_tags, {
+              number = tag.tag_number,
+              force = force.name,
+              surface = surface.name,
+            })
+          end
+        end
+      end
+    end
+  end
+end
+
 local function is_optional_string(value, maximum_length)
   return value == nil or is_non_empty_string(value, maximum_length)
 end
@@ -1030,9 +1241,9 @@ local function handle_assistant_response(packet, event)
       local player_state = ui_state.ensure_player(state, player_index)
       -- A question asked with /ai is answered in chat, because the player who
       -- used the command may not have the panel open at all.
-      if state.chat_command_requests ~= nil
-        and state.chat_command_requests[payload.reply_to]
-      then
+      local from_chat_command = state.chat_command_requests ~= nil
+        and state.chat_command_requests[payload.reply_to] ~= nil
+      if from_chat_command then
         state.chat_command_requests[payload.reply_to] = nil
         if payload.status == "ok" and payload.text ~= nil then
           player.print(payload.text)
@@ -1040,7 +1251,26 @@ local function handle_assistant_response(packet, event)
           player.print({ "factorio-ai-assistant.ai-command-failed" })
         end
       end
-      ui.render(player, state, player_state)
+
+      -- An answer can take a couple of minutes, so the player may well have
+      -- closed the panel and walked off. Reopen it in mini mode rather than
+      -- letting the answer sit unseen; it restores their previous size once
+      -- they switch out of mini. A /ai question is excluded: that player chose
+      -- to stay out of the panel, and already has the answer in chat.
+      if not from_chat_command
+        and not ui.is_open(player)
+        and payload.status == "ok"
+        and is_non_empty_string(payload.text)
+      then
+        if not ui_state.is_mini(player_state) then
+          ui_state.toggle_mini(player_state)
+        end
+        -- Through open_advisor so the panel opens the same way everywhere, but
+        -- without claiming the pause: the player did not ask for this.
+        open_advisor(player, false)
+      else
+        ui.render(player, state, player_state)
+      end
     end
   end
 end
@@ -1190,6 +1420,8 @@ local function handle_udp_packet(event)
     handle_resync_request(packet, event)
   elseif packet.type == "advisor_update" then
     handle_advisor_update(packet, event)
+  elseif packet.type == "highlight" then
+    handle_highlight(packet, event)
   elseif packet.type == "assistant_response" then
     handle_assistant_response(packet, event)
   elseif packet.type == "calculation_response" then
@@ -1259,6 +1491,10 @@ script.on_configuration_changed(function()
   state_collector.initialize(state)
   state_collector.invalidate_static(state)
   localization.invalidate(state)
+  -- Render ids do not survive a version change, so drop the stale handles
+  -- rather than let them accumulate forever. Map tags do survive, so clear
+  -- them properly first.
+  clear_highlights(state)
 
   for _, player in pairs(game.players) do
     initialize_player(player)
@@ -1552,6 +1788,8 @@ script.on_event(defines.events.on_gui_click, function(event)
     cancel_chat_request(player)
   elseif action == "clear-chat" then
     clear_chat_history(player)
+  elseif action == "clear-highlights" then
+    clear_highlights_for(player)
   elseif action == "dismiss-alert" then
     set_alert_dismissed(player, tags.alert_id, true)
   elseif action == "restore-alert" then
@@ -1609,6 +1847,13 @@ script.on_event(defines.events.on_gui_closed, function(event)
     if player ~= nil then
       close_advisor(player)
     end
+  end
+end)
+
+script.on_event("factorio-ai-assistant-clear-highlights", function(event)
+  local player = game.get_player(event.player_index)
+  if player ~= nil then
+    clear_highlights_for(player)
   end
 end)
 
@@ -2013,6 +2258,7 @@ end
 
 local function run_every_second_tasks()
   maybe_send_dynamic_snapshot()
+  maybe_send_resource_snapshot()
   update_connection_status()
   -- Reaching this handler means ticks are running again, so a pause the Mod
   -- still claims to own was lifted by the player.

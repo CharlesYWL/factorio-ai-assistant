@@ -10,6 +10,7 @@ ui.CHAT_INPUT_NAME = "factorio-ai-assistant-chat-input"
 ui.CHAT_SEND_NAME = "factorio-ai-assistant-chat-send"
 ui.CHAT_CANCEL_NAME = "factorio-ai-assistant-chat-cancel"
 ui.CHAT_CLEAR_NAME = "factorio-ai-assistant-chat-clear"
+ui.HIGHLIGHT_CLEAR_NAME = "factorio-ai-assistant-highlight-clear"
 ui.CLEAR_ALERTS_NAME = "factorio-ai-assistant-clear-alerts"
 ui.HUD_CLEAR_ALERTS_NAME = "factorio-ai-assistant-hud-clear-alerts"
 
@@ -672,6 +673,13 @@ build_chat = function(parent, state, player_state)
   end
   local spacer = quick.add({ type = "empty-widget" })
   spacer.style.horizontally_stretchable = true
+  quick.add({
+    type = "button",
+    name = ui.HIGHLIGHT_CLEAR_NAME,
+    caption = { "factorio-ai-assistant.clear-highlights" },
+    tooltip = { "factorio-ai-assistant.clear-highlights-tooltip" },
+    tags = { action = "clear-highlights" },
+  })
   quick.add({
     type = "button",
     name = ui.CHAT_CLEAR_NAME,

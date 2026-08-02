@@ -15,6 +15,14 @@ export const ADVISOR_RULE_IDS = [
 ] as const;
 export const ADVISOR_SEVERITIES = ["info", "warning", "critical"] as const;
 export const ADVISOR_EVENT_TYPES = ["opened", "reminder", "closed"] as const;
+export const HIGHLIGHT_SEVERITIES = ["problem", "warning", "info"] as const;
+/** Bounded so one answer cannot bury the map in labels. */
+export const MAX_HIGHLIGHT_MARKERS = 12;
+export const MAX_MARKER_TEXT_LENGTH = 60;
+/** Upper bound on how long markers linger before the Mod clears them. */
+export const MAX_HIGHLIGHT_DURATION_SECONDS = 300;
+/** Enough ore fields to choose between, few enough to stay cheap to send. */
+export const MAX_RESOURCE_PATCHES = 40;
 export const ASSISTANT_MODES = ["local", "local-model", "remote-model"] as const;
 export const ASSISTANT_RESPONSE_MODES = ["local", "model"] as const;
 export const ASSISTANT_RESPONSE_STATUSES = ["ok", "cancelled", "error"] as const;
@@ -334,6 +342,14 @@ export interface AreaEntity {
   /** Tile position, so the answer can point at a specific machine. */
   x: number;
   y: number;
+  /**
+   * Factorio's `unit_number`: a stable handle for this entity. It lets an
+   * answer refer to one specific machine, and lets `link` below name an entity
+   * instead of repeating coordinates.
+   */
+  unit?: number;
+  /** Orientation name, e.g. `north`. Needed to reason about flow direction. */
+  facing?: string;
   /** Recipe currently set, when the entity crafts. */
   recipe?: string;
   /**
@@ -341,12 +357,25 @@ export interface AreaEntity {
    * This is what makes "why is this stalled" answerable at all.
    */
   status?: string;
+  /**
+   * For an inserter, what it takes from and gives to. The only adjacency the
+   * snapshot carries: without it a starved machine has no traceable cause.
+   */
+  link?: AreaEntityLink;
   /** Installed modules as `id x count`. */
   modules?: Array<[string, number]>;
   /** Notable inventory contents as `id x count`. */
   contents?: Array<[string, number]>;
   /** Fluid contents as `id x amount`, rounded. */
   fluids?: Array<[string, number]>;
+}
+
+/** Where an inserter picks up from and drops to. */
+export interface AreaEntityLink {
+  from?: number;
+  from_id?: string;
+  to?: number;
+  to_id?: string;
 }
 
 /** Entities reported as a count rather than individually, such as belts. */
@@ -428,6 +457,44 @@ export interface AdvisorUpdatePacket {
 export interface AssistantHistoryTurn {
   question: string;
   answer: string;
+}
+
+/** How a marker is drawn; the Mod maps these onto concrete colours. */
+export type HighlightSeverity = "problem" | "warning" | "info";
+
+/** One entity the answer wants the player to look at. */
+export interface HighlightMarker {
+  /** `unit_number` from the area snapshot, when the entity is still known. */
+  unit?: number;
+  /** Fallback position, for when no unit number travelled. */
+  x?: number;
+  y?: number;
+  /** Short label drawn next to the entity. */
+  text: string;
+  severity: HighlightSeverity;
+}
+
+/**
+ * Markers the Companion asks the Mod to draw in the world, so an answer can
+ * point at the machine it is talking about rather than describe coordinates.
+ */
+export interface HighlightPacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "highlight";
+  timestamp: number;
+  payload: {
+    /** Which request produced these, so a stale set can be discarded. */
+    request_id: string;
+    /**
+     * Kept for wire compatibility; the Mod no longer expires markers. They
+     * persist until the player clears them, because a timer that runs out
+     * while they are walking over is worse than one stale box.
+     */
+    duration_seconds: number;
+    markers: HighlightMarker[];
+  };
 }
 
 export const MAX_ASSISTANT_HISTORY_TURNS = 4;
@@ -560,6 +627,38 @@ export interface LocalizationUpdatePacket {
   payload: LocalizationUpdatePayload;
 }
 
+/** One charted ore field, aggregated from the chunks it spans. */
+export interface ResourcePatch {
+  /** Resource prototype name, e.g. `iron-ore`. */
+  id: string;
+  /** Centre of the patch, in tiles, ready to hand to a map marker. */
+  x: number;
+  y: number;
+  /** Ore remaining across the whole patch. */
+  amount: number;
+  /** How many ore tiles it covers, which indicates how wide it is. */
+  tiles: number;
+}
+
+/**
+ * Charted ore fields. Without these the model has no map at all: it can see
+ * what the factory produces but not where anything is, so "where should I put
+ * the next outpost" is unanswerable.
+ */
+export interface ResourceSnapshotPacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "resource_snapshot";
+  tick: number;
+  payload: {
+    force_id: string;
+    patches: ResourcePatch[];
+    omitted_patches: number;
+    truncated: boolean;
+  };
+}
+
 export type ProtocolPacket =
   | HelloPacket
   | HelloAckPacket
@@ -567,9 +666,11 @@ export type ProtocolPacket =
   | StaticDeltaPacket
   | DynamicSnapshotPacket
   | AreaSnapshotPacket
+  | ResourceSnapshotPacket
   | StateAckPacket
   | ResyncRequestPacket
   | AdvisorUpdatePacket
+  | HighlightPacket
   | AssistantRequestPacket
   | AssistantCancelPacket
   | AssistantResponsePacket
@@ -614,6 +715,14 @@ interface AdvisorUpdatePacketInput {
   event: AdvisorEventType;
   proactive: boolean;
   alert: AdvisorAlert;
+}
+
+interface HighlightPacketInput {
+  messageId: string;
+  timestamp: number;
+  requestId: string;
+  durationSeconds: number;
+  markers: HighlightMarker[];
 }
 
 interface AssistantRequestPacketInput {
@@ -741,6 +850,23 @@ export function createAdvisorUpdatePacket(
       event: input.event,
       proactive: input.proactive,
       alert: input.alert,
+    },
+  };
+}
+
+export function createHighlightPacket(
+  input: HighlightPacketInput,
+): HighlightPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "highlight",
+    timestamp: input.timestamp,
+    payload: {
+      request_id: input.requestId,
+      duration_seconds: input.durationSeconds,
+      markers: input.markers,
     },
   };
 }
@@ -929,12 +1055,16 @@ export function decodePacket(input: string | Uint8Array): ProtocolPacket {
       return decodeDynamicSnapshot(packet, payload, messageId);
     case "area_snapshot":
       return decodeAreaSnapshot(packet, payload, messageId);
+    case "resource_snapshot":
+      return decodeResourceSnapshot(packet, payload, messageId);
     case "state_ack":
       return decodeStateAck(packet, payload, messageId);
     case "resync_request":
       return decodeResyncRequest(packet, payload, messageId);
     case "advisor_update":
       return decodeAdvisorUpdate(packet, payload, messageId);
+    case "highlight":
+      return decodeHighlight(packet, payload, messageId);
     case "assistant_request":
       return decodeAssistantRequest(packet, payload, messageId);
     case "assistant_cancel":
@@ -1221,6 +1351,46 @@ function readDynamicChunking(
   return { chunk_index: chunkIndex, chunk_count: chunkCount };
 }
 
+function decodeResourceSnapshot(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): ResourceSnapshotPacket {
+  readStateSchemaVersion(packet);
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "resource_snapshot",
+    tick: readNonNegativeInteger(packet.tick, "tick"),
+    payload: {
+      force_id: readNonEmptyString(payload.force_id, "payload.force_id"),
+      patches: readArray(
+        payload.patches,
+        "payload.patches",
+        readResourcePatch,
+        MAX_RESOURCE_PATCHES,
+      ),
+      omitted_patches: readNonNegativeInteger(
+        payload.omitted_patches,
+        "payload.omitted_patches",
+      ),
+      truncated: readBoolean(payload.truncated, "payload.truncated"),
+    },
+  };
+}
+
+function readResourcePatch(value: unknown, path: string): ResourcePatch {
+  const patch = readRecord(value, path);
+  return {
+    id: readNonEmptyString(patch.id, `${path}.id`),
+    x: readFiniteNumber(patch.x, `${path}.x`),
+    y: readFiniteNumber(patch.y, `${path}.y`),
+    amount: readNonNegativeInteger(patch.amount, `${path}.amount`),
+    tiles: readNonNegativeInteger(patch.tiles, `${path}.tiles`),
+  };
+}
+
 function decodeAreaSnapshot(
   packet: Record<string, unknown>,
   payload: Record<string, unknown>,
@@ -1282,20 +1452,49 @@ function readAreaEntity(value: unknown, path: string): AreaEntity {
   const modules = optionalPairs(entity.modules, `${path}.modules`);
   const contents = optionalPairs(entity.contents, `${path}.contents`);
   const fluids = optionalPairs(entity.fluids, `${path}.fluids`);
+  const link =
+    entity.link === undefined
+      ? undefined
+      : readAreaEntityLink(entity.link, `${path}.link`);
 
   return {
     id: readNonEmptyString(entity.id, `${path}.id`),
     x: readFiniteNumber(entity.x, `${path}.x`),
     y: readFiniteNumber(entity.y, `${path}.y`),
+    ...(entity.unit === undefined
+      ? {}
+      : { unit: readNonNegativeInteger(entity.unit, `${path}.unit`) }),
+    ...(entity.facing === undefined
+      ? {}
+      : { facing: readNonEmptyString(entity.facing, `${path}.facing`) }),
     ...(entity.recipe === undefined
       ? {}
       : { recipe: readNonEmptyString(entity.recipe, `${path}.recipe`) }),
     ...(entity.status === undefined
       ? {}
       : { status: readNonEmptyString(entity.status, `${path}.status`) }),
+    ...(link === undefined ? {} : { link }),
     ...(modules === undefined ? {} : { modules }),
     ...(contents === undefined ? {} : { contents }),
     ...(fluids === undefined ? {} : { fluids }),
+  };
+}
+
+function readAreaEntityLink(value: unknown, path: string): AreaEntityLink {
+  const link = readRecord(value, path);
+  return {
+    ...(link.from === undefined
+      ? {}
+      : { from: readNonNegativeInteger(link.from, `${path}.from`) }),
+    ...(link.from_id === undefined
+      ? {}
+      : { from_id: readNonEmptyString(link.from_id, `${path}.from_id`) }),
+    ...(link.to === undefined
+      ? {}
+      : { to: readNonNegativeInteger(link.to, `${path}.to`) }),
+    ...(link.to_id === undefined
+      ? {}
+      : { to_id: readNonEmptyString(link.to_id, `${path}.to_id`) }),
   };
 }
 
@@ -1383,6 +1582,67 @@ function decodeAdvisorUpdate(
       proactive,
       alert: readAdvisorAlert(payload.alert, "payload.alert"),
     },
+  };
+}
+
+function decodeHighlight(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): HighlightPacket {
+  readStateSchemaVersion(packet);
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "highlight",
+    timestamp: readNonNegativeInteger(packet.timestamp, "timestamp"),
+    payload: {
+      request_id: readNonEmptyString(payload.request_id, "payload.request_id"),
+      duration_seconds: readNonNegativeInteger(
+        payload.duration_seconds,
+        "payload.duration_seconds",
+      ),
+      markers: readArray(
+        payload.markers,
+        "payload.markers",
+        readHighlightMarker,
+        MAX_HIGHLIGHT_MARKERS,
+      ),
+    },
+  };
+}
+
+function readHighlightMarker(value: unknown, path: string): HighlightMarker {
+  const marker = readRecord(value, path);
+  const unit =
+    marker.unit === undefined
+      ? undefined
+      : readNonNegativeInteger(marker.unit, `${path}.unit`);
+  const x =
+    marker.x === undefined
+      ? undefined
+      : readFiniteNumber(marker.x, `${path}.x`);
+  const y =
+    marker.y === undefined
+      ? undefined
+      : readFiniteNumber(marker.y, `${path}.y`);
+
+  // Without either anchor there is nothing to draw on.
+  if (unit === undefined && (x === undefined || y === undefined)) {
+    throw invalidPacket(`${path} needs either unit or both x and y`);
+  }
+
+  return {
+    ...(unit === undefined ? {} : { unit }),
+    ...(x === undefined ? {} : { x }),
+    ...(y === undefined ? {} : { y }),
+    text: readNonEmptyString(marker.text, `${path}.text`, MAX_MARKER_TEXT_LENGTH),
+    severity: readEnum(
+      marker.severity,
+      `${path}.severity`,
+      HIGHLIGHT_SEVERITIES,
+    ),
   };
 }
 

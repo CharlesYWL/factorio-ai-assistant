@@ -24,6 +24,12 @@ data:extend({
     consuming = "game-only",
   },
   {
+    type = "custom-input",
+    name = "factorio-ai-assistant-clear-highlights",
+    key_sequence = "CONTROL + SHIFT + C",
+    consuming = "game-only",
+  },
+  {
     -- Read-only inspection tool: dragging it collects what is inside the box so
     -- a question can be asked about that specific part of the factory. It never
     -- modifies anything, so it needs no build or destroy permissions.

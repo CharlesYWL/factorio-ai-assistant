@@ -5,6 +5,7 @@ import type {
   MachineDescriptor,
   ModuleDescriptor,
   RecipeDescriptor,
+  ResourceSnapshotPacket,
   StaticDeltaPacket,
   StaticForceDescriptor,
   StaticGameDescriptor,
@@ -155,6 +156,7 @@ export class CompanionStateStore {
   /** Chunks of the area selection currently being assembled, if any. */
   #pendingArea: PendingAreaSelection | undefined;
   #areaSelection: AreaSnapshotPacket | undefined;
+  #resources: ResourceSnapshotPacket | undefined;
   #staticState: StaticState | undefined;
   #dynamicState: DynamicSnapshotPacket | undefined;
 
@@ -173,6 +175,15 @@ export class CompanionStateStore {
   /** The most recent area the player selected, if any. */
   public get areaSelection(): AreaSnapshotPacket | undefined {
     return this.#areaSelection;
+  }
+
+  /** Charted ore fields, refreshed slowly because ore does not move. */
+  public get resources(): ResourceSnapshotPacket | undefined {
+    return this.#resources;
+  }
+
+  public acceptResourceSnapshot(packet: ResourceSnapshotPacket): void {
+    this.#resources = packet;
   }
 
   /**
