@@ -24,7 +24,7 @@ Factorio 与 Companion 必须使用两个不同的 UDP 端口：
 
 ```powershell
 .\install.ps1                    # 装最新 release
-.\install.ps1 -Tag v0.1.0-rc.6   # 装指定版本
+.\install.ps1 -Tag v0.1.0-rc.7   # 装指定版本
 .\install.ps1 -NoStart           # 只安装，不启动 Companion
 .\install.ps1 -FromLocalBuild    # 装本地 npm run package 的产物
 ```

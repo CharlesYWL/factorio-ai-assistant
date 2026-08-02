@@ -11,7 +11,7 @@ a previous install lives in a differently-versioned folder its config is
 carried across. Everything else in the Companion folder is replaced.
 
 .PARAMETER Tag
-Release tag to install, for example `v0.1.0-rc.6`. Defaults to the latest
+Release tag to install, for example `v0.1.0-rc.7`. Defaults to the latest
 release.
 
 .PARAMETER FromLocalBuild
@@ -25,7 +25,7 @@ Install without starting the Companion.
 .\install.ps1
 
 .EXAMPLE
-.\install.ps1 -Tag v0.1.0-rc.6
+.\install.ps1 -Tag v0.1.0-rc.7
 #>
 [CmdletBinding()]
 param(
