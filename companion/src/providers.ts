@@ -329,7 +329,10 @@ function buildMessages(request: ProviderRequest): { messages: ChatMessage[] } {
       "`highlight_entities` to mark it, then say it is marked in-game. Use a " +
       "`unit` for an existing machine, or `x`/`y` to propose where to build " +
       "something. Marking is how the player finds the spot: coordinates in " +
-      "prose are hard to act on.\n\n"
+      "prose are hard to act on.\n\n" +
+      "Never write that something is marked unless you actually called that " +
+      "tool in this conversation. The player checks the map, and a claim with " +
+      "nothing behind it reads as a broken feature.\n\n"
     : "";
 
   const messages: ChatMessage[] = [

@@ -12,6 +12,7 @@ import {
   AssistantInputError,
   AssistantService,
   MAX_QUESTION_BYTES,
+  reconcileMarkerClaim,
 } from "./assistant-service.js";
 import { resolveCompanionConfig } from "./config.js";
 import type { CompanionLogger } from "./logger.js";
@@ -82,6 +83,67 @@ void test("keeps numbers the model derived from the supplied recipes", async () 
   assert.equal(answer.mode, "model");
   assert.match(answer.text, /0\.933/u);
   assert.match(answer.text, /583\.333/u);
+});
+
+void test("corrects an answer that claims a marker it never drew", () => {
+  // The model can write "marked in-game" without calling the tool. The player
+  // then checks the map, finds nothing, and concludes the feature is broken.
+  let warned = 0;
+  const corrected = reconcileMarkerClaim(
+    "组装机缺量子电路。相关机器已在游戏内标记。",
+    0,
+    "zh-CN",
+    () => {
+      warned += 1;
+    },
+  );
+
+  assert.match(corrected, /没有实际标记/u);
+  assert.equal(warned, 1);
+});
+
+void test("leaves the answer alone when markers really were drawn", () => {
+  let warned = 0;
+  const text = "组装机缺量子电路。相关机器已在游戏内标记。";
+  const result = reconcileMarkerClaim(text, 2, "zh-CN", () => {
+    warned += 1;
+  });
+
+  assert.equal(result, text);
+  assert.equal(warned, 0);
+});
+
+void test("does not correct an answer that never claimed a marker", () => {
+  // "标记" appears in plenty of Factorio contexts -- circuit signals, train
+  // stops -- and appending a correction to a correct answer is worse than
+  // missing a claim.
+  for (const text of [
+    "用信号标记器可以给电路网络打标记。",
+    "把火车站的标记改成「铁矿装车」。",
+    "该配方需要量子电路 10 个。",
+  ]) {
+    let warned = 0;
+    const result = reconcileMarkerClaim(text, 0, "zh-CN", () => {
+      warned += 1;
+    });
+    assert.equal(result, text, text);
+    assert.equal(warned, 0, text);
+  }
+});
+
+void test("catches the English form of the claim too", () => {
+  let warned = 0;
+  const corrected = reconcileMarkerClaim(
+    "The furnace is starved. I marked them in-game for you.",
+    0,
+    "en",
+    () => {
+      warned += 1;
+    },
+  );
+
+  assert.match(corrected, /does not hold/u);
+  assert.equal(warned, 1);
 });
 
 void test("offers recipe tools and serves what the model asks for", async () => {

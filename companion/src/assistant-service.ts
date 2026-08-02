@@ -6,7 +6,7 @@ import type {
 } from "@factorio-ai-assistant/protocol";
 
 import type { AdvisorEngine } from "./advisor.js";
-import type { CompanionConfig } from "./config.js";
+import type { AssistantLanguage, CompanionConfig } from "./config.js";
 import { isLoopbackUrl } from "./config.js";
 import { buildCompactContext, type ContextSources } from "./context.js";
 import { ProductionHistory, summarizeTrend } from "./history.js";
@@ -191,6 +191,15 @@ export class AssistantService {
       if (text.length === 0) {
         return this.#stateSummary(requestId, request, "empty_response");
       }
+      const finalText = reconcileMarkerClaim(
+        text,
+        markers.length,
+        this.#config.language,
+        () =>
+          this.#logger.warn("assistant_marker_claim_unmet", {
+            request_id: requestId,
+          }),
+      );
 
       this.#logger.info("assistant_request_completed", {
         request_id: requestId,
@@ -202,7 +211,7 @@ export class AssistantService {
       return {
         requestId,
         mode: "model",
-        text,
+        text: finalText,
         provider: this.#provider.kind,
         model: response.model,
         ...(markers.length === 0 ? {} : { markers }),
@@ -462,6 +471,49 @@ export function validateQuestion(value: string): string {
     throw new AssistantInputError("Question contains disallowed control characters");
   }
   return question;
+}
+
+/**
+ * Words a model reaches for when it claims to have marked something. Kept
+ * deliberately narrow: matching "标记" alone would fire on a question about
+ * circuit signals, and a false positive appends a correction to a correct
+ * answer, which is worse than missing one claim.
+ */
+const MARKER_CLAIM_PATTERNS: readonly RegExp[] = [
+  /已(?:在游戏内)?(?:标记|标注)/u,
+  /(?:游戏内|地图上|世界里)已?(?:标记|标注)/u,
+  /(?:标记|标注)(?:了|在)(?:游戏|地图)/u,
+  /\bmarked (?:them |it |these |those )?(?:in[- ]game|on the map|in the world)/iu,
+  /\b(?:I(?:'ve| have)? )?(?:marked|highlighted) (?:them|it|these|those)\b/iu,
+];
+
+/**
+ * Stops an answer asserting a marker that was never drawn.
+ *
+ * The model can write "marked in-game" without ever calling the tool, and
+ * nothing downstream would notice: the player reads the claim, looks at a map
+ * with nothing on it, and reasonably concludes the feature is broken. Trusting
+ * the tool call rather than the prose is the only reliable signal we have.
+ */
+export function reconcileMarkerClaim(
+  text: string,
+  markerCount: number,
+  language: AssistantLanguage,
+  onUnmet: () => void,
+): string {
+  if (markerCount > 0) {
+    return text;
+  }
+  if (!MARKER_CLAIM_PATTERNS.some((pattern) => pattern.test(text))) {
+    return text;
+  }
+
+  onUnmet();
+  const note =
+    language === "zh-CN"
+      ? "（注意：本次没有实际标记任何位置，上文提到的「已标记」不成立。）"
+      : "(Note: nothing was actually marked this time; the claim above does not hold.)";
+  return `${text}\n\n${note}`;
 }
 
 function containsDisallowedControl(value: string): boolean {
