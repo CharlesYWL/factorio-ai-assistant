@@ -84,13 +84,28 @@ void test("keeps numbers the model derived from the supplied recipes", async () 
   assert.match(answer.text, /583\.333/u);
 });
 
-void test("sends this save's recipes to the model", async () => {
-  let captured: ProviderRequest | undefined;
+void test("offers recipe tools and serves what the model asks for", async () => {
+  const captured: ProviderRequest[] = [];
+  let round = 0;
   const provider: AIProvider = {
     kind: "openai-compatible",
     complete(request) {
-      captured = request;
-      return Promise.resolve({ text: "ok", model: "test-model" });
+      captured.push(request);
+      round += 1;
+      // First round: ask for a recipe. Second: answer with what came back.
+      return round === 1
+        ? Promise.resolve({
+            text: "",
+            model: "test-model",
+            toolCalls: [
+              {
+                id: "call-1",
+                name: "get_recipe",
+                arguments: JSON.stringify({ ids: ["utility-science-pack"] }),
+              },
+            ],
+          })
+        : Promise.resolve({ text: "ok", model: "test-model" });
     },
   };
   const store = new CompanionStateStore();
@@ -106,16 +121,66 @@ void test("sends this save's recipes to the model", async () => {
     provider,
   });
 
-  await service.answer({
+  const answer = await service.answer({
     question: "每分钟 10 个 utility-science-pack 要多少机器",
     forceId: "player",
   });
 
-  const context = captured?.context as Record<string, unknown>;
-  const recipes = context.recipes as { recipes: Array<{ r: [string, number, string] }> };
-  assert.ok(recipes.recipes.some((entry) => entry.r[0] === "utility-science-pack"));
-  // Upstream steps must travel too, or a rate question cannot be answered.
-  assert.ok(recipes.recipes.some((entry) => entry.r[0] === "copper-plate"));
+  const context = captured[0]?.context as Record<string, unknown>;
+  const catalog = context.recipe_catalog as { recipes: Array<{ id: string }> };
+  assert.ok(catalog.recipes.some((entry) => entry.id === "utility-science-pack"));
+  assert.ok(catalog.recipes.some((entry) => entry.id === "copper-plate"));
+  assert.ok(captured[0]?.tools !== undefined, "tools must be offered");
+
+  // The looked-up recipe must be replayed, or the model answers blind.
+  const replayed = captured[1]?.toolTurns?.[0];
+  assert.equal(replayed?.calls[0]?.name, "get_recipe");
+  assert.ok(replayed?.results[0]?.content.includes("utility-science-pack"));
+  assert.equal(answer.text, "ok");
+});
+
+void test("stops calling tools after the round limit", async () => {
+  let calls = 0;
+  const provider: AIProvider = {
+    kind: "openai-compatible",
+    complete(request) {
+      calls += 1;
+      // A model that never stops asking must not stall the request forever.
+      return request.tools === undefined
+        ? Promise.resolve({ text: "forced answer", model: "test-model" })
+        : Promise.resolve({
+            text: "",
+            model: "test-model",
+            toolCalls: [
+              {
+                id: `call-${calls}`,
+                name: "search_recipes",
+                arguments: JSON.stringify({ query: "science" }),
+              },
+            ],
+          });
+    },
+  };
+  const store = new CompanionStateStore();
+  assert.equal(store.acceptStaticSnapshotChunk(staticPacket()), true);
+  const service = new AssistantService({
+    config: resolveCompanionConfig(
+      { provider: "openclaw", model_retry_count: 0 },
+      {},
+    ),
+    stateStore: store,
+    advisor: new AdvisorEngine(),
+    logger: silentLogger,
+    provider,
+  });
+
+  const answer = await service.answer({
+    question: "随便问问",
+    forceId: "player",
+  });
+
+  assert.equal(answer.text, "forced answer");
+  assert.ok(calls <= 5, `expected a bounded number of calls, got ${calls}`);
 });
 
 void test("falls back to known state when the provider fails", async () => {

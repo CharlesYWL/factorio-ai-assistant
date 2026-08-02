@@ -13,11 +13,11 @@ export interface ProviderExecutorOptions {
 }
 
 /**
- * Ceiling on the whole request, retries included. Generous because a model
- * writing several hundred words of reasoning legitimately takes tens of
- * seconds, and the player would rather wait than get the local fallback.
+ * Ceiling on the whole request, retries included. One question can cost several
+ * model round trips, and each leg legitimately takes tens of seconds. This
+ * bounds a single leg; `MAX_TOOL_LOOP_MS` bounds the sequence of them.
  */
-export const MAX_PROVIDER_TOTAL_WAIT_MS = 120_000;
+export const MAX_PROVIDER_TOTAL_WAIT_MS = 90_000;
 
 export class ProviderExecutor {
   readonly #provider: AIProvider;

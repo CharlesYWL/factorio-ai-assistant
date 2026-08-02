@@ -6,30 +6,46 @@ import {
   STATE_SCHEMA_VERSION,
   type AreaSnapshotPacket,
   type DynamicForceSummary,
+  type HighlightMarker,
+  type ResourceSnapshotPacket,
 } from "@factorio-ai-assistant/protocol";
 
 import { buildCompactContext } from "./context.js";
 import { LocalizedNameStore } from "./localization.js";
+import { executeRecipeTool } from "./recipe-tools.js";
 import type { StaticState } from "./state-store.js";
 
-void test("supplies the recipe chain for a product the question names", () => {
+void test("lists a named product and its chain in the catalog", () => {
   const context = buildCompactContext(
     "每分钟 10 个 utility-science-pack 要多少机器",
     { staticState: staticState(), dynamicForce: dynamicForce() },
     12_000,
   );
 
-  const recipes = context.recipes as { recipes: Array<{ r: [string, number, string] }> };
-  const ids = recipes.recipes.map((entry) => entry.r[0]);
-  // The named product plus everything upstream of it: without the chain the
-  // model cannot work out the inputs a rate implies.
+  const catalog = context.recipe_catalog as { recipes: Array<{ id: string }> };
+  const ids = catalog.recipes.map((entry) => entry.id);
+  // The model needs to see that these exist before it can look them up; the
+  // ingredients themselves arrive through get_recipe.
   assert.ok(ids.includes("utility-science-pack"));
   assert.ok(ids.includes("processing-unit"));
   assert.ok(ids.includes("copper-cable"));
   assert.ok(ids.includes("copper-plate"));
 });
 
-void test("carries this save's recipe even when it differs from vanilla", () => {
+void test("the catalog omits ingredients, which is where the saving comes from", () => {
+  const context = buildCompactContext(
+    "utility-science-pack 需要什么",
+    { staticState: staticState() },
+    12_000,
+  );
+
+  const encoded = JSON.stringify(context.recipe_catalog);
+  // Ingredients made the old block ~87% of the whole budget.
+  assert.ok(!encoded.includes('"i"'), "ingredients must not travel up front");
+  assert.ok(!encoded.includes('"o"'), "products must not travel up front");
+});
+
+void test("get_recipe carries this save's recipe even when it differs from vanilla", () => {
   // The player's mods can redefine a recipe, so the model must be given the
   // save's own ingredients rather than relying on what it remembers.
   const modded = staticState();
@@ -39,22 +55,16 @@ void test("carries this save's recipe even when it differs from vanilla", () => 
   assert.ok(target !== undefined);
   target.ingredients = [{ kind: "item", id: "copper-cable", amount: 7 }];
 
-  const context = buildCompactContext(
-    "utility-science-pack 需要什么",
-    { staticState: modded },
-    12_000,
-  );
+  const result = executeRecipeTool(
+    "get_recipe",
+    JSON.stringify({ ids: ["utility-science-pack"] }),
+    { staticState: modded, names: new LocalizedNameStore() },
+  ) as { recipes: Array<{ i: Array<[string, number]> }> };
 
-  const recipes = context.recipes as {
-    recipes: Array<{ r: [string, number, string]; i: Array<[string, number]> }>;
-  };
-  const carried = recipes.recipes.find(
-    (entry) => entry.r[0] === "utility-science-pack",
-  );
-  assert.deepEqual(carried?.i, [["copper-cable", 7]]);
+  assert.deepEqual(result.recipes[0]?.i, [["copper-cable", 7]]);
 });
 
-void test("ranks the named product's chain first", () => {
+void test("the catalog carries display names so nicknames can be mapped", () => {
   const names = new LocalizedNameStore();
   names.apply({
     protocol_version: 1,
@@ -65,7 +75,7 @@ void test("ranks the named product's chain first", () => {
     payload: {
       locale: "zh-CN",
       reset: true,
-      names: [{ kind: "item", id: "utility-science-pack", name: "黄瓶" }],
+      names: [{ kind: "recipe", id: "utility-science-pack", name: "银金分析包" }],
     },
   });
 
@@ -75,15 +85,42 @@ void test("ranks the named product's chain first", () => {
     48_000,
   );
 
-  const recipes = context.recipes as { recipes: Array<{ r: [string, number, string] }> };
-  const ids = recipes.recipes.map((entry) => entry.r[0]);
-  // Relevance only decides ordering; if the budget ever bites, the chain the
-  // question is about is what survives.
-  assert.equal(ids[0], "utility-science-pack");
-  assert.ok(ids.indexOf("processing-unit") < ids.indexOf("unrelated-item"));
+  const catalog = context.recipe_catalog as {
+    recipes: Array<{ id: string; name?: string }>;
+  };
+  const entry = catalog.recipes.find(
+    ({ id }) => id === "utility-science-pack",
+  );
+  // The model maps 黄瓶 onto this save's wording itself, which is only possible
+  // while the in-game name travels with the identifier.
+  assert.equal(entry?.name, "银金分析包");
 });
 
-void test("sends the catalog even when the wording matches nothing", () => {
+void test("search_recipes finds a recipe by its in-game name", () => {
+  const names = new LocalizedNameStore();
+  names.apply({
+    protocol_version: 1,
+    schema_version: 2,
+    message_id: "locale-2",
+    type: "localization_update",
+    tick: 1,
+    payload: {
+      locale: "zh-CN",
+      reset: true,
+      names: [{ kind: "recipe", id: "utility-science-pack", name: "银金分析包" }],
+    },
+  });
+
+  const result = executeRecipeTool(
+    "search_recipes",
+    JSON.stringify({ query: "分析包" }),
+    { staticState: staticState(), names },
+  ) as { matches: Array<{ id: string }> };
+
+  assert.ok(result.matches.some(({ id }) => id === "utility-science-pack"));
+});
+
+void test("sends the whole craftable catalog regardless of wording", () => {
   // A player saying "黄瓶" in a save that calls it "银金分析包" matched no
   // product and used to get no recipes at all, leaving the model to guess from
   // vanilla. The catalog now travels regardless so the model can map the term.
@@ -93,9 +130,9 @@ void test("sends the catalog even when the wording matches nothing", () => {
     48_000,
   );
 
-  const recipes = context.recipes as { recipes: Array<{ r: [string, number, string] }> };
+  const catalog = context.recipe_catalog as { recipes: Array<{ id: string }> };
   assert.ok(
-    recipes.recipes.some((entry) => entry.r[0] === "utility-science-pack"),
+    catalog.recipes.some((entry) => entry.id === "utility-science-pack"),
     "the catalog must travel even without a name match",
   );
 });
@@ -115,9 +152,9 @@ void test("stays inside the byte budget by trimming, not by failing", () => {
   );
 
   assert.ok(Buffer.byteLength(JSON.stringify(context), "utf8") <= 1_500);
-  // Recipes are the one thing the model cannot supply itself, so they are the
+  // The catalog is the one thing the model cannot supply itself, so it is the
   // last thing to be dropped.
-  assert.ok("recipes" in context);
+  assert.ok("recipe_catalog" in context);
 });
 
 void test("keeps the newest turn when history must be trimmed", () => {
@@ -197,6 +234,203 @@ void test("sheds machine detail before dropping machines", () => {
   assert.ok(Buffer.byteLength(JSON.stringify(context), "utf8") <= 900);
 });
 
+void test("marks only entities that exist in the selection", () => {
+  const markers: HighlightMarker[] = [];
+  const result = executeRecipeTool(
+    "highlight_entities",
+    JSON.stringify({
+      markers: [
+        { unit: 101, text: "缺铁矿", severity: "problem" },
+        // A unit the model invented must not silently produce a marker
+        // pointing at nothing.
+        { unit: 999, text: "不存在", severity: "info" },
+      ],
+    }),
+    {
+      staticState: staticState(),
+      names: new LocalizedNameStore(),
+      areaSelection: areaSelection(),
+      markers,
+    },
+  ) as { marked: number; skipped_units?: number[] };
+
+  assert.equal(result.marked, 1);
+  assert.deepEqual(result.skipped_units, [999]);
+  assert.equal(markers.length, 1);
+  // The recorded position lets the Mod draw even if the entity is gone by then.
+  assert.deepEqual(
+    { unit: markers[0]?.unit, x: markers[0]?.x, y: markers[0]?.y },
+    { unit: 101, x: 4, y: 8 },
+  );
+});
+
+void test("rejects a unit that is not in the selection", () => {
+  const markers: HighlightMarker[] = [];
+  const result = executeRecipeTool(
+    "highlight_entities",
+    JSON.stringify({
+      markers: [{ unit: 101, text: "缺铁矿", severity: "problem" }],
+    }),
+    { staticState: staticState(), names: new LocalizedNameStore(), markers },
+  ) as { error?: string };
+
+  // Nothing is selected, so no unit can be verified; inventing one must not
+  // produce a marker pointing at nothing.
+  assert.ok(result.error !== undefined);
+  assert.equal(markers.length, 0);
+});
+
+void test("marks a bare map position without any selection", () => {
+  const markers: HighlightMarker[] = [];
+  const result = executeRecipeTool(
+    "highlight_entities",
+    JSON.stringify({
+      markers: [
+        { x: -412.5, y: 88, text: "建议在此开矿", severity: "info" },
+      ],
+    }),
+    { staticState: staticState(), names: new LocalizedNameStore(), markers },
+  ) as { marked?: number };
+
+  // "Build an outpost here" has no entity to reference, so a position-only
+  // marker is the only way to express it.
+  assert.equal(result.marked, 1);
+  assert.deepEqual(markers[0], {
+    x: -412.5,
+    y: 88,
+    text: "建议在此开矿",
+    severity: "info",
+  });
+});
+
+void test("a later highlight call replaces the earlier set", () => {
+  const markers: HighlightMarker[] = [];
+  const context = {
+    staticState: staticState(),
+    names: new LocalizedNameStore(),
+    areaSelection: areaSelection(),
+    markers,
+  };
+
+  executeRecipeTool(
+    "highlight_entities",
+    JSON.stringify({
+      markers: [{ unit: 101, text: "第一次", severity: "info" }],
+    }),
+    context,
+  );
+  executeRecipeTool(
+    "highlight_entities",
+    JSON.stringify({
+      markers: [{ unit: 102, text: "改正后", severity: "problem" }],
+    }),
+    context,
+  );
+
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0]?.text, "改正后");
+});
+
+void test("carries the handles needed to mark and trace machines", () => {
+  const context = buildCompactContext(
+    "为什么这些炉子不进料？",
+    { staticState: staticState(), areaSelection: areaSelection() },
+    48_000,
+  );
+
+  const selection = context.selected_area as {
+    machines: Array<Record<string, unknown>>;
+  };
+  // Without `unit` the model cannot reference a specific machine, so
+  // highlight_entities becomes unusable even though the tool is offered.
+  assert.equal(selection.machines[0]?.unit, 101);
+  assert.equal(selection.machines[1]?.unit, 102);
+});
+
+void test("carries inserter links so a starved machine has a traceable cause", () => {
+  const selection = areaSelection();
+  selection.payload.entities.push({
+    id: "inserter",
+    unit: 103,
+    x: 5,
+    y: 8,
+    facing: "north",
+    status: "waiting_for_source_items",
+    link: { from: 101, from_id: "transport-belt", to: 102, to_id: "electric-furnace" },
+  });
+
+  const context = buildCompactContext(
+    "为什么这些炉子不进料？",
+    { staticState: staticState(), areaSelection: selection },
+    48_000,
+  );
+
+  const compact = context.selected_area as {
+    machines: Array<Record<string, unknown>>;
+  };
+  const inserter = compact.machines.find((machine) => machine.unit === 103);
+  assert.deepEqual(inserter?.link, {
+    from: 101,
+    from_id: "transport-belt",
+    to: 102,
+    to_id: "electric-furnace",
+  });
+  assert.equal(inserter?.facing, "north");
+});
+
+void test("puts charted ore fields in reach of a map question", () => {
+  const context = buildCompactContext(
+    "我该去哪开矿",
+    { staticState: staticState(), resources: resourceSnapshot() },
+    48_000,
+  );
+
+  const patches = context.ore_patches as Array<Record<string, unknown>>;
+  // Without these the model has no map at all and can only answer in
+  // generalities about direction.
+  assert.deepEqual(patches[0], {
+    id: "iron-ore",
+    at: [-416, 96],
+    amount: 2_400_000,
+    tiles: 850,
+  });
+});
+
+void test("marks a proposed outpost at an ore field's position", () => {
+  const markers: HighlightMarker[] = [];
+  const result = executeRecipeTool(
+    "highlight_entities",
+    JSON.stringify({
+      markers: [
+        { x: -416, y: 96, text: "建议在此开铁矿", severity: "info" },
+      ],
+    }),
+    { staticState: staticState(), names: new LocalizedNameStore(), markers },
+  ) as { marked?: number };
+
+  assert.equal(result.marked, 1);
+  assert.equal(markers[0]?.x, -416);
+});
+
+function resourceSnapshot(): ResourceSnapshotPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: "factorio-resource-1",
+    type: "resource_snapshot",
+    tick: 500,
+    payload: {
+      force_id: "player",
+      patches: [
+        { id: "iron-ore", x: -416, y: 96, amount: 2_400_000, tiles: 850 },
+        { id: "copper-ore", x: 320, y: -128, amount: 1_100_000, tiles: 400 },
+      ],
+      omitted_patches: 0,
+      truncated: false,
+    },
+  };
+}
+
 function areaSelection(): AreaSnapshotPacket {
   return {
     protocol_version: PROTOCOL_VERSION,
@@ -211,6 +445,7 @@ function areaSelection(): AreaSnapshotPacket {
       entities: [
         {
           id: "electric-furnace",
+          unit: 101,
           x: 4,
           y: 8,
           recipe: "iron-plate",
@@ -219,6 +454,7 @@ function areaSelection(): AreaSnapshotPacket {
         },
         {
           id: "electric-furnace",
+          unit: 102,
           x: 6,
           y: 8,
           recipe: "iron-plate",

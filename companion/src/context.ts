@@ -3,11 +3,16 @@ import type {
   AreaSnapshotPacket,
   AssistantHistoryTurn,
   DynamicForceSummary,
+  ResourceSnapshotPacket,
 } from "@factorio-ai-assistant/protocol";
 
 import { IDENTIFIER_NAMES, type LocalizedNameLookup } from "./localization.js";
 import type { TrendSummary } from "./history.js";
-import { buildRecipeContext, type RecipeContext } from "./recipe-context.js";
+import {
+  buildRecipeCatalog,
+  shrinkRecipeCatalog,
+  type RecipeCatalog,
+} from "./recipe-tools.js";
 import type { StaticState } from "./state-store.js";
 
 const MAX_FLOWS = 20;
@@ -23,6 +28,8 @@ export interface ContextSources {
   forceId?: string;
   /** What the player last framed with the inspector tool. */
   areaSelection?: AreaSnapshotPacket;
+  /** Charted ore fields, so "where should I mine" is answerable. */
+  resources?: ResourceSnapshotPacket;
   /** How production has moved recently, when history is available. */
   trend?: TrendSummary;
 }
@@ -54,18 +61,18 @@ export function buildCompactContext(
     },
   };
 
-  const recipeContext = buildRecipeContext(
-    question,
+  const recipeCatalog = buildRecipeCatalog(
     sources.staticState,
     names,
     sources.forceId,
   );
 
-  // Recipes first: they are the one thing the model cannot know on its own,
-  // because this save's recipes may differ from vanilla.
-  if (recipeContext !== undefined) {
-    fit(context, "recipes", recipeContext, budgetBytes, (value) =>
-      shrinkRecipeContext(value as RecipeContext),
+  // The catalog goes first: it is the one thing the model cannot know on its
+  // own, because this save's recipes may differ from vanilla. Only identifiers
+  // and display names travel here — ingredients arrive via get_recipe.
+  if (recipeCatalog !== undefined) {
+    fit(context, "recipe_catalog", recipeCatalog, budgetBytes, (value) =>
+      shrinkRecipeCatalog(value as RecipeCatalog),
     );
   }
 
@@ -86,6 +93,23 @@ export function buildCompactContext(
       compactSelection(sources.areaSelection, names),
       budgetBytes,
       (value) => shrinkSelection(value as CompactSelection),
+    );
+  }
+
+  // Ore fields are the only map the model gets. Small, and the difference
+  // between "put the outpost somewhere north" and naming a real patch.
+  if (sources.resources !== undefined) {
+    fit(
+      context,
+      "ore_patches",
+      compactResources(sources.resources, names),
+      budgetBytes,
+      (value) => {
+        const patches = value as unknown[];
+        return patches.length <= 1
+          ? undefined
+          : patches.slice(0, patches.length >> 1);
+      },
     );
   }
 
@@ -221,9 +245,13 @@ function compactSelection(
     machines: payload.entities.map((entity) => ({
       id: entity.id,
       ...(label(entity.id) === undefined ? {} : { name: label(entity.id) }),
+      // The stable handle the answer needs to mark this exact machine.
+      ...(entity.unit === undefined ? {} : { unit: entity.unit }),
       at: [entity.x, entity.y],
+      ...(entity.facing === undefined ? {} : { facing: entity.facing }),
       ...(entity.recipe === undefined ? {} : { recipe: entity.recipe }),
       ...(entity.status === undefined ? {} : { status: entity.status }),
+      ...(entity.link === undefined ? {} : { link: entity.link }),
       ...(entity.modules === undefined ? {} : { modules: entity.modules }),
       ...(entity.contents === undefined ? {} : { contents: entity.contents }),
       ...(entity.fluids === undefined ? {} : { fluids: entity.fluids }),
@@ -234,6 +262,23 @@ function compactSelection(
       count: group.count,
     })),
   };
+}
+
+/** Ore fields in the compact shape the model reads. */
+function compactResources(
+  snapshot: ResourceSnapshotPacket,
+  names: LocalizedNameLookup,
+): Array<Record<string, unknown>> {
+  return snapshot.payload.patches.map((patch) => {
+    const name = names.lookup("item", patch.id);
+    return {
+      id: patch.id,
+      ...(name === undefined || name === patch.id ? {} : { name }),
+      at: [patch.x, patch.y],
+      amount: patch.amount,
+      tiles: patch.tiles,
+    };
+  });
 }
 
 /** Sheds per-machine detail before dropping machines outright. */
@@ -267,33 +312,6 @@ function shrinkSelection(
 }
 
 /** Drops the least relevant recipes; the ranking put the relevant chain first. */
-function shrinkRecipeContext(value: RecipeContext): RecipeContext | undefined {
-  if (value.recipes.length <= 1) {
-    return undefined;
-  }
-  const kept = value.recipes.slice(0, Math.max(1, value.recipes.length >> 1));
-  // Names only pay for themselves while the id they describe is still present.
-  const usedIds = new Set<string>();
-  for (const recipe of kept) {
-    usedIds.add(recipe.r[0]);
-    for (const [id] of [...recipe.i, ...recipe.o]) {
-      usedIds.add(id);
-    }
-  }
-  for (const machine of value.machines) {
-    usedIds.add(machine.id);
-  }
-
-  return {
-    ...value,
-    recipes: kept,
-    names: Object.fromEntries(
-      Object.entries(value.names).filter(([id]) => usedIds.has(id)),
-    ),
-    truncated: true,
-  };
-}
-
 function topFlows(
   force: DynamicForceSummary,
   names: LocalizedNameLookup,

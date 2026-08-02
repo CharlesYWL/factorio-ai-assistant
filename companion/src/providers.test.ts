@@ -35,10 +35,65 @@ void test("tells the model the recipe data is authoritative", () => {
   const messages = request.messages as Array<{ role: string; content: string }>;
   const system = messages[0]?.content ?? "";
 
-  assert.match(system, /authoritative/u);
-  assert.match(system, /rename items|change ingredients/u);
+  assert.match(system, /rename items/u);
   assert.match(system, /nickname/iu);
   assert.match(system, /do not output Lua/iu);
+});
+
+void test("tells the model to look recipes up instead of recalling them", () => {
+  // Ingredients no longer travel in the prompt, so the model must be told to
+  // fetch them rather than fall back on what it remembers about vanilla.
+  const request = buildOpenAICompatibleRequest(
+    {
+      ...fixtureRequest,
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "get_recipe",
+            description: "test",
+            parameters: { type: "object", properties: {} },
+          },
+        },
+      ],
+    },
+    "fixture-model",
+    400,
+  );
+  const messages = request.messages as Array<{ role: string; content: string }>;
+  const system = messages[0]?.content ?? "";
+
+  assert.match(system, /Never guess ingredients from memory/u);
+  assert.match(system, /get_recipe/u);
+  assert.match(system, /search_recipes/u);
+  assert.ok(request.tools !== undefined, "tools must reach the provider");
+});
+
+void test("instructs the model to mark entities when it can", () => {
+  // The tool alone is not enough: without being told to, the model answers in
+  // prose and never marks anything.
+  const request = buildOpenAICompatibleRequest(
+    {
+      ...fixtureRequest,
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "highlight_entities",
+            description: "test",
+            parameters: { type: "object", properties: {} },
+          },
+        },
+      ],
+    },
+    "fixture-model",
+    400,
+  );
+  const messages = request.messages as Array<{ role: string; content: string }>;
+  const system = messages[0]?.content ?? "";
+
+  assert.match(system, /MUST call `highlight_entities`/u);
+  assert.match(system, /`link`/u);
 });
 
 void test("sends and validates the OpenClaw/OpenAI-compatible fixture contract", async () => {

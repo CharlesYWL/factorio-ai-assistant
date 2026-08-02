@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import type { AssistantHistoryTurn } from "@factorio-ai-assistant/protocol";
+import type {
+  AssistantHistoryTurn,
+  HighlightMarker,
+} from "@factorio-ai-assistant/protocol";
 
 import type { AdvisorEngine } from "./advisor.js";
 import type { CompanionConfig } from "./config.js";
@@ -14,10 +17,28 @@ import {
 } from "./localization.js";
 import { ProviderExecutor } from "./provider-executor.js";
 import {
+  executeRecipeTool,
+  RECIPE_TOOLS,
+  type ToolContext,
+} from "./recipe-tools.js";
+import {
   createConfiguredProvider,
   ProviderError,
   type AIProvider,
+  type ProviderRequest,
+  type ProviderResponse,
+  type ProviderToolTurn,
 } from "./providers.js";
+
+/** How many times the model may call tools before it must answer. */
+const MAX_TOOL_ROUNDS = 3;
+/**
+ * Wall clock ceiling on the tool rounds. The final, tool-free call happens
+ * after this, so the true worst case is this plus one provider budget — sized
+ * to stay inside the Mod's own wait, or the answer would be discarded after
+ * the player already paid for it.
+ */
+const MAX_TOOL_LOOP_MS = 120_000;
 import type { CompanionStateStore } from "./state-store.js";
 
 export const MAX_QUESTION_BYTES = 4_096;
@@ -50,6 +71,8 @@ export interface AssistantAnswer {
   provider?: AIProvider["kind"];
   model?: string;
   fallbackReason?: string;
+  /** Entities the answer asked to mark in the world. */
+  markers?: HighlightMarker[];
 }
 
 export interface AssistantServiceOptions {
@@ -135,15 +158,33 @@ export class AssistantService {
       return this.#stateSummary(requestId, request, "no_model_configured");
     }
 
+    const sources = this.#collectContext(request);
     const context = buildCompactContext(
       question,
-      this.#collectContext(request),
+      sources,
       this.#config.contextBudgetBytes,
     );
+    this.#logContextBreakdown(requestId, context);
+
+    // Tools are only offered when the catalog is present: without it the model
+    // has no identifiers to look up, and would be guessing what to ask for.
+    const toolsAvailable =
+      this.#provider.kind === "openai-compatible" &&
+      context["recipe_catalog"] !== undefined;
+
+    const markers: HighlightMarker[] = [];
 
     try {
-      const response = await this.#executor.complete(
-        { requestId, language: this.#config.language, question, context },
+      const response = await this.#completeWithTools(
+        {
+          requestId,
+          language: this.#config.language,
+          question,
+          context,
+          ...(toolsAvailable ? { tools: RECIPE_TOOLS } : {}),
+        },
+        sources,
+        markers,
         request.signal,
       );
       const text = response.text.trim();
@@ -156,6 +197,7 @@ export class AssistantService {
         mode: "model",
         provider: this.#provider.kind,
         model: response.model,
+        markers: markers.length,
       });
       return {
         requestId,
@@ -163,6 +205,7 @@ export class AssistantService {
         text,
         provider: this.#provider.kind,
         model: response.model,
+        ...(markers.length === 0 ? {} : { markers }),
       };
     } catch (error: unknown) {
       const providerError =
@@ -209,6 +252,9 @@ export class AssistantService {
       ...(this.#stateStore.areaSelection === undefined
         ? {}
         : { areaSelection: this.#stateStore.areaSelection }),
+      ...(this.#stateStore.resources === undefined
+        ? {}
+        : { resources: this.#stateStore.resources }),
       ...(trend === undefined ? {} : { trend }),
       alerts: [...alerts],
       ...(request.history === undefined || request.history.length === 0
@@ -216,6 +262,117 @@ export class AssistantService {
         : { history: request.history }),
       names: this.#names,
     };
+  }
+
+  /**
+   * Runs the model, serving any tool calls it makes, until it answers in prose.
+   *
+   * The loop is bounded twice over. Rounds are capped because a model that keeps
+   * calling tools would never answer, and each round replays the whole
+   * transcript so they get progressively more expensive. There is also a wall
+   * clock deadline, because the executor's budget applies per round: without it
+   * four slow rounds could outlast what the Mod is willing to wait, and the
+   * answer would be discarded after being paid for.
+   */
+  async #completeWithTools(
+    request: ProviderRequest,
+    sources: ContextSources,
+    markers: HighlightMarker[],
+    signal: AbortSignal | undefined,
+  ): Promise<ProviderResponse> {
+    const executor = this.#executor;
+    if (executor === undefined) {
+      throw new Error("completeWithTools requires a configured executor");
+    }
+
+    const toolContext: ToolContext = {
+      staticState: sources.staticState,
+      names: sources.names ?? IDENTIFIER_NAMES,
+      ...(sources.forceId === undefined ? {} : { forceId: sources.forceId }),
+      ...(sources.areaSelection === undefined
+        ? {}
+        : { areaSelection: sources.areaSelection }),
+      markers,
+    };
+    const turns: ProviderToolTurn[] = [];
+    const deadline = Date.now() + MAX_TOOL_LOOP_MS;
+
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+      const response = await executor.complete(
+        { ...request, toolTurns: turns },
+        signal,
+      );
+      const calls = response.toolCalls ?? [];
+      if (calls.length === 0) {
+        return response;
+      }
+
+      // Out of rounds, or out of time: ask once more with no tools, so the
+      // model has to answer from what it already looked up rather than failing
+      // outright after the player has already waited.
+      const outOfTime = Date.now() >= deadline;
+      if (round === MAX_TOOL_ROUNDS || outOfTime) {
+        this.#logger.warn("assistant_tool_rounds_exhausted", {
+          request_id: request.requestId,
+          rounds: round,
+          reason: outOfTime ? "deadline" : "round_limit",
+        });
+        const retry: ProviderRequest = { ...request, toolTurns: turns };
+        delete retry.tools;
+        return executor.complete(retry, signal);
+      }
+
+      const results = calls.map((call) => {
+        const output = executeRecipeTool(call.name, call.arguments, toolContext);
+        const content = JSON.stringify(output);
+        this.#logger.info("assistant_tool_call", {
+          request_id: request.requestId,
+          round,
+          tool: call.name,
+          arguments_bytes: call.arguments.length,
+          result_bytes: content.length,
+        });
+        return { callId: call.id, name: call.name, content };
+      });
+      turns.push({ calls, results });
+    }
+
+    throw new Error("tool loop exited unexpectedly");
+  }
+
+  /**
+   * Records what each section costs. Truncation is otherwise invisible: the
+   * model simply answers from whatever survived the budget, so a section that
+   * silently shrank looks the same as one that was never relevant.
+   */
+  #logContextBreakdown(
+    requestId: string,
+    context: Record<string, unknown>,
+  ): void {
+    const bytesOf = (value: unknown): number =>
+      Buffer.byteLength(JSON.stringify(value) ?? "", "utf8");
+    const sections: Record<string, number> = {};
+    for (const [key, value] of Object.entries(context)) {
+      sections[`bytes_${key}`] = bytesOf(value);
+    }
+
+    const recipes = context["recipes"] as
+      | { recipes?: unknown[]; truncated?: boolean }
+      | undefined;
+    const selection = context["selected_area"] as
+      | { machines?: unknown[]; truncated?: boolean }
+      | undefined;
+
+    this.#logger.info("assistant_context_built", {
+      request_id: requestId,
+      total_bytes: bytesOf(context),
+      budget_bytes: this.#config.contextBudgetBytes,
+      ...sections,
+      recipe_count: recipes?.recipes?.length ?? 0,
+      recipes_truncated: recipes?.truncated ?? false,
+      selected_machines: selection?.machines?.length ?? 0,
+      selection_truncated: selection?.truncated ?? false,
+    });
   }
 
   /**
