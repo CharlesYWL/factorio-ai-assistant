@@ -308,6 +308,9 @@ local function close_advisor(player)
   -- resize can shift the frame without that event, and the player expects the
   -- panel to reopen where they last left it.
   ui.save_location(player, player_state)
+  -- The input is a GUI element, so closing destroys whatever was typed. Keep
+  -- it: a half-written question should survive an accidental Esc.
+  ui.save_draft(player, player_state)
   ui.close(player)
   pause.on_panel_closed(player_state)
 end
@@ -1763,10 +1766,13 @@ script.on_event(defines.events.on_gui_click, function(event)
     ui.render(player, state, player_state)
   elseif action == "toggle-mini" then
     ui.save_location(player, player_state)
+    -- Switching layouts rebuilds the input, so carry the draft across.
+    ui.save_draft(player, player_state)
     ui_state.toggle_mini(player_state)
     ui.render(player, state, player_state)
     ui.focus_chat_input(player)
   elseif action == "tab" then
+    ui.save_draft(player, player_state)
     if ui_state.set_tab(player_state, tags.tab) then
       ui.render(player, state, player_state)
       if tags.tab == "chat" then
@@ -1914,6 +1920,7 @@ for index, tab in ipairs({ "chat", "alerts", "status" }) do
         ui_state.ensure_player(state, event.player_index)
       -- Asking for a specific tab means the player wants the tabbed panel;
       -- mini has no tabs to show.
+      ui.save_draft(player, player_state)
       if ui_state.is_mini(player_state) then
         ui_state.toggle_mini(player_state)
       end

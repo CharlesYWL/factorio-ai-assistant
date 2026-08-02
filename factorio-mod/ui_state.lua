@@ -10,6 +10,9 @@ local SIZES = { "compact", "normal", "large" }
 --- Mini is a separate mode rather than a step in the resize cycle: it changes
 --- what is shown, not just how large it is, and has its own toggle.
 local MINI_SIZE = "mini"
+--- Matches the Companion's question limit, so a draft cannot grow past what
+--- could ever be sent.
+local MAX_DRAFT_LENGTH = 2000
 local valid_size
 local append_chat
 local touch_chat
@@ -120,6 +123,22 @@ function ui_state.toggle_mini(player_state)
   return player_state.size
 end
 
+--- Remembers what the player had typed but not sent. The panel's input is a
+-- GUI element, so closing the window destroys it along with the draft; a
+-- half-written question is worth keeping across an accidental Esc.
+function ui_state.set_draft(player_state, text)
+  if type(text) ~= "string" or text == "" then
+    player_state.draft = nil
+    return
+  end
+  player_state.draft = string.sub(text, 1, MAX_DRAFT_LENGTH)
+end
+
+function ui_state.draft(player_state)
+  local draft = player_state.draft
+  return type(draft) == "string" and draft or ""
+end
+
 function ui_state.set_location(player_state, location)
   if type(location) ~= "table"
     or type(location.x) ~= "number"
@@ -147,6 +166,10 @@ function ui_state.queue_chat(player_state, message_id, question, tick)
     message_id = message_id,
     sent_tick = tick,
   }
+  -- The question is on its way, so the draft it came from is spent. The flag
+  -- tells the renderer to blank the input, which still holds the sent text.
+  player_state.draft = nil
+  player_state.draft_sent = true
   touch_chat(player_state)
   return true
 end

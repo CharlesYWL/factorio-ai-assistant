@@ -436,6 +436,14 @@ function ui.save_location(player, player_state)
   end
 end
 
+--- Keeps whatever is typed but unsent, so closing the panel does not discard it.
+function ui.save_draft(player, player_state)
+  local element = find_element(player.gui.screen[ui.PANEL_NAME], ui.CHAT_INPUT_NAME)
+  if element ~= nil then
+    ui_state.set_draft(player_state, element.text)
+  end
+end
+
 local MINI_BODY_NAME = "factorio-ai-assistant-mini-body"
 local MINI_ANSWER_NAME = "factorio-ai-assistant-mini-answer"
 
@@ -465,6 +473,7 @@ render_mini = function(content, state, player_state)
     local input = row.add({
       type = "textfield",
       name = ui.CHAT_INPUT_NAME,
+      text = ui_state.draft(player_state),
     })
     input.style.horizontally_stretchable = true
     row.add({
@@ -696,6 +705,7 @@ build_chat = function(parent, state, player_state)
     type = "textfield",
     name = ui.CHAT_INPUT_NAME,
     tooltip = { "factorio-ai-assistant.chat-input-tooltip" },
+    text = ui_state.draft(player_state),
   })
   input.style.horizontally_stretchable = true
   input_flow.add({
@@ -772,6 +782,12 @@ update_chat_controls = function(body, player_state)
   local clear = find_element(body, ui.CHAT_CLEAR_NAME)
   if input ~= nil then
     input.enabled = not pending
+    -- Sending consumes the draft, so an input still holding that text would
+    -- offer the just-asked question up for an accidental resend.
+    if player_state.draft == nil and player_state.draft_sent then
+      input.text = ""
+      player_state.draft_sent = nil
+    end
   end
   if send ~= nil then
     send.enabled = not pending
