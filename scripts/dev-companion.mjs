@@ -7,8 +7,14 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { stopCompanionProcesses } from "./lib/companion-processes.mjs";
+
 const RESTART_DEBOUNCE_MS = 300;
 const SHUTDOWN_GRACE_MS = 3_000;
+// The previous companion may still hold the UDP port for a moment after exiting,
+// so a failed start is retried with a widening delay instead of leaving the game
+// without a listener.
+const BIND_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000];
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const entryPath = path.join(root, "companion", "dist", "index.js");
@@ -34,8 +40,14 @@ let restartTimer = null;
 let restarting = false;
 let restartPending = false;
 let shuttingDown = false;
+let bindRetries = 0;
+let bindRetryTimer = null;
 
 log(`config: ${configPath ?? "(none — defaults + environment only)"}`);
+
+// A companion orphaned by an earlier crashed watcher keeps the port and
+// silently swallows every packet the game sends.
+stopCompanionProcesses(process.pid, log);
 
 const compiler = spawn(
   process.execPath,
@@ -106,6 +118,8 @@ async function restartCompanion() {
   try {
     do {
       restartPending = false;
+      bindRetries = 0;
+      clearTimeout(bindRetryTimer);
       await stopCompanion();
       if (shuttingDown) return;
       if (!existsSync(entryPath)) {
@@ -132,12 +146,51 @@ function startCompanion() {
     env,
   });
   companionProcess = child;
-  child.on("exit", (code, signal) => {
+  const startedAt = Date.now();
+  // Surviving this long means it bound the port, so earlier failures are history.
+  const healthyTimer = setTimeout(() => {
     if (companionProcess === child) {
-      companionProcess = null;
+      bindRetries = 0;
     }
+  }, 5_000);
+  healthyTimer.unref();
+  child.on("exit", (code, signal) => {
+    clearTimeout(healthyTimer);
+    // A child replaced by a newer start is none of this handler's business.
+    if (companionProcess !== child) return;
+    companionProcess = null;
+
     if (shuttingDown || restarting) return;
     log(`companion exited (code ${code ?? "null"}, signal ${signal ?? "null"})`);
+
+    // Exiting almost immediately means it never got to serve traffic; the usual
+    // cause is the previous process still releasing the port.
+    if (code === 0 || Date.now() - startedAt > 5_000) {
+      bindRetries = 0;
+      return;
+    }
+    if (bindRetries >= BIND_RETRY_DELAYS_MS.length) {
+      log(
+        "!! companion is NOT running — the game will get no answers or reminders.",
+      );
+      log("!! another process is holding UDP 34197. Run `npm run dev:stop`.");
+      return;
+    }
+    const delay = BIND_RETRY_DELAYS_MS[bindRetries];
+    bindRetries += 1;
+    log(
+      `retrying start in ${delay}ms ` +
+        `(${bindRetries}/${BIND_RETRY_DELAYS_MS.length})…`,
+    );
+    clearTimeout(bindRetryTimer);
+    bindRetryTimer = setTimeout(() => {
+      // A rebuild may have started a fresh companion while this retry waited.
+      if (shuttingDown || companionProcess !== null) return;
+      // Whatever holds the port is not a child we track, so it can only be an
+      // orphan from an earlier watcher.
+      stopCompanionProcesses(process.pid, log);
+      startCompanion();
+    }, delay);
   });
 }
 
@@ -167,6 +220,7 @@ async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
   clearTimeout(restartTimer);
+  clearTimeout(bindRetryTimer);
 
   await stopCompanion();
   if (compiler.exitCode === null) {
