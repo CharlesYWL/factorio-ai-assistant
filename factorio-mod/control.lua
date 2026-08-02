@@ -1042,6 +1042,13 @@ local HIGHLIGHT_SEVERITIES = {
 }
 local MAX_HIGHLIGHT_MARKERS = 12
 local MAX_HIGHLIGHT_DURATION_SECONDS = 300
+--- Icon carried by the advisor's own alerts, which is also the filter that
+--- removes them: clearing must not touch the player's other alerts.
+local HIGHLIGHT_ALERT_ICON = { type = "virtual", name = "signal-alert" }
+--- Only real problems become alerts. A suggestion ("build an outpost here") is
+--- not something going wrong, and the alert list is where players look for
+--- things that are.
+local ALERT_SEVERITIES = { problem = true, warning = true }
 
 --- Removes every marker drawn for an earlier answer, including its map tag.
 local function clear_highlights(state)
@@ -1081,6 +1088,14 @@ local function clear_highlights(state)
     end
   end
   state.highlight_tags = {}
+
+  -- Alerts are per force and identified by our own icon, so this removes only
+  -- what the advisor raised.
+  for _, force in pairs(game.forces) do
+    if force.valid then
+      pcall(force.remove_alert, { icon = HIGHLIGHT_ALERT_ICON })
+    end
+  end
 end
 
 --- Clears every marker and tells the player, when there was something to clear.
@@ -1182,6 +1197,20 @@ local function handle_highlight(packet, event)
               force = force.name,
               surface = surface.name,
             })
+          end
+
+          -- A problem also goes to the alert list, which is where players
+          -- already look for things going wrong: hovering shows the message and
+          -- clicking opens the map at the machine. Needs a real entity, since
+          -- that is what the engine focuses on.
+          if entity ~= nil and ALERT_SEVERITIES[marker.severity] then
+            pcall(
+              force.add_custom_alert,
+              entity,
+              HIGHLIGHT_ALERT_ICON,
+              marker.text,
+              true
+            )
           end
         end
       end
