@@ -444,6 +444,19 @@ function ui.save_draft(player, player_state)
   end
 end
 
+--- Blanks the input once a question has been sent. The text is in the history
+--- by then, so leaving it behind only invites an accidental resend.
+local function clear_sent_input(container, player_state)
+  if not player_state.draft_sent then
+    return
+  end
+  local input = find_element(container, ui.CHAT_INPUT_NAME)
+  if input ~= nil then
+    input.text = ""
+    player_state.draft_sent = nil
+  end
+end
+
 local MINI_BODY_NAME = "factorio-ai-assistant-mini-body"
 local MINI_ANSWER_NAME = "factorio-ai-assistant-mini-answer"
 
@@ -515,6 +528,10 @@ render_mini = function(content, state, player_state)
     end
     tags.mini_signature = signature
   end
+
+  -- Outside the signature block: the input survives a rebuild-free render, and
+  -- that is exactly when a just-sent question would otherwise linger in it.
+  clear_sent_input(content, player_state)
 
   content.tags = tags
 end
@@ -784,10 +801,7 @@ update_chat_controls = function(body, player_state)
     input.enabled = not pending
     -- Sending consumes the draft, so an input still holding that text would
     -- offer the just-asked question up for an accidental resend.
-    if player_state.draft == nil and player_state.draft_sent then
-      input.text = ""
-      player_state.draft_sent = nil
-    end
+    clear_sent_input(body, player_state)
   end
   if send ~= nil then
     send.enabled = not pending

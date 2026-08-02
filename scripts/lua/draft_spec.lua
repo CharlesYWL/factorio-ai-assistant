@@ -51,6 +51,31 @@ return function(suite)
     equal(input(world, player).text, "铜板缺口多少", "draft in mini mode")
   end)
 
+  test("sending empties the input right away", function()
+    local world = suite.world()
+    local player = world.game.players[1]
+    suite.online(world)
+    suite.open_panel(world, player)
+
+    suite.ask(world, player, "现在电力够吗")
+
+    -- The question is in the history now, so leaving it in the box invites an
+    -- accidental resend the moment the answer arrives and re-enables Send.
+    equal(input(world, player).text, "", "input right after sending")
+  end)
+
+  test("sending from mini mode empties the input too", function()
+    local world = suite.world()
+    local player = world.game.players[1]
+    suite.online(world)
+    suite.open_panel(world, player)
+    world.click(player, world.find_by_action(player, "toggle-mini"))
+
+    suite.ask(world, player, "现在电力够吗")
+
+    equal(input(world, player).text, "", "mini input right after sending")
+  end)
+
   test("sending clears the draft so it is not restored later", function()
     local world = suite.world()
     local player = world.game.players[1]
