@@ -23,6 +23,8 @@ export const MAX_MARKER_TEXT_LENGTH = 60;
 export const MAX_HIGHLIGHT_DURATION_SECONDS = 300;
 /** Enough ore fields to choose between, few enough to stay cheap to send. */
 export const MAX_RESOURCE_PATCHES = 40;
+/** Enough production lines to choose between, and a bounded packet. */
+export const MAX_SEARCH_CLUSTERS = 24;
 export const ASSISTANT_MODES = ["local", "local-model", "remote-model"] as const;
 export const ASSISTANT_RESPONSE_MODES = ["local", "model"] as const;
 export const ASSISTANT_RESPONSE_STATUSES = ["ok", "cancelled", "error"] as const;
@@ -659,6 +661,67 @@ export interface ResourceSnapshotPacket {
   };
 }
 
+/** What a search asks the Mod to look for. Every field is optional and ANDed. */
+export interface SearchFilter {
+  /** Recipe currently set on the machine, e.g. `artillery-shell`. */
+  recipe?: string;
+  /** Factorio `entity.status` name, e.g. `no_ingredients`. */
+  status?: string;
+  /** Entity prototype name, e.g. `electric-furnace`. */
+  id?: string;
+  /** Entity type, e.g. `assembling-machine`. */
+  type?: string;
+  /** True finds machines with no modules; false, machines with some. */
+  has_modules?: boolean;
+}
+
+/**
+ * Asks the Mod to scan the map. The Companion only ever sees what the Mod
+ * pushes, so answering "where is my artillery shell line" needs a way to ask.
+ */
+export interface SearchRequestPacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "search_request";
+  timestamp: number;
+  payload: {
+    force_id: string;
+    filter: SearchFilter;
+  };
+}
+
+/** A group of adjacent machines that matched, reported as one production line. */
+export interface SearchCluster {
+  /** Centre of the group, ready to hand to a map marker. */
+  x: number;
+  y: number;
+  /** How many machines matched in this group. */
+  count: number;
+  /** Prototype names present, most common first. */
+  ids: string[];
+  /** Distinct `entity.status` values seen, so a stalled group stands out. */
+  statuses: string[];
+  /** One machine's unit number, so the answer can mark the group precisely. */
+  unit?: number;
+}
+
+export interface SearchResponsePacket {
+  protocol_version: typeof PROTOCOL_VERSION;
+  schema_version: typeof STATE_SCHEMA_VERSION;
+  message_id: string;
+  type: "search_response";
+  timestamp: number;
+  payload: {
+    /** The request this answers. */
+    reply_to: string;
+    clusters: SearchCluster[];
+    /** Total machines matched, which can exceed what the clusters report. */
+    total_matches: number;
+    truncated: boolean;
+  };
+}
+
 export type ProtocolPacket =
   | HelloPacket
   | HelloAckPacket
@@ -667,6 +730,8 @@ export type ProtocolPacket =
   | DynamicSnapshotPacket
   | AreaSnapshotPacket
   | ResourceSnapshotPacket
+  | SearchRequestPacket
+  | SearchResponsePacket
   | StateAckPacket
   | ResyncRequestPacket
   | AdvisorUpdatePacket
@@ -715,6 +780,13 @@ interface AdvisorUpdatePacketInput {
   event: AdvisorEventType;
   proactive: boolean;
   alert: AdvisorAlert;
+}
+
+interface SearchRequestPacketInput {
+  messageId: string;
+  timestamp: number;
+  forceId: string;
+  filter: SearchFilter;
 }
 
 interface HighlightPacketInput {
@@ -850,6 +922,22 @@ export function createAdvisorUpdatePacket(
       event: input.event,
       proactive: input.proactive,
       alert: input.alert,
+    },
+  };
+}
+
+export function createSearchRequestPacket(
+  input: SearchRequestPacketInput,
+): SearchRequestPacket {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: input.messageId,
+    type: "search_request",
+    timestamp: input.timestamp,
+    payload: {
+      force_id: input.forceId,
+      filter: input.filter,
     },
   };
 }
@@ -1057,6 +1145,10 @@ export function decodePacket(input: string | Uint8Array): ProtocolPacket {
       return decodeAreaSnapshot(packet, payload, messageId);
     case "resource_snapshot":
       return decodeResourceSnapshot(packet, payload, messageId);
+    case "search_request":
+      return decodeSearchRequest(packet, payload, messageId);
+    case "search_response":
+      return decodeSearchResponse(packet, payload, messageId);
     case "state_ack":
       return decodeStateAck(packet, payload, messageId);
     case "resync_request":
@@ -1349,6 +1441,100 @@ function readDynamicChunking(
     );
   }
   return { chunk_index: chunkIndex, chunk_count: chunkCount };
+}
+
+function decodeSearchRequest(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): SearchRequestPacket {
+  readStateSchemaVersion(packet);
+  const filter = readRecord(payload.filter, "payload.filter");
+  const optionalName = (value: unknown, path: string): string | undefined =>
+    value === undefined ? undefined : readNonEmptyString(value, path);
+  const hasModules = filter.has_modules;
+  if (hasModules !== undefined && typeof hasModules !== "boolean") {
+    throw invalidPacket("payload.filter.has_modules must be a boolean");
+  }
+
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "search_request",
+    timestamp: readNonNegativeInteger(packet.timestamp, "timestamp"),
+    payload: {
+      force_id: readNonEmptyString(payload.force_id, "payload.force_id"),
+      filter: {
+        ...(filter.recipe === undefined
+          ? {}
+          : { recipe: optionalName(filter.recipe, "payload.filter.recipe") }),
+        ...(filter.status === undefined
+          ? {}
+          : { status: optionalName(filter.status, "payload.filter.status") }),
+        ...(filter.id === undefined
+          ? {}
+          : { id: optionalName(filter.id, "payload.filter.id") }),
+        ...(filter.type === undefined
+          ? {}
+          : { type: optionalName(filter.type, "payload.filter.type") }),
+        ...(hasModules === undefined ? {} : { has_modules: hasModules }),
+      } as SearchFilter,
+    },
+  };
+}
+
+function decodeSearchResponse(
+  packet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  messageId: string,
+): SearchResponsePacket {
+  readStateSchemaVersion(packet);
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    schema_version: STATE_SCHEMA_VERSION,
+    message_id: messageId,
+    type: "search_response",
+    timestamp: readNonNegativeInteger(packet.timestamp, "timestamp"),
+    payload: {
+      reply_to: readNonEmptyString(payload.reply_to, "payload.reply_to"),
+      clusters: readArray(
+        payload.clusters,
+        "payload.clusters",
+        readSearchCluster,
+        MAX_SEARCH_CLUSTERS,
+      ),
+      total_matches: readNonNegativeInteger(
+        payload.total_matches,
+        "payload.total_matches",
+      ),
+      truncated: readBoolean(payload.truncated, "payload.truncated"),
+    },
+  };
+}
+
+function readSearchCluster(value: unknown, path: string): SearchCluster {
+  const cluster = readRecord(value, path);
+  return {
+    x: readFiniteNumber(cluster.x, `${path}.x`),
+    y: readFiniteNumber(cluster.y, `${path}.y`),
+    count: readNonNegativeInteger(cluster.count, `${path}.count`),
+    ids: readArray(
+      cluster.ids,
+      `${path}.ids`,
+      (entry, entryPath) => readNonEmptyString(entry, entryPath),
+      16,
+    ),
+    statuses: readArray(
+      cluster.statuses,
+      `${path}.statuses`,
+      (entry, entryPath) => readNonEmptyString(entry, entryPath),
+      16,
+    ),
+    ...(cluster.unit === undefined
+      ? {}
+      : { unit: readNonNegativeInteger(cluster.unit, `${path}.unit`) }),
+  };
 }
 
 function decodeResourceSnapshot(

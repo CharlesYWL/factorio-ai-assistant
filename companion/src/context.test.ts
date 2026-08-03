@@ -45,7 +45,7 @@ void test("the catalog omits ingredients, which is where the saving comes from",
   assert.ok(!encoded.includes('"o"'), "products must not travel up front");
 });
 
-void test("get_recipe carries this save's recipe even when it differs from vanilla", () => {
+void test("get_recipe carries this save's recipe even when it differs from vanilla", async () => {
   // The player's mods can redefine a recipe, so the model must be given the
   // save's own ingredients rather than relying on what it remembers.
   const modded = staticState();
@@ -55,7 +55,7 @@ void test("get_recipe carries this save's recipe even when it differs from vanil
   assert.ok(target !== undefined);
   target.ingredients = [{ kind: "item", id: "copper-cable", amount: 7 }];
 
-  const result = executeRecipeTool(
+  const result = await executeRecipeTool(
     "get_recipe",
     JSON.stringify({ ids: ["utility-science-pack"] }),
     { staticState: modded, names: new LocalizedNameStore() },
@@ -96,7 +96,7 @@ void test("the catalog carries display names so nicknames can be mapped", () => 
   assert.equal(entry?.name, "银金分析包");
 });
 
-void test("search_recipes finds a recipe by its in-game name", () => {
+void test("search_recipes finds a recipe by its in-game name", async () => {
   const names = new LocalizedNameStore();
   names.apply({
     protocol_version: 1,
@@ -111,7 +111,7 @@ void test("search_recipes finds a recipe by its in-game name", () => {
     },
   });
 
-  const result = executeRecipeTool(
+  const result = await executeRecipeTool(
     "search_recipes",
     JSON.stringify({ query: "分析包" }),
     { staticState: staticState(), names },
@@ -234,9 +234,9 @@ void test("sheds machine detail before dropping machines", () => {
   assert.ok(Buffer.byteLength(JSON.stringify(context), "utf8") <= 900);
 });
 
-void test("marks only entities that exist in the selection", () => {
+void test("marks only entities that exist in the selection", async () => {
   const markers: HighlightMarker[] = [];
-  const result = executeRecipeTool(
+  const result = await executeRecipeTool(
     "highlight_entities",
     JSON.stringify({
       markers: [
@@ -264,9 +264,9 @@ void test("marks only entities that exist in the selection", () => {
   );
 });
 
-void test("rejects a unit that is not in the selection", () => {
+void test("rejects a unit that is not in the selection", async () => {
   const markers: HighlightMarker[] = [];
-  const result = executeRecipeTool(
+  const result = await executeRecipeTool(
     "highlight_entities",
     JSON.stringify({
       markers: [{ unit: 101, text: "缺铁矿", severity: "problem" }],
@@ -280,9 +280,9 @@ void test("rejects a unit that is not in the selection", () => {
   assert.equal(markers.length, 0);
 });
 
-void test("marks a bare map position without any selection", () => {
+void test("marks a bare map position without any selection", async () => {
   const markers: HighlightMarker[] = [];
-  const result = executeRecipeTool(
+  const result = await executeRecipeTool(
     "highlight_entities",
     JSON.stringify({
       markers: [
@@ -303,7 +303,7 @@ void test("marks a bare map position without any selection", () => {
   });
 });
 
-void test("a later highlight call replaces the earlier set", () => {
+void test("a later highlight call replaces the earlier set", async () => {
   const markers: HighlightMarker[] = [];
   const context = {
     staticState: staticState(),
@@ -312,14 +312,14 @@ void test("a later highlight call replaces the earlier set", () => {
     markers,
   };
 
-  executeRecipeTool(
+  await executeRecipeTool(
     "highlight_entities",
     JSON.stringify({
       markers: [{ unit: 101, text: "第一次", severity: "info" }],
     }),
     context,
   );
-  executeRecipeTool(
+  await executeRecipeTool(
     "highlight_entities",
     JSON.stringify({
       markers: [{ unit: 102, text: "改正后", severity: "problem" }],
@@ -396,9 +396,9 @@ void test("puts charted ore fields in reach of a map question", () => {
   });
 });
 
-void test("marks a proposed outpost at an ore field's position", () => {
+void test("marks a proposed outpost at an ore field's position", async () => {
   const markers: HighlightMarker[] = [];
-  const result = executeRecipeTool(
+  const result = await executeRecipeTool(
     "highlight_entities",
     JSON.stringify({
       markers: [
@@ -410,6 +410,115 @@ void test("marks a proposed outpost at an ore field's position", () => {
 
   assert.equal(result.marked, 1);
   assert.equal(markers[0]?.x, -416);
+});
+
+void test("finds a production line by recipe anywhere on the map", async () => {
+  // The Companion only knows what the Mod pushed, and that never includes
+  // where a machine sits, so this has to leave the process.
+  let asked: unknown;
+  const result = (await executeRecipeTool(
+    "find_machines",
+    JSON.stringify({ recipe: "artillery-shell" }),
+    {
+      staticState: staticState(),
+      names: new LocalizedNameStore(),
+      forceId: "player",
+      search: (forceId, filter) => {
+        asked = { forceId, filter };
+        return Promise.resolve({
+          protocol_version: PROTOCOL_VERSION,
+          schema_version: STATE_SCHEMA_VERSION,
+          message_id: "factorio-search-1",
+          type: "search_response" as const,
+          timestamp: 1,
+          payload: {
+            reply_to: "req",
+            clusters: [
+              {
+                x: 120,
+                y: -64,
+                count: 6,
+                ids: ["assembling-machine-3"],
+                statuses: ["working"],
+                unit: 4242,
+              },
+            ],
+            total_matches: 6,
+            truncated: false,
+          },
+        });
+      },
+    },
+  )) as { matches: number; lines: Array<Record<string, unknown>> };
+
+  assert.deepEqual(asked, {
+    forceId: "player",
+    filter: { recipe: "artillery-shell" },
+  });
+  assert.equal(result.matches, 6);
+  assert.deepEqual(result.lines[0]?.at, [120, -64]);
+  // The unit travels so the answer can mark the line it just found.
+  assert.equal(result.lines[0]?.unit, 4242);
+});
+
+void test("refuses an unfiltered scan", async () => {
+  let called = false;
+  const result = (await executeRecipeTool("find_machines", "{}", {
+    staticState: staticState(),
+    names: new LocalizedNameStore(),
+    search: () => {
+      called = true;
+      return Promise.resolve(undefined);
+    },
+  })) as { error?: string };
+
+  // An empty filter matches the whole factory, which is neither useful nor
+  // cheap to scan.
+  assert.match(result.error ?? "", /at least one filter/u);
+  assert.equal(called, false);
+});
+
+void test("says so when the map scan cannot be answered", async () => {
+  const result = (await executeRecipeTool(
+    "find_machines",
+    JSON.stringify({ recipe: "iron-plate" }),
+    {
+      staticState: staticState(),
+      names: new LocalizedNameStore(),
+      search: () => Promise.resolve(undefined),
+    },
+  )) as { error?: string };
+
+  assert.match(result.error ?? "", /did not come back/u);
+});
+
+void test("reports an empty result rather than an error", async () => {
+  const result = (await executeRecipeTool(
+    "find_machines",
+    JSON.stringify({ recipe: "artillery-shell" }),
+    {
+      staticState: staticState(),
+      names: new LocalizedNameStore(),
+      search: () =>
+        Promise.resolve({
+          protocol_version: PROTOCOL_VERSION,
+          schema_version: STATE_SCHEMA_VERSION,
+          message_id: "factorio-search-2",
+          type: "search_response" as const,
+          timestamp: 1,
+          payload: {
+            reply_to: "req",
+            clusters: [],
+            total_matches: 0,
+            truncated: false,
+          },
+        }),
+    },
+  )) as { matches: number; hint?: string };
+
+  // Nothing built yet is a real answer, not a failure the model should retry.
+  assert.equal(result.matches, 0);
+  assert.ok(result.hint !== undefined);
 });
 
 function resourceSnapshot(): ResourceSnapshotPacket {

@@ -1218,6 +1218,51 @@ local function handle_highlight(packet, event)
   end
 end
 
+--- Answers a Companion search by scanning the map. This is the only scan not
+-- driven by the player framing an area, so it runs strictly on demand.
+local function handle_search_request(packet, event)
+  local payload = packet.payload
+  if packet.schema_version ~= STATE_SCHEMA_VERSION
+    or not is_non_negative_integer(packet.timestamp)
+    or not is_non_empty_string(payload.force_id, 256)
+    or type(payload.filter) ~= "table"
+  then
+    return
+  end
+
+  local state = get_state()
+  state.connected = true
+  state.last_response_tick = event.tick
+
+  local profiler = game.create_profiler()
+  local ok, response = pcall(
+    state_collector.build_search_response,
+    state,
+    packet.message_id,
+    payload.force_id,
+    payload.filter
+  )
+  profiler.stop()
+  if not ok or response == nil then
+    return
+  end
+
+  local encoded = helpers.table_to_json(response)
+  if #encoded > MAX_PACKET_BYTES then
+    log("[factorio-ai-assistant] Search response too large; skipped")
+    return
+  end
+  send_udp_payload(encoded, "search response send")
+  log(
+    "[factorio-ai-assistant] Search: matches="
+      .. response.payload.total_matches
+      .. ", clusters="
+      .. #response.payload.clusters
+      .. ", duration="
+      .. tostring(profiler)
+  )
+end
+
 local function is_optional_string(value, maximum_length)
   return value == nil or is_non_empty_string(value, maximum_length)
 end
@@ -1454,6 +1499,8 @@ local function handle_udp_packet(event)
     handle_advisor_update(packet, event)
   elseif packet.type == "highlight" then
     handle_highlight(packet, event)
+  elseif packet.type == "search_request" then
+    handle_search_request(packet, event)
   elseif packet.type == "assistant_response" then
     handle_assistant_response(packet, event)
   elseif packet.type == "calculation_response" then

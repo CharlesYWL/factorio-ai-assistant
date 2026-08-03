@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   AssistantHistoryTurn,
   HighlightMarker,
+  SearchFilter,
 } from "@factorio-ai-assistant/protocol";
 
 import type { AdvisorEngine } from "./advisor.js";
@@ -16,6 +17,7 @@ import {
   type LocalizedNameLookup,
 } from "./localization.js";
 import { ProviderExecutor } from "./provider-executor.js";
+import { SearchBroker } from "./search-broker.js";
 import {
   executeRecipeTool,
   RECIPE_TOOLS,
@@ -83,6 +85,8 @@ export interface AssistantServiceOptions {
   provider?: AIProvider;
   localization?: LocalizedNameLookup;
   history?: ProductionHistory;
+  /** Lets the model ask the Mod to scan the map. */
+  search?: SearchBroker;
 }
 
 /**
@@ -104,6 +108,7 @@ export class AssistantService {
   readonly #executor: ProviderExecutor | undefined;
   readonly #names: LocalizedNameLookup;
   readonly #history: ProductionHistory | undefined;
+  readonly #search: SearchBroker | undefined;
 
   public constructor(options: AssistantServiceOptions) {
     this.#config = options.config;
@@ -112,6 +117,7 @@ export class AssistantService {
     this.#logger = options.logger;
     this.#names = options.localization ?? IDENTIFIER_NAMES;
     this.#history = options.history;
+    this.#search = options.search;
     this.#provider =
       options.provider ?? createConfiguredProvider(options.config);
     this.#executor =
@@ -302,6 +308,12 @@ export class AssistantService {
         ? {}
         : { areaSelection: sources.areaSelection }),
       markers,
+      ...(this.#search === undefined
+        ? {}
+        : {
+            search: (forceId: string, filter: SearchFilter) =>
+              this.#search!.search(forceId, filter),
+          }),
     };
     const turns: ProviderToolTurn[] = [];
     const deadline = Date.now() + MAX_TOOL_LOOP_MS;
@@ -331,18 +343,24 @@ export class AssistantService {
         return executor.complete(retry, signal);
       }
 
-      const results = calls.map((call) => {
-        const output = executeRecipeTool(call.name, call.arguments, toolContext);
-        const content = JSON.stringify(output);
-        this.#logger.info("assistant_tool_call", {
-          request_id: request.requestId,
-          round,
-          tool: call.name,
-          arguments_bytes: call.arguments.length,
-          result_bytes: content.length,
-        });
-        return { callId: call.id, name: call.name, content };
-      });
+      const results = await Promise.all(
+        calls.map(async (call) => {
+          const output = await executeRecipeTool(
+            call.name,
+            call.arguments,
+            toolContext,
+          );
+          const content = JSON.stringify(output);
+          this.#logger.info("assistant_tool_call", {
+            request_id: request.requestId,
+            round,
+            tool: call.name,
+            arguments_bytes: call.arguments.length,
+            result_bytes: content.length,
+          });
+          return { callId: call.id, name: call.name, content };
+        }),
+      );
       turns.push({ calls, results });
     }
 

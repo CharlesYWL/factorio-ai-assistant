@@ -1570,6 +1570,230 @@ function collector.build_resource_snapshot(state, force_id)
   }
 end
 
+--- Finds machines anywhere on the map that match a filter, grouped into the
+-- production lines they form.
+--
+-- This is the one place the Mod scans without the player framing an area, so
+-- it only runs when a question actually asks for it. Machines are found by
+-- prototype type rather than by walking chunks, which lets the engine do the
+-- filtering; adjacent matches are then merged so "where is my artillery shell
+-- line" answers with one place instead of forty coordinates.
+local MAX_SEARCH_MATCHES = 2000
+local MAX_SEARCH_CLUSTERS = 24
+--- Machines within this many tiles belong to the same line. A little over a
+--- large assembler plus an inserter, so a normal build stays one cluster.
+local CLUSTER_RADIUS = 12
+
+local SEARCHABLE_TYPES = {
+  "assembling-machine",
+  "furnace",
+  "rocket-silo",
+  "mining-drill",
+  "lab",
+  "boiler",
+  "generator",
+  "reactor",
+  "pump",
+  "offshore-pump",
+  "beacon",
+}
+
+local function matches_filter(entity, filter)
+  if filter.id ~= nil and entity.name ~= filter.id then
+    return false
+  end
+  if filter.type ~= nil and entity.type ~= filter.type then
+    return false
+  end
+  if filter.recipe ~= nil then
+    local ok, recipe = pcall(function()
+      return entity.get_recipe()
+    end)
+    if not ok or recipe == nil or recipe.name ~= filter.recipe then
+      return false
+    end
+  end
+  if filter.status ~= nil and status_name(entity) ~= filter.status then
+    return false
+  end
+  if filter.has_modules ~= nil then
+    local ok, modules = pcall(module_pairs, entity)
+    local has = ok and modules ~= nil and #modules > 0
+    if has ~= filter.has_modules then
+      return false
+    end
+  end
+  return true
+end
+
+--- Groups matches that sit within CLUSTER_RADIUS of an existing group.
+-- Comparing every match against every group is O(n*groups), which on a map
+-- with thousands of scattered machines would stall the game thread, so the
+-- number of open groups is bounded. Only the largest few are reported anyway.
+local MAX_OPEN_CLUSTERS = 128
+
+local function cluster_matches(matches)
+  local clusters = {}
+  local dropped = 0
+
+  for _, match in ipairs(matches) do
+    local joined = false
+    for _, cluster in ipairs(clusters) do
+      local dx = match.x - cluster.sum_x / cluster.count
+      local dy = match.y - cluster.sum_y / cluster.count
+      if dx * dx + dy * dy <= CLUSTER_RADIUS * CLUSTER_RADIUS then
+        cluster.count = cluster.count + 1
+        cluster.sum_x = cluster.sum_x + match.x
+        cluster.sum_y = cluster.sum_y + match.y
+        cluster.ids[match.id] = (cluster.ids[match.id] or 0) + 1
+        if match.status ~= nil then
+          cluster.statuses[match.status] = true
+        end
+        joined = true
+        break
+      end
+    end
+
+    if not joined and #clusters < MAX_OPEN_CLUSTERS then
+      local ids = {}
+      ids[match.id] = 1
+      local statuses = {}
+      if match.status ~= nil then
+        statuses[match.status] = true
+      end
+      table.insert(clusters, {
+        count = 1,
+        sum_x = match.x,
+        sum_y = match.y,
+        ids = ids,
+        statuses = statuses,
+        unit = match.unit,
+      })
+      joined = true
+    end
+    if not joined then
+      dropped = dropped + 1
+    end
+  end
+
+  return clusters, dropped
+end
+
+local function finalize_clusters(clusters)
+  local result = {}
+  for _, cluster in ipairs(clusters) do
+    local ids = {}
+    for id, count in pairs(cluster.ids) do
+      table.insert(ids, { id = id, count = count })
+    end
+    table.sort(ids, function(left, right)
+      if left.count ~= right.count then
+        return left.count > right.count
+      end
+      return left.id < right.id
+    end)
+    local id_names = {}
+    for index, entry in ipairs(ids) do
+      if index > 8 then
+        break
+      end
+      table.insert(id_names, entry.id)
+    end
+
+    local statuses = {}
+    for status in pairs(cluster.statuses) do
+      table.insert(statuses, status)
+    end
+    table.sort(statuses)
+
+    local entry = {
+      x = rounded(cluster.sum_x / cluster.count, 1),
+      y = rounded(cluster.sum_y / cluster.count, 1),
+      count = cluster.count,
+      ids = id_names,
+      statuses = statuses,
+    }
+    if cluster.unit ~= nil then
+      entry.unit = cluster.unit
+    end
+    table.insert(result, entry)
+  end
+
+  -- Biggest line first: that is the one the player most likely means.
+  table.sort(result, function(left, right)
+    if left.count ~= right.count then
+      return left.count > right.count
+    end
+    return left.x < right.x
+  end)
+  return result
+end
+
+function collector.build_search_response(state, reply_to, force_id, filter)
+  local force = game.forces[force_id]
+  local surface = game.surfaces[1]
+  if force == nil or not force.valid or surface == nil then
+    return nil
+  end
+
+  local matches = {}
+  local truncated = false
+  for _, entity_type in ipairs(SEARCHABLE_TYPES) do
+    if filter.type == nil or filter.type == entity_type then
+      local found = surface.find_entities_filtered({
+        type = entity_type,
+        force = force,
+      })
+      for _, entity in pairs(found) do
+        if #matches >= MAX_SEARCH_MATCHES then
+          truncated = true
+          break
+        end
+        if entity.valid and matches_filter(entity, filter) then
+          table.insert(matches, {
+            id = entity.name,
+            x = entity.position.x,
+            y = entity.position.y,
+            status = status_name(entity),
+            unit = entity.unit_number,
+          })
+        end
+      end
+    end
+    if truncated then
+      break
+    end
+  end
+
+  local grouped, dropped = cluster_matches(matches)
+  local clusters = finalize_clusters(grouped)
+  local total = #matches
+  if dropped > 0 then
+    truncated = true
+  end
+  if #clusters > MAX_SEARCH_CLUSTERS then
+    truncated = true
+    while #clusters > MAX_SEARCH_CLUSTERS do
+      table.remove(clusters)
+    end
+  end
+
+  return {
+    protocol_version = 1,
+    schema_version = STATE_SCHEMA_VERSION,
+    message_id = next_message_id(state, "search"),
+    type = "search_response",
+    tick = game.tick,
+    timestamp = game.tick,
+    payload = {
+      reply_to = reply_to,
+      clusters = clusters,
+      total_matches = total,
+      truncated = truncated,
+    },
+  }
+end
+
 function collector.should_log_sample(state, packet)
   local collector_state = ensure_collector_state(state)
   local signature = packet.payload.omitted_forces

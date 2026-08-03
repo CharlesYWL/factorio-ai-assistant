@@ -3,6 +3,8 @@ import {
   MAX_MARKER_TEXT_LENGTH,
   type AreaSnapshotPacket,
   type HighlightMarker,
+  type SearchFilter,
+  type SearchResponsePacket,
 } from "@factorio-ai-assistant/protocol";
 
 import type { LocalizedNameLookup } from "./localization.js";
@@ -209,6 +211,47 @@ export const RECIPE_TOOLS: readonly ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "find_machines",
+      description:
+        "Scan the whole map for machines matching a filter, grouped into the " +
+        "production lines they form. Use this when the player asks where " +
+        "something is built, or to find every machine in a given state. " +
+        "Results carry a position and a `unit`, so you can then mark them. " +
+        "Filters combine: leaving one out means it does not narrow anything.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipe: {
+            type: "string",
+            description:
+              "Recipe identifier the machine is set to, e.g. artillery-shell.",
+          },
+          status: {
+            type: "string",
+            description:
+              "Factorio status name, e.g. no_ingredients, full_output, working.",
+          },
+          id: {
+            type: "string",
+            description: "Entity prototype name, e.g. electric-furnace.",
+          },
+          type: {
+            type: "string",
+            description:
+              "Entity type, e.g. assembling-machine, furnace, mining-drill.",
+          },
+          has_modules: {
+            type: "boolean",
+            description:
+              "true finds machines that have modules, false finds ones without.",
+          },
+        },
+      },
+    },
+  },
 ];
 
 export interface ToolContext {
@@ -219,17 +262,22 @@ export interface ToolContext {
   areaSelection?: AreaSnapshotPacket;
   /** Collects markers the model asked for, drained after the answer. */
   markers?: HighlightMarker[];
+  /** Asks the Mod to scan the map; absent when the game is not connected. */
+  search?: (
+    forceId: string,
+    filter: SearchFilter,
+  ) => Promise<SearchResponsePacket | undefined>;
 }
 
 /**
  * Runs one tool call. Errors are returned as data rather than thrown: the model
  * has to see what went wrong to correct itself on the next turn.
  */
-export function executeRecipeTool(
+export async function executeRecipeTool(
   name: string,
   rawArguments: string,
   context: ToolContext,
-): unknown {
+): Promise<unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawArguments === "" ? "{}" : rawArguments);
@@ -250,7 +298,77 @@ export function executeRecipeTool(
   if (name === "highlight_entities") {
     return highlightEntities(args, context);
   }
+  if (name === "find_machines") {
+    return findMachines(args, context);
+  }
   return { error: `unknown tool ${name}` };
+}
+
+/**
+ * Asks the Mod to scan the map. Unlike the other tools this leaves the process:
+ * the Companion only knows what the Mod has pushed, and where a machine sits is
+ * not part of that.
+ */
+async function findMachines(
+  args: Record<string, unknown>,
+  context: ToolContext,
+): Promise<unknown> {
+  const search = context.search;
+  if (search === undefined) {
+    return {
+      error: "The game is not connected, so the map cannot be scanned.",
+    };
+  }
+
+  const filter: SearchFilter = {};
+  const stringField = (key: "recipe" | "status" | "id" | "type"): void => {
+    const value = args[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      filter[key] = value.trim();
+    }
+  };
+  stringField("recipe");
+  stringField("status");
+  stringField("id");
+  stringField("type");
+  if (typeof args["has_modules"] === "boolean") {
+    filter.has_modules = args["has_modules"];
+  }
+
+  if (Object.keys(filter).length === 0) {
+    return {
+      error:
+        "Give at least one filter: recipe, status, id, type or has_modules. " +
+        "An unfiltered scan would return the whole factory.",
+    };
+  }
+
+  const response = await search(context.forceId ?? "player", filter);
+  if (response === undefined) {
+    return { error: "The map scan did not come back in time." };
+  }
+
+  const { clusters, total_matches: total, truncated } = response.payload;
+  if (clusters.length === 0) {
+    return {
+      matches: 0,
+      hint:
+        "Nothing matched. Check the recipe identifier against the catalog, " +
+        "or widen the filter.",
+    };
+  }
+
+  return {
+    matches: total,
+    truncated,
+    lines: clusters.map((cluster) => ({
+      at: [cluster.x, cluster.y],
+      count: cluster.count,
+      ids: cluster.ids,
+      ...(cluster.statuses.length === 0 ? {} : { statuses: cluster.statuses }),
+      ...(cluster.unit === undefined ? {} : { unit: cluster.unit }),
+    })),
+  };
 }
 
 /**

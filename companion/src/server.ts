@@ -42,6 +42,7 @@ import type { AIProvider } from "./providers.js";
 import { ProviderError } from "./providers.js";
 import { LocalizedNameStore } from "./localization.js";
 import { ProductionHistory } from "./history.js";
+import { SearchBroker } from "./search-broker.js";
 import { CompanionStateStore, StateSyncError } from "./state-store.js";
 
 export { DEFAULT_COMPANION_PORT, LOOPBACK_HOST, parseCompanionPort };
@@ -95,6 +96,7 @@ export async function startCompanionServer(
   const history =
     options.history ??
     new ProductionHistory({ directory: config.historyDirectory });
+  const search = new SearchBroker();
   const assistant = new AssistantService({
     config,
     stateStore,
@@ -102,6 +104,7 @@ export async function startCompanionServer(
     logger,
     localization,
     history,
+    search,
     ...(options.provider === undefined ? {} : { provider: options.provider }),
   });
   const calculation = new CalculationService(stateStore);
@@ -110,6 +113,18 @@ export async function startCompanionServer(
   const socket = createSocket("udp4");
 
   socket.on("message", (datagram, remote) => {
+    // The Mod's address is only known from what it sends, so the outbound path
+    // for searches is established here rather than at startup.
+    search.useTransport({
+      send: (packet) => {
+        try {
+          socket.send(JSON.stringify(packet), remote.port, remote.address);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
     void handleDatagram(
       socket,
       datagram,
@@ -124,6 +139,7 @@ export async function startCompanionServer(
       inFlightAssistantRequests,
       localization,
       history,
+      search,
     ).catch((error: unknown) => {
       logger.error("udp_handler_error", {
         remote_address: remote.address,
@@ -188,6 +204,7 @@ async function handleDatagram(
   inFlightAssistantRequests: Map<string, AbortController>,
   localization: LocalizedNameStore,
   history: ProductionHistory,
+  search: SearchBroker,
 ): Promise<void> {
   if (remote.address !== LOOPBACK_HOST) {
     logger.warn("udp_non_loopback_packet_rejected", {
@@ -400,6 +417,16 @@ async function handleDatagram(
       });
       recentRequests.remember(remote, packet.message_id, digest, null);
       return;
+    case "search_response":
+      // Unmatched replies are dropped: the request that wanted them has either
+      // timed out or belongs to a Companion restart.
+      logger.info("search_response_accepted", {
+        reply_to: packet.payload.reply_to,
+        clusters: packet.payload.clusters.length,
+        total_matches: packet.payload.total_matches,
+        matched: search.accept(packet),
+      });
+      return;
     case "assistant_request":
       recentRequests.remember(remote, packet.message_id, digest, null);
       await handleAssistantRequest(
@@ -448,6 +475,8 @@ async function handleDatagram(
     case "advisor_update":
     case "assistant_response":
     case "calculation_response":
+    case "highlight":
+    case "search_request":
       logger.warn("udp_unexpected_packet_ignored", {
         message_id: packet.message_id,
         packet_type: packet.type,

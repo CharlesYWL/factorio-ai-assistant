@@ -316,7 +316,11 @@ function buildMessages(request: ProviderRequest): { messages: ChatMessage[] } {
       "identifiers — request the whole chain in one call. If the player's " +
       "wording does not appear in the catalog, call `search_recipes` first. " +
       "Never guess ingredients from memory: this save may run mods that " +
-      "changed them.\n\n";
+      "changed them.\n\n" +
+      "The context describes production totals, not places. When the question " +
+      "is about where something is — which line builds an item, or which " +
+      "machines are in a given state — call `find_machines`: it scans the map " +
+      "and returns positions you can then mark.\n\n";
   // Without an explicit instruction the model answers in prose and never
   // marks anything, even though the tool is available.
   const highlightGuidance = canHighlight
