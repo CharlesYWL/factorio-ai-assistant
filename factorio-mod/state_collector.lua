@@ -5,7 +5,13 @@ local MAX_PACKET_BYTES = 16 * 1024
 local PACKET_TARGET_BYTES = MAX_PACKET_BYTES - 512
 local MAX_FORCE_FRAGMENT_IDS = 128
 local MAX_DYNAMIC_FORCES = 16
-local MAX_SERIES_PER_KIND = 128
+-- Series are split across datagrams when they do not fit, so this only guards
+-- against a pathological prototype count rather than the packet size. Keeping
+-- it at 128 silently dropped real production data: a save with 164 item types
+-- lost 36 of them, and the ones dropped were the lowest-rate series -- which
+-- includes any line that has just stopped, exactly what a question is about.
+-- Matches the decoder's own per-kind ceiling.
+local MAX_SERIES_PER_KIND = 512
 
 local ONE_MINUTE = defines.flow_precision_index.one_minute
 local TEN_MINUTES = defines.flow_precision_index.ten_minutes
@@ -999,12 +1005,19 @@ function collector.build_dynamic_snapshot(state, sample_interval_ticks)
     return copy
   end
 
+  -- Encoding the whole packet once per metric is quadratic: at 500 series that
+  -- is tens of megabytes encoded every sample, on the game thread. Each
+  -- metric's own size is stable, so track a running total instead. The final
+  -- encode below still enforces the hard limit, so an underestimate here
+  -- cannot produce an oversized datagram.
+  local envelope_bytes = #helpers.table_to_json(chunk_packet)
+  local used_bytes = envelope_bytes
+
   for _, candidate in ipairs(candidates) do
-    table.insert(candidate.target, candidate.metric)
+    -- Plus one for the comma joining it to the previous entry.
+    local addition = #helpers.table_to_json(candidate.metric) + 1
 
-    if #helpers.table_to_json(chunk_packet) > PACKET_TARGET_BYTES then
-      table.remove(candidate.target)
-
+    if used_bytes + addition > PACKET_TARGET_BYTES then
       if pending == 0 then
         -- A single flow that cannot fit even alone is unrepresentable.
         omitted_series = omitted_series + 1
@@ -1012,18 +1025,22 @@ function collector.build_dynamic_snapshot(state, sample_interval_ticks)
         table.insert(chunks, take_snapshot_of_lists())
         reset_flow_lists()
         pending = 0
-        local retry_target = candidate.kind == "item"
-            and summary_by_force[candidate.force_id].items
-          or summary_by_force[candidate.force_id].fluids
-        table.insert(retry_target, candidate.metric)
-        if #helpers.table_to_json(chunk_packet) > PACKET_TARGET_BYTES then
-          table.remove(retry_target)
+        used_bytes = envelope_bytes
+
+        if used_bytes + addition > PACKET_TARGET_BYTES then
           omitted_series = omitted_series + 1
         else
+          local retry_target = candidate.kind == "item"
+              and summary_by_force[candidate.force_id].items
+            or summary_by_force[candidate.force_id].fluids
+          table.insert(retry_target, candidate.metric)
+          used_bytes = used_bytes + addition
           pending = pending + 1
         end
       end
     else
+      table.insert(candidate.target, candidate.metric)
+      used_bytes = used_bytes + addition
       pending = pending + 1
     end
   end
