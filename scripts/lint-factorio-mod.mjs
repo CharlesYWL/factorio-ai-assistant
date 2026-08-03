@@ -322,6 +322,18 @@ for (const localeKey of [
     `The locale files must define ${localeKey}`,
   );
 }
+// Alerts live on LuaPlayer in Factorio 2.0; the LuaForce equivalents only
+// arrived in 2.1. Reaching for the force version crashes the mod outright, and
+// `pcall(force.remove_alert, ...)` does not save it: indexing the missing key
+// throws while building the arguments, before pcall is ever entered.
+for (const playerOnlyInTwoZero of ["add_custom_alert", "remove_alert"]) {
+  assert.doesNotMatch(
+    controlSource,
+    new RegExp(`force\\.${playerOnlyInTwoZero}\\b`, "u"),
+    `${playerOnlyInTwoZero} is a LuaPlayer method in 2.0; calling it on a force crashes`,
+  );
+}
+
 assert.deepEqual(
   localeKeys(chineseLocale),
   localeKeys(englishLocale),

@@ -1089,11 +1089,12 @@ local function clear_highlights(state)
   end
   state.highlight_tags = {}
 
-  -- Alerts are per force and identified by our own icon, so this removes only
-  -- what the advisor raised.
-  for _, force in pairs(game.forces) do
-    if force.valid then
-      pcall(force.remove_alert, { icon = HIGHLIGHT_ALERT_ICON })
+  -- Alerts belong to each player, not to the force: the force-level helpers
+  -- only exist in 2.1. Filtering by our own icon means clearing never touches
+  -- alerts the player got from anything else.
+  for _, player in pairs(game.players) do
+    if player.valid then
+      pcall(player.remove_alert, { icon = HIGHLIGHT_ALERT_ICON })
     end
   end
 end
@@ -1202,15 +1203,20 @@ local function handle_highlight(packet, event)
           -- A problem also goes to the alert list, which is where players
           -- already look for things going wrong: hovering shows the message and
           -- clicking opens the map at the machine. Needs a real entity, since
-          -- that is what the engine focuses on.
+          -- that is what the engine focuses on, and is raised per player
+          -- because the force-level helper only exists in 2.1.
           if entity ~= nil and ALERT_SEVERITIES[marker.severity] then
-            pcall(
-              force.add_custom_alert,
-              entity,
-              HIGHLIGHT_ALERT_ICON,
-              marker.text,
-              true
-            )
+            for _, player in pairs(game.connected_players) do
+              if player.valid and player.force.name == force.name then
+                pcall(
+                  player.add_custom_alert,
+                  entity,
+                  HIGHLIGHT_ALERT_ICON,
+                  marker.text,
+                  true
+                )
+              end
+            end
           end
         end
       end
